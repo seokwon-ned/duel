@@ -214,7 +214,14 @@ const config = {
     backgroundColor: '#0F172A',
     scene: [GameScene],
 };
-let game = null;
+// Initialize game on page load
+const game = new Phaser.Game(config);
+let gameSceneReady = false;
+// Wait for game scene to be created
+game.events.once('ready', () => {
+    gameSceneReady = true;
+    console.log('Phaser game ready');
+});
 document.getElementById('connectBtn')?.addEventListener('click', async () => {
     const serverUrl = document.getElementById('serverUrl').value;
     const statusEl = document.getElementById('status');
@@ -225,12 +232,15 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
         const room = await client.joinOrCreate('turf_duel');
         if (statusEl)
             statusEl.textContent = `Connected! Room: ${room.roomId}`;
-        if (!game) {
-            game = new Phaser.Game(config);
+        // Get the game scene
+        const scene = game.scene.scenes[0];
+        if (scene && typeof scene.startOnlineMode === 'function') {
+            scene.startOnlineMode(room);
         }
-        game.scene.scenes[0].events.once('create', () => {
-            game.scene.scenes[0].startOnlineMode(room);
-        });
+        else {
+            console.error('Game scene not ready');
+            throw new Error('Game scene not initialized');
+        }
     }
     catch (error) {
         console.error('Connection error:', error);
@@ -242,10 +252,13 @@ document.getElementById('botBtn')?.addEventListener('click', () => {
     const statusEl = document.getElementById('status');
     if (statusEl)
         statusEl.textContent = 'Playing vs Bot (offline)';
-    if (!game) {
-        game = new Phaser.Game(config);
+    const scene = game.scene.scenes[0];
+    if (scene && typeof scene.startBotMode === 'function') {
+        scene.startBotMode();
     }
-    game.scene.scenes[0].events.once('create', () => {
-        game.scene.scenes[0].startBotMode();
-    });
+    else {
+        console.error('Game scene not ready');
+        if (statusEl)
+            statusEl.textContent = 'Error: Game not initialized';
+    }
 });
