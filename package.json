@@ -12,7 +12,8 @@
     "postinstall": "npm run build --workspace=packages/engine && npm run build --workspace=packages/bot",
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspace=packages/engine && npm run build --workspaces --if-present",
-    "server": "npm run start --workspace=packages/server"
+    "server": "npm run start --workspace=packages/server",
+    "sim:bandwidth": "npm run bandwidth --workspace=packages/server"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

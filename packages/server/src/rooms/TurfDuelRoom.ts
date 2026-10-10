@@ -16,6 +16,7 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
   private playerMapping = new Map<string, 1 | 2>();
   private bytesSentPerPlayer = new Map<string, number>();
   private previousGrid: CellType[][] | null = null;
+  private inputQueue: PlayerInput[] = [];
 
   maxClients = 2;
 
@@ -68,7 +69,10 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     
     this.gameLoop = setInterval(() => {
       if (!this.matchState.paused && this.matchState.result === null) {
-        const result = step(this.matchState, []);
+        const inputs = [...this.inputQueue];
+        this.inputQueue = [];
+        
+        const result = step(this.matchState, inputs);
         this.matchState = result.state;
         this.syncState();
 
@@ -90,8 +94,7 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
       direction,
     };
 
-    const result = step(this.matchState, [input]);
-    this.matchState = result.state;
+    this.inputQueue.push(input);
   }
 
   private syncState() {
@@ -130,10 +133,13 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     }
 
     const encodedState = this.state.encodeAll();
-    const byteLength = encodedState ? encodedState.length : 0;
-    for (const [sessionId] of this.playerMapping) {
-      const current = this.bytesSentPerPlayer.get(sessionId) || 0;
-      this.bytesSentPerPlayer.set(sessionId, current + byteLength);
+    const byteLength = encodedState ? encodedState.byteLength : 0;
+    
+    if (byteLength > 0) {
+      for (const [sessionId] of this.playerMapping) {
+        const current = this.bytesSentPerPlayer.get(sessionId) || 0;
+        this.bytesSentPerPlayer.set(sessionId, current + byteLength);
+      }
     }
   }
 
