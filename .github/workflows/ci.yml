@@ -31,3 +31,16 @@ jobs:
       
       - name: Build client
         run: npm run build --workspace=packages/client
+      
+      - name: Test server starts from clean install
+        run: |
+          npm run server &
+          SERVER_PID=$!
+          sleep 5
+          if ! nc -z localhost 2567; then
+            echo "Server failed to listen on port 2567"
+            kill $SERVER_PID || true
+            exit 1
+          fi
+          echo "✓ Server listening on port 2567"
+          kill $SERVER_PID || true
