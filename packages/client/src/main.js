@@ -179,7 +179,7 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
         const client = new Client(serverUrl);
         const room = await client.joinOrCreate('turf_duel');
         if (statusEl)
-            statusEl.textContent = `Connected! Room: ${room.id}`;
+            statusEl.textContent = `Connected! Room: ${room.roomId}`;
         if (!game) {
             game = new Phaser.Game(config);
         }

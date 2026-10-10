@@ -10,7 +10,7 @@ import {
   TICKS_PER_SECOND,
 } from '@turf-duel/engine';
 
-export class TurfDuelRoom extends Room<TurfDuelState> {
+export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   private matchState!: MatchState;
   private gameLoop: NodeJS.Timeout | null = null;
   private playerMapping = new Map<string, 1 | 2>();
@@ -64,9 +64,9 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     }
   }
 
-  onLeave(client: Client, consented: boolean) {
+  onLeave(client: Client, code?: number) {
     const playerNum = this.playerMapping.get(client.sessionId);
-    console.log(`Player ${playerNum} left: ${client.sessionId}`);
+    console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
     
     this.matchState.paused = true;
     this.syncState();
