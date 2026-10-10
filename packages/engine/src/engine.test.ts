@@ -9,6 +9,7 @@ import {
   PlayerInput,
   ResultReason,
   MATCH_DURATION_TICKS,
+  GRID_SIZE,
   CellType,
 } from './types.js';
 
@@ -336,6 +337,14 @@ describe('Game Engine - 판정 Tests', () => {
 
   test('이동 속도 - 8 cells/s: 20 ticks = 8 cells moved', () => {
     let state = createInitialState();
+    
+    for (let y = 0; y < 20; y++) {
+      for (let x = 0; x < 20; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 5, y: 5 };
     const startX = state.player1.position.x;
     
     for (let i = 0; i < 20; i++) {
@@ -345,6 +354,7 @@ describe('Game Engine - 판정 Tests', () => {
     
     const distance = state.player1.position.x - startX;
     expect(distance).toBe(8);
+    expect(state.player1.isAlive).toBe(true);
   });
 
   test('이동 타이밍 - Both players move identically', () => {
@@ -378,6 +388,47 @@ describe('Game Engine - 판정 Tests', () => {
     }
     
     expect(state.player1.movementAccumulator).toBe(state.player2.movementAccumulator);
+  });
+
+  test('이동 주기 검증 - 5 ticks = 2 cells (8 cells/s at 20Hz)', () => {
+    let state = createInitialState();
+    
+    for (let y = 0; y < 20; y++) {
+      for (let x = 0; x < 20; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 5, y: 5 };
+    state.player1.direction = Direction.RIGHT;
+    const startX = state.player1.position.x;
+    
+    for (let i = 0; i < 5; i++) {
+      const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
+      state = result.state;
+    }
+    
+    expect(state.player1.position.x - startX).toBe(2);
+    expect(state.player1.isAlive).toBe(true);
+  });
+
+  test('비이동 틱 입력 버퍼링 - Input buffered on non-move tick', () => {
+    let state = createInitialState();
+    
+    for (let y = 0; y < 10; y++) {
+      for (let x = 0; x < 10; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 5, y: 5 };
+    state.player1.direction = Direction.RIGHT;
+    state.player1.movementAccumulator = 5;
+    
+    const result = step(state, [{ player: 1, direction: Direction.DOWN }]);
+    
+    expect(result.state.player1.inputBuffer).toBe(Direction.DOWN);
+    expect(result.state.player1.direction).toBe(Direction.RIGHT);
   });
 
   test('감싼 영역 안 상대 선 - Opponent trail inside enclosure survives', () => {

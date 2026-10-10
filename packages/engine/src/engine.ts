@@ -96,9 +96,9 @@ export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
     return handleTimeUp(newState, events);
   }
 
-  movePhase(newState);
+  const movedPlayers = movePhase(newState);
 
-  const collisionResult = collisionPhase(newState, events);
+  const collisionResult = collisionPhase(newState, events, movedPlayers);
   if (collisionResult) {
     return collisionResult;
   }
@@ -108,8 +108,15 @@ export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
   return { state: newState, events };
 }
 
-function movePhase(state: MatchState): void {
-  for (const player of [state.player1, state.player2]) {
+function movePhase(state: MatchState): Set<1 | 2> {
+  const movedPlayers = new Set<1 | 2>();
+  
+  const players: Array<{player: PlayerState, num: 1 | 2}> = [
+    {player: state.player1, num: 1},
+    {player: state.player2, num: 2},
+  ];
+  
+  for (const {player, num} of players) {
     if (!player.isAlive) continue;
 
     player.movementAccumulator += MOVEMENT_INCREMENT;
@@ -124,16 +131,22 @@ function movePhase(state: MatchState): void {
 
       const nextPos = getNextPosition(player.position, player.direction);
       player.position = nextPos;
+      movedPlayers.add(num);
     }
   }
+  
+  return movedPlayers;
 }
 
-function collisionPhase(state: MatchState, events: GameEvent[]): StepResult | null {
+function collisionPhase(state: MatchState, events: GameEvent[], movedPlayers: Set<1 | 2>): StepResult | null {
   const p1 = state.player1;
   const p2 = state.player2;
+  
+  const p1Moved = movedPlayers.has(1);
+  const p2Moved = movedPlayers.has(2);
 
-  const p1OutOfBounds = isOutOfBounds(p1.position);
-  const p2OutOfBounds = isOutOfBounds(p2.position);
+  const p1OutOfBounds = p1Moved && isOutOfBounds(p1.position);
+  const p2OutOfBounds = p2Moved && isOutOfBounds(p2.position);
 
   if (p1OutOfBounds && p2OutOfBounds) {
     state.result = {
@@ -166,19 +179,19 @@ function collisionPhase(state: MatchState, events: GameEvent[]): StepResult | nu
     return { state, events };
   }
 
-  const p1Cell = state.grid[p1.position.y][p1.position.x];
-  const p2Cell = state.grid[p2.position.y][p2.position.x];
+  const p1Cell = p1Moved ? state.grid[p1.position.y][p1.position.x] : null;
+  const p2Cell = p2Moved ? state.grid[p2.position.y][p2.position.x] : null;
 
-  const p1InOwnTerritory = isPlayerTerritory(p1Cell, 1);
-  const p2InOwnTerritory = isPlayerTerritory(p2Cell, 2);
+  const p1InOwnTerritory = p1Cell !== null && isPlayerTerritory(p1Cell, 1);
+  const p2InOwnTerritory = p2Cell !== null && isPlayerTerritory(p2Cell, 2);
 
-  const p1SteppedOwnTrail = !p1InOwnTerritory && isPlayerTrail(p1Cell, 1);
-  const p2SteppedOwnTrail = !p2InOwnTerritory && isPlayerTrail(p2Cell, 2);
+  const p1SteppedOwnTrail = p1Moved && p1Cell !== null && !p1InOwnTerritory && isPlayerTrail(p1Cell, 1);
+  const p2SteppedOwnTrail = p2Moved && p2Cell !== null && !p2InOwnTerritory && isPlayerTrail(p2Cell, 2);
 
-  const p1CutP2Trail = isPlayerTrail(p1Cell, 2);
-  const p2CutP1Trail = isPlayerTrail(p2Cell, 1);
+  const p1CutP2Trail = p1Moved && p1Cell !== null && isPlayerTrail(p1Cell, 2);
+  const p2CutP1Trail = p2Moved && p2Cell !== null && isPlayerTrail(p2Cell, 1);
 
-  const headOnCollision = positionsEqual(p1.position, p2.position);
+  const headOnCollision = p1Moved && p2Moved && positionsEqual(p1.position, p2.position);
 
   if (headOnCollision || (p1SteppedOwnTrail && p2SteppedOwnTrail) || 
       (p1CutP2Trail && p2CutP1Trail) ||
@@ -249,27 +262,30 @@ function closePhase(state: MatchState, events: GameEvent[]): void {
   const p1InOwnTerritory = isPlayerTerritory(p1Cell, 1);
   const p2InOwnTerritory = isPlayerTerritory(p2Cell, 2);
 
-  const p1WasOutside = !p1InOwnTerritory;
-  const p2WasOutside = !p2InOwnTerritory;
-
-  if (p1WasOutside) {
+  if (p1.isAlive && !p1InOwnTerritory) {
     state.grid[p1.position.y][p1.position.x] = getPlayerTrailType(1);
   }
 
-  if (p2WasOutside) {
+  if (p2.isAlive && !p2InOwnTerritory) {
     state.grid[p2.position.y][p2.position.x] = getPlayerTrailType(2);
   }
 
-  if (p1.isAlive && p1InOwnTerritory && p1WasOutside === false) {
-    const p2TrailPositions = getTrailPositions(state.grid, 2);
-    const result = closeTerritoryForPlayer(state.grid, 1, p1.position, p2.position, p2TrailPositions);
-    state.grid = result.grid;
+  if (p1.isAlive && p1InOwnTerritory) {
+    const p1TrailPositions = getTrailPositions(state.grid, 1);
+    if (p1TrailPositions.length > 0) {
+      const p2TrailPositions = getTrailPositions(state.grid, 2);
+      const result = closeTerritoryForPlayer(state.grid, 1, p1.position, p2.position, p2TrailPositions);
+      state.grid = result.grid;
+    }
   }
 
-  if (p2.isAlive && p2InOwnTerritory && p2WasOutside === false) {
-    const p1TrailPositions = getTrailPositions(state.grid, 1);
-    const result = closeTerritoryForPlayer(state.grid, 2, p2.position, p1.position, p1TrailPositions);
-    state.grid = result.grid;
+  if (p2.isAlive && p2InOwnTerritory) {
+    const p2TrailPositions = getTrailPositions(state.grid, 2);
+    if (p2TrailPositions.length > 0) {
+      const p1TrailPositions = getTrailPositions(state.grid, 1);
+      const result = closeTerritoryForPlayer(state.grid, 2, p2.position, p1.position, p1TrailPositions);
+      state.grid = result.grid;
+    }
   }
 
   p1.territoryCells = countTerritoryCells(state.grid, 1);
