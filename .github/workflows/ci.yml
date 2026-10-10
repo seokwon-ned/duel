@@ -26,6 +26,24 @@ jobs:
       - name: Run tests
         run: npm test
       
+      - name: Run crash resistance tests
+        run: npm run test:crash --workspace=packages/server
+      
+      - name: Run lossless sync test
+        run: npm run test:lossless --workspace=packages/server
+      
+      - name: Run fault isolation test
+        run: npm run test:fault --workspace=packages/server
+      
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      
+      - name: Build client for E2E tests
+        run: npm run build --workspace=packages/client
+      
+      - name: Run Playwright E2E rendering tests
+        run: npm run test:e2e:playwright
+      
       - name: Build server
         run: npm run build --workspace=packages/server
       

@@ -1,4 +1,4 @@
-import { Schema, type, MapSchema } from '@colyseus/schema';
+import { Schema, type, MapSchema, ArraySchema } from '@colyseus/schema';
 
 export class Position extends Schema {
   @type('number') x: number = 0;
@@ -32,8 +32,12 @@ export class TurfDuelState extends Schema {
   @type(PlayerSchema) player2 = new PlayerSchema();
   @type('number') tick: number = 0;
   @type('boolean') paused: boolean = false;
-  @type(MatchResultSchema) result: MatchResultSchema | undefined;
+  @type(MatchResultSchema) result?: MatchResultSchema;
   @type([CellUpdate]) cellUpdates = new Array<CellUpdate>();
+<<<<<<< HEAD
   @type('number') disconnectedPlayer: number = 0; // 0 = none, 1 = player1, 2 = player2, 3 = both
   @type('number') disconnectCountdownSeconds: number = 0;
+=======
+  @type(['number']) grid = new ArraySchema<number>();
+>>>>>>> origin/main
 }

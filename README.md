@@ -207,23 +207,26 @@ QA 테스트용 (200ms 지연 / 5% 손실)
 
 #### 방법 1: Network Link Conditioner (권장)
 
-1. Xcode → Preferences → Components → "Additional Tools for Xcode" 다운로드
-2. `/Applications/Xcode.app/Contents/Applications/Network Link Conditioner.prefPane` 열기
-3. 프로필 설정:
+1. Xcode → Settings → Downloads → Components → "Additional Tools for Xcode" 다운로드
+2. `/Applications/Xcode.app/Contents/Applications/Network Link Conditioner.prefPane` 더블클릭하여 설치
+3. 시스템 설정 → Network Link Conditioner 열기
+4. 프로필 설정:
    - Profile: Custom
    - Downlink: Bandwidth 1000 kbps, Delay 100ms, Packet Loss 5%
    - Uplink: Bandwidth 1000 kbps, Delay 100ms, Packet Loss 5%
-4. "Turn On" 활성화
+   - (양방향 100ms씩 = 총 200ms RTT)
+5. "Turn On" 활성화
+6. 테스트 완료 후 "Turn Off" 또는 시스템 재부팅
 
 #### 방법 2: dnctl + pfctl (고급)
 
 포트 2567만 대상으로:
 
 ```bash
-# Dummynet 파이프 생성
+# Dummynet 파이프 생성 (200ms 지연, 5% 손실)
 sudo dnctl pipe 1 config delay 200 plr 0.05
 
-# PF 규칙 파일 생성
+# PF 규칙 추가
 echo "dummynet in proto tcp from any to any port 2567 pipe 1" | sudo pfctl -f -
 
 # 활성화
@@ -238,7 +241,7 @@ sudo pfctl -d
 `tc netem` 사용:
 
 ```bash
-# 지연 200ms, 손실 5% 추가
+# 지연 200ms, 손실 5% 추가 (loopback)
 sudo tc qdisc add dev lo root netem delay 200ms loss 5%
 
 # 제거
@@ -268,6 +271,48 @@ sudo tc qdisc del dev eth0 root
    - Lag: 체크, 200ms
    - Drop: 체크, Inbound/Outbound 5%
 4. Start 클릭
+5. 테스트 완료 후 Stop 클릭
+
+## 대역폭 측정
+
+실제 WebSocket 트래픽을 확인하여 네트워크 사용량을 모니터링할 수 있습니다.
+
+### 브라우저 DevTools에서 확인
+
+1. 클라이언트 실행 (`cd packages/client && npm run dev`)
+2. 브라우저에서 `http://localhost:3000` 열기
+3. **DevTools 열기** (F12 또는 우클릭 → "검사")
+4. **Network 탭** 선택
+5. **WS 필터** 클릭 (WebSocket만 표시)
+6. "Connect to Server" 클릭하여 게임 시작
+7. WebSocket 연결 클릭 → **Messages 탭**에서 실시간 메시지 확인
+8. 각 메시지의 크기(Bytes)와 시간(Time) 확인 가능
+
+### 서버 측 측정
+
+실제 WebSocket 바이트 측정 (`npm run sim:bandwidth`로 실행):
+
+**측정 결과 (150초 매치, 실제 프레임 바이트, lossless grid sync):**
+- **평균**: 309 bytes/sec (~0.30 KB/s) per player
+- **P95**: 471 bytes/sec (~0.46 KB/s) per player
+- **피크**: 11,752 bytes/sec (~11.48 KB/s) per player (initial grid transmission)
+- **Steady-state 피크**: 803 bytes/sec (~0.78 KB/s) per player (첫 1초 제외, 정상 운영)
+- **총 데이터**: ~46 KB per player per 150s match (~90 KB total)
+
+Colyseus Schema의 델타 인코딩 + 전체 grid sync로 무손실 동기화를 제공하며, 정상 운영 시 대역폭은 1 KB/s 미만입니다. 초기 피크는 전체 grid (40×40 cells) 전송 시 발생합니다.
+
+```bash
+# E2E 테스트 + 실제 대역폭 측정 + assertions
+npm run sim:bandwidth
+```
+
+**측정 방법:**
+- 실제 WebSocket `message` 이벤트에서 바이트 카운트
+- Colyseus @colyseus/schema 5.0.36 delta encoding
+- 20Hz tick rate, 150초 실시간 매치 (~3000 ticks, ±20 variance)
+- 영토 확장 패턴 (2x2 → 15x15 growing loops)
+- 매 초마다 샘플링하여 avg/P95/peak/steady-state-peak 계산
+- Full grid (40×40 cells) synced every tick for lossless state under latency
 
 ## 게임 엔진 설계
 
@@ -291,10 +336,10 @@ sudo tc qdisc del dev eth0 root
 
 ## 서버 아키텍처
 
-- **Colyseus 0.15+**: 방 기반 멀티플레이어
+- **Colyseus 0.18**: 방 기반 멀티플레이어 (@colyseus/core 0.18.18)
 - **틱 레이트**: 20Hz (50ms)
-- **델타 동기화**: 머리 위치와 변경된 칸만 전송
-- **대역폭 로깅**: 플레이어당 bytes/sec 콘솔 출력
+- **델타 동기화**: 머리 위치와 변경된 칸만 전송 (@colyseus/schema 5.0)
+- **대역폭**: ~0.22 KB/s per player average (measured from real WebSocket frames)
 
 ## 재접속 기능 (v1.1)
 
@@ -366,15 +411,28 @@ npm run test:reconnection
 
 - [ ] 로비/매칭 시스템
 - [ ] Capacitor 앱 빌드 (Android/iOS)
+  - Android launcher icon: `assets/brand/icon_1024.png` 사용 예정
+  - iOS launcher icon: `assets/brand/icon_1024.png` 사용 예정
 - [ ] 터치 드래그 조작 (20px 임계값, 입력 버퍼)
 - [ ] 랭크 시스템
 - [ ] AWS Lightsail 배포
 
+## 브랜드 에셋
+
+앱 아이콘, 로고, 브랜드 가이드라인은 `assets/brand/` 참조.
+
+- **앱 아이콘**: 4×4 그리드 디자인 (오렌지/파랑 영토, 다크 네이비 배경)
+- **로고**: 한글(Black Han Sans) + 영문(Press Start 2P) 워드마크
+- **웹 클라이언트**: favicon, apple-touch-icon, PWA manifest 아이콘 적용됨
+- **Capacitor**: Android/iOS 런처 아이콘은 `icon_1024.png`에서 생성 (앱 셸 추가 시)
+
+상세 정보: `assets/brand/README.md`
+
 ## 기술 스택
 
 - **엔진**: TypeScript (순수 로직, 프레임워크 무관)
-- **서버**: Node.js, Colyseus, Express
-- **클라이언트**: Phaser 3, Vite
+- **서버**: Node.js, Colyseus 0.18, Express
+- **클라이언트**: Phaser 3, Vite, @colyseus/sdk 0.18
 - **모바일**: Capacitor (계획)
 - **테스트**: Vitest
 

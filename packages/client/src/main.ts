@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Client, Room } from 'colyseus.js';
+import { Client, Room } from '@colyseus/sdk';
 import {
   createInitialState,
   step,
@@ -18,6 +18,27 @@ const COLORS = {
   PLAYER1_TRAIL: 0xFF9A4A,
   PLAYER2_TRAIL: 0x4F8BFF,
 };
+
+// Debug hook for E2E tests
+interface TurfDebug {
+  tick: number;
+  ownedCells: { p1: number; p2: number };
+  renderedFrames: number;
+}
+
+declare global {
+  interface Window {
+    __turfDebug?: TurfDebug;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.__turfDebug = {
+    tick: 0,
+    ownedCells: { p1: 0, p2: 0 },
+    renderedFrames: 0,
+  };
+}
 
 class GameScene extends Phaser.Scene {
   private cells: Phaser.GameObjects.Rectangle[][] = [];
@@ -93,9 +114,14 @@ class GameScene extends Phaser.Scene {
     this.isOnlineMode = true;
     this.room = room;
 
-    room.state.onChange = () => {
+    room.onStateChange.once((state) => {
+      // Initial state received, render full board
+      this.renderFromSchema(state);
+    });
+
+    room.onStateChange((state) => {
       this.updateFromServerState();
-    };
+    });
 
     room.onMessage('*', (type, message) => {
       console.log('Message from server:', type, message);
@@ -138,7 +164,18 @@ class GameScene extends Phaser.Scene {
 
     const state = this.room.state;
 
-    if (state.cellUpdates) {
+    // Render from full grid if available (lossless sync)
+    if (state.grid && state.grid.length > 0) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const index = y * GRID_SIZE + x;
+          const cellType = state.grid[index];
+          const color = this.getCellColor(cellType);
+          this.cells[y][x].setFillStyle(color);
+        }
+      }
+    } else if (state.cellUpdates) {
+      // Fallback to incremental updates
       state.cellUpdates.forEach((update: any) => {
         const color = this.getCellColor(update.type);
         this.cells[update.y][update.x].setFillStyle(color);
@@ -161,6 +198,30 @@ class GameScene extends Phaser.Scene {
 
     if (state.result) {
       this.showResult(state.result);
+    }
+
+    // Update debug hook
+    if (typeof window !== 'undefined' && window.__turfDebug) {
+      window.__turfDebug.tick = state.tick;
+      window.__turfDebug.ownedCells = {
+        p1: state.player1.territoryCells,
+        p2: state.player2.territoryCells,
+      };
+      window.__turfDebug.renderedFrames++;
+    }
+  }
+
+  private renderFromSchema(state: any) {
+    // Initial full render from grid
+    if (state.grid && state.grid.length > 0) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const index = y * GRID_SIZE + x;
+          const cellType = state.grid[index];
+          const color = this.getCellColor(cellType);
+          this.cells[y][x].setFillStyle(color);
+        }
+      }
     }
   }
 
@@ -218,7 +279,15 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [GameScene],
 };
 
-let game: Phaser.Game | null = null;
+// Initialize game on page load
+const game = new Phaser.Game(config);
+let gameSceneReady = false;
+
+// Wait for game scene to be created
+game.events.once('ready', () => {
+  gameSceneReady = true;
+  console.log('Phaser game ready');
+});
 
 document.getElementById('connectBtn')?.addEventListener('click', async () => {
   const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
@@ -230,15 +299,17 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
     const client = new Client(serverUrl);
     const room = await client.joinOrCreate('turf_duel');
     
-    if (statusEl) statusEl.textContent = `Connected! Room: ${room.id}`;
+    if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
 
-    if (!game) {
-      game = new Phaser.Game(config);
+    // Get the game scene
+    const scene = game.scene.scenes[0] as GameScene;
+    
+    if (scene && typeof scene.startOnlineMode === 'function') {
+      scene.startOnlineMode(room);
+    } else {
+      console.error('Game scene not ready');
+      throw new Error('Game scene not initialized');
     }
-
-    game.scene.scenes[0].events.once('create', () => {
-      (game!.scene.scenes[0] as GameScene).startOnlineMode(room);
-    });
   } catch (error) {
     console.error('Connection error:', error);
     if (statusEl) statusEl.textContent = `Error: ${error}`;
@@ -249,11 +320,12 @@ document.getElementById('botBtn')?.addEventListener('click', () => {
   const statusEl = document.getElementById('status');
   if (statusEl) statusEl.textContent = 'Playing vs Bot (offline)';
 
-  if (!game) {
-    game = new Phaser.Game(config);
+  const scene = game.scene.scenes[0] as GameScene;
+  
+  if (scene && typeof scene.startBotMode === 'function') {
+    scene.startBotMode();
+  } else {
+    console.error('Game scene not ready');
+    if (statusEl) statusEl.textContent = 'Error: Game not initialized';
   }
-
-  game.scene.scenes[0].events.once('create', () => {
-    (game!.scene.scenes[0] as GameScene).startBotMode();
-  });
 });

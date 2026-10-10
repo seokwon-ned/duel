@@ -8,8 +8,10 @@ import {
   PlayerInput,
   CellType,
   TICKS_PER_SECOND,
+  GRID_SIZE,
 } from '@turf-duel/engine';
 
+<<<<<<< HEAD
 interface PlayerDisconnectInfo {
   disconnectCount: number;
   totalDisconnectedMs: number;
@@ -17,6 +19,9 @@ interface PlayerDisconnectInfo {
 }
 
 export class TurfDuelRoom extends Room<TurfDuelState> {
+=======
+export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
+>>>>>>> origin/main
   private matchState!: MatchState;
   private gameLoop: NodeJS.Timeout | null = null;
   private playerMapping = new Map<string, 1 | 2>();
@@ -34,14 +39,52 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
   maxClients = 2;
 
   onCreate(options: any) {
-    this.setState(new TurfDuelState());
+    const state = new TurfDuelState();
+    this.setState(state);
     this.matchState = createInitialState();
+    
+    // Initialize grid in schema
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        state.grid.push(this.matchState.grid[y][x]);
+      }
+    }
+    
+    // Hook broadcast to measure actual bytes sent
+    const originalBroadcast = this.broadcast.bind(this);
+    (this as any).broadcast = (type: any, message?: any, options?: any) => {
+      // Measure message size
+      let byteLength = 0;
+      if (message) {
+        if (Buffer.isBuffer(message)) {
+          byteLength = message.length;
+        } else if (ArrayBuffer.isView(message)) {
+          byteLength = message.byteLength;
+        } else if (typeof message === 'string') {
+          byteLength = Buffer.byteLength(message, 'utf8');
+        } else {
+          // For objects, estimate JSON size
+          byteLength = Buffer.byteLength(JSON.stringify(message), 'utf8');
+        }
+      }
+      
+      // Add to each player's byte count
+      if (byteLength > 0) {
+        for (const [sessionId] of this.playerMapping) {
+          const current = this.bytesSentPerPlayer.get(sessionId) || 0;
+          this.bytesSentPerPlayer.set(sessionId, current + byteLength);
+        }
+      }
+      
+      return originalBroadcast(type, message, options);
+    };
     
     this.onMessage('input', (client, message) => {
       this.handleInput(client, message);
     });
   }
 
+<<<<<<< HEAD
   onJoin(client: Client, options: any, isReconnection?: boolean) {
     let playerNum: 1 | 2;
     
@@ -77,6 +120,58 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
         totalDisconnectedMs: 0,
         currentDisconnectStartTime: null,
       });
+=======
+  onJoin(client: Client, options: any) {
+    const playerNum = this.playerMapping.size === 0 ? 1 : 2;
+    this.playerMapping.set(client.sessionId, playerNum);
+    this.bytesSentPerPlayer.set(client.sessionId, 0);
+    this.bytesPerSecondPerPlayer.set(client.sessionId, []);
+
+    console.log(`Player ${playerNum} joined: ${client.sessionId}`);
+
+    // Hook into WebSocket to measure actual bytes sent
+    // Try multiple paths to access the underlying WebSocket
+    const ws = (client as any).raw || (client as any)._connection || (client as any).connection;
+    
+    if (ws && ws.send) {
+      const originalWsSend = ws.send.bind(ws);
+      ws.send = (data: any, ...args: any[]) => {
+        const byteLength = Buffer.isBuffer(data) ? data.length :
+                          ArrayBuffer.isView(data) ? data.byteLength :
+                          typeof data === 'string' ? Buffer.byteLength(data, 'utf8') :
+                          data?.byteLength || data?.length || 0;
+        
+        if (byteLength > 0) {
+          const current = this.bytesSentPerPlayer.get(client.sessionId) || 0;
+          this.bytesSentPerPlayer.set(client.sessionId, current + byteLength);
+        }
+        
+        return originalWsSend(data, ...args);
+      };
+    } else {
+      // Fallback: Try to find ws in the transport
+      const transport = (this as any).presence?.transport || (this as any).transport;
+      if (transport && transport.clients) {
+        const wsClient = transport.clients.get(client.sessionId);
+        if (wsClient && wsClient.send) {
+          const originalTransportSend = wsClient.send.bind(wsClient);
+          wsClient.send = (data: any, ...args: any[]) => {
+            const byteLength = Buffer.isBuffer(data) ? data.length :
+                              ArrayBuffer.isView(data) ? data.byteLength :
+                              typeof data === 'string' ? Buffer.byteLength(data, 'utf8') :
+                              data?.byteLength || data?.length || 0;
+            
+            if (byteLength > 0) {
+              const current = this.bytesSentPerPlayer.get(client.sessionId) || 0;
+              this.bytesSentPerPlayer.set(client.sessionId, current + byteLength);
+            }
+            
+            return originalTransportSend(data, ...args);
+          };
+        }
+      }
+    }
+>>>>>>> origin/main
 
       console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
@@ -99,9 +194,15 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     }
   }
 
+<<<<<<< HEAD
   async onLeave(client: Client, consented: boolean) {
     const playerNum = this.playerMapping.get(client.sessionId);
     if (!playerNum) return;
+=======
+  onLeave(client: Client, code?: number) {
+    const playerNum = this.playerMapping.get(client.sessionId);
+    console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
+>>>>>>> origin/main
     
     console.log(`Player ${playerNum} left: ${client.sessionId} (consented: ${consented})`);
     
@@ -160,6 +261,7 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     if (this.gameLoop) {
       clearInterval(this.gameLoop);
     }
+<<<<<<< HEAD
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
     }
@@ -251,6 +353,12 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
+=======
+    
+    // Log bandwidth when room is disposed (match ended or players left)
+    if (this.matchState && this.matchState.tick > 0) {
+      this.logBandwidth();
+>>>>>>> origin/main
     }
   }
 
@@ -266,8 +374,12 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
       for (const [sessionId] of this.playerMapping) {
         const current = this.bytesSentPerPlayer.get(sessionId) || 0;
         const perSecondList = this.bytesPerSecondPerPlayer.get(sessionId) || [];
-        const lastTotal = perSecondList.reduce((a, b) => a + b, 0);
+        
+        // Calculate bytes sent in this second
+        const lastTotal = perSecondList.length > 0 ? 
+          perSecondList.reduce((sum, b) => sum + b, 0) : 0;
         const bytesThisSecond = current - lastTotal;
+        
         perSecondList.push(bytesThisSecond);
         this.bytesPerSecondPerPlayer.set(sessionId, perSecondList);
       }
@@ -275,6 +387,7 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     
     this.gameLoop = setInterval(() => {
       if (!this.matchState.paused && this.matchState.result === null) {
+<<<<<<< HEAD
         // Measure tick interval accuracy
         const now = Date.now();
         if (this.lastTickTime > 0) {
@@ -296,17 +409,58 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
         }
 
         if (this.matchState.result !== null) {
+=======
+        try {
+          // Test-only fault injection
+          if (process.env.TURF_DUEL_TEST_INJECT_FAULT === 'true' && 
+              (global as any).FAULT_ROOM_ID === this.roomId &&
+              this.matchState.tick > 10 &&
+              this.matchState.tick < 15) {
+            console.log(`[TEST] Injecting fault in room ${this.roomId} at tick ${this.matchState.tick}`);
+            throw new Error('TEST_INJECTED_FAULT');
+          }
+
+          const inputs = [...this.inputQueue];
+          this.inputQueue = [];
+          
+          const result = step(this.matchState, inputs);
+          this.matchState = result.state;
+          this.syncState();
+
+          if (this.matchState.result !== null) {
+            clearInterval(bandwidthInterval);
+            console.log('Match ended:', this.matchState.result);
+            this.logBandwidth();
+          }
+        } catch (error) {
+          console.error(`Room ${this.roomId} tick error:`, error);
+>>>>>>> origin/main
           clearInterval(bandwidthInterval);
-          console.log('Match ended:', this.matchState.result);
-          this.logBandwidth();
+          if (this.gameLoop) {
+            clearInterval(this.gameLoop);
+          }
+          this.disconnect().catch(err => console.error('Failed to dispose room:', err));
         }
       }
     }, tickInterval);
   }
 
-  private handleInput(client: Client, message: { direction: string }) {
+  private handleInput(client: Client, message: any) {
     const playerNum = this.playerMapping.get(client.sessionId);
     if (!playerNum) return;
+
+    // Validate message structure
+    if (!message || typeof message !== 'object' || typeof message.direction !== 'string') {
+      console.warn(`Invalid input from ${client.sessionId}: malformed message`);
+      return;
+    }
+
+    // Validate direction against whitelist
+    const validDirections = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+    if (!validDirections.includes(message.direction)) {
+      console.warn(`Invalid input from ${client.sessionId}: unknown direction '${message.direction}'`);
+      return;
+    }
 
     const direction = message.direction as Direction;
     const input: PlayerInput = {
@@ -342,6 +496,15 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
       state.result.tick = this.matchState.result.tick;
     }
 
+    // Sync full grid for lossless state
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const index = y * GRID_SIZE + x;
+        state.grid[index] = this.matchState.grid[y][x];
+      }
+    }
+
+    // Keep cellUpdates for backward compatibility and debugging
     state.cellUpdates.length = 0;
     const changedCells = this.getChangedCells();
     for (const cell of changedCells) {
@@ -420,28 +583,38 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
   }
 
   private logBandwidth() {
-    console.log('\n=== Bandwidth Report (Estimated) ===');
+    console.log('\n=== Bandwidth Report (Measured) ===');
     const seconds = this.matchState.tick / TICKS_PER_SECOND;
-    
-    // Estimate bandwidth based on Colyseus Schema delta encoding
-    // Each tick sends: player positions (8 bytes), directions (2 bytes), 
-    // territoryCells (4 bytes), tick (4 bytes), cellUpdates (~10-20 bytes avg)
-    // Protocol overhead (~15 bytes) = ~43-57 bytes per tick
-    const bytesPerTick = 50; // Conservative estimate
-    const totalBytes = this.matchState.tick * bytesPerTick;
-    const avgBytesPerSec = Math.round(totalBytes / seconds);
-    const peakBytesPerSec = Math.round(bytesPerTick * TICKS_PER_SECOND * 1.2); // 20% overhead for heavy frames
     
     for (const [sessionId] of this.bytesSentPerPlayer) {
       const playerNum = this.playerMapping.get(sessionId);
+      const totalBytes = this.bytesSentPerPlayer.get(sessionId) || 0;
+      const bytesPerSecondList = this.bytesPerSecondPerPlayer.get(sessionId) || [];
+      
+      const avgBytesPerSec = Math.round(totalBytes / seconds);
+      const peakBytesPerSec = Math.max(...bytesPerSecondList, 0);
+      
+      // Calculate P95
+      const sorted = [...bytesPerSecondList].sort((a, b) => a - b);
+      const p95Index = Math.ceil(sorted.length * 0.95) - 1;
+      const p95BytesPerSec = sorted[Math.max(0, p95Index)] || 0;
       
       console.log(`\nPlayer ${playerNum} (${sessionId}):`);
-      console.log(`  Total: ${totalBytes} bytes`);
-      console.log(`  Average: ${avgBytesPerSec} bytes/sec`);
-      console.log(`  Peak: ${peakBytesPerSec} bytes/sec (estimated)`);
+      console.log(`  Total: ${totalBytes.toLocaleString()} bytes (${(totalBytes / 1024).toFixed(2)} KB)`);
+      console.log(`  Average: ${avgBytesPerSec.toLocaleString()} bytes/sec (~${(avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
+      console.log(`  P95: ${p95BytesPerSec.toLocaleString()} bytes/sec (~${(p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
+      console.log(`  Peak: ${peakBytesPerSec.toLocaleString()} bytes/sec (~${(peakBytesPerSec / 1024).toFixed(2)} KB/s)`);
     }
-    console.log('\nNote: Bandwidth is estimated based on Colyseus Schema delta encoding.');
-    console.log('Actual bytes may vary based on compression and protocol overhead.');
+    
+    // Calculate total
+    const players = Array.from(this.bytesSentPerPlayer.keys());
+    const totalBytes = players.reduce((sum, id) => sum + (this.bytesSentPerPlayer.get(id) || 0), 0);
+    const avgPerPlayer = Math.round(totalBytes / players.length / seconds);
+    
+    console.log(`\nPer-Player Average: ${avgPerPlayer.toLocaleString()} bytes/sec (~${(avgPerPlayer / 1024).toFixed(2)} KB/s)`);
+    console.log(`Total Match Data: ${totalBytes.toLocaleString()} bytes (${(totalBytes / 1024).toFixed(2)} KB)`);
+    console.log('\nNote: Measured by intercepting client.send() calls on the server.');
+    console.log('      Includes Colyseus Schema delta encoding + protocol overhead.');
     console.log();
   }
 }
