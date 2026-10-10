@@ -133,7 +133,7 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     }
 
     const encodedState = this.state.encodeAll();
-    const byteLength = encodedState ? encodedState.byteLength : 0;
+    const byteLength = encodedState ? encodedState.length : 0;
     
     if (byteLength > 0) {
       for (const [sessionId] of this.playerMapping) {
