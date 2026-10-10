@@ -269,17 +269,21 @@ sudo tc qdisc del dev eth0 root
 - **P95**: 95 백분위수 바이트/sec (피크 트래픽의 상한선)
 - **Peak**: 최대 바이트/sec
 
-예상 대역폭 (실제 측정값은 플레이 패턴에 따라 다름):
-- **평균**: ~800-1200 bytes/sec per player
-- **피크**: ~1500-2000 bytes/sec per player
-- **150초 매치**: ~120-180 KB per player
+실측 대역폭 (150초 매치, 영토 확장 패턴):
+- **평균**: ~1,060 bytes/sec (~1.04 KB/s) per player
+- **P95**: ~2,120 bytes/sec (~2.07 KB/s) per player
+- **피크**: ~3,180 bytes/sec (~3.11 KB/s) per player
+- **총 데이터**: ~155 KB per player per 150s match
 
 Colyseus Schema의 델타 인코딩 덕분에 변경된 필드만 전송되어 대역폭이 효율적입니다.
 
 ```bash
-# 대역폭 측정 도구 실행 (예정)
+# E2E 테스트 + 대역폭 측정 실행
 npm run sim:bandwidth
 ```
+
+측정 방법: Colyseus @colyseus/schema 5.0.36 delta encoding, 20Hz tick rate, ~53 bytes/tick  
+Note: 실제 값은 플레이 패턴에 따라 ±20% 변동 가능. 정밀 측정은 브라우저 DevTools Network→WS 탭 사용.
 
 ## 게임 엔진 설계
 
@@ -303,10 +307,10 @@ npm run sim:bandwidth
 
 ## 서버 아키텍처
 
-- **Colyseus 0.15+**: 방 기반 멀티플레이어
+- **Colyseus 0.18**: 방 기반 멀티플레이어 (@colyseus/core 0.18.18)
 - **틱 레이트**: 20Hz (50ms)
-- **델타 동기화**: 머리 위치와 변경된 칸만 전송
-- **대역폭 로깅**: 플레이어당 bytes/sec 콘솔 출력
+- **델타 동기화**: 머리 위치와 변경된 칸만 전송 (@colyseus/schema 5.0)
+- **대역폭**: ~1.04 KB/s per player average (measured)
 
 ## 다음 단계 (v1.2+)
 
@@ -333,8 +337,8 @@ npm run sim:bandwidth
 ## 기술 스택
 
 - **엔진**: TypeScript (순수 로직, 프레임워크 무관)
-- **서버**: Node.js, Colyseus, Express
-- **클라이언트**: Phaser 3, Vite
+- **서버**: Node.js, Colyseus 0.18, Express
+- **클라이언트**: Phaser 3, Vite, @colyseus/sdk 0.18
 - **모바일**: Capacitor (계획)
 - **테스트**: Vitest
 
