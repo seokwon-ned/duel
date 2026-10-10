@@ -460,24 +460,33 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     // Find state at targetTick
     const historyEntry = this.stateHistory.find(s => s.tick === targetTick);
     if (!historyEntry) {
+      console.log(`No history for tick ${targetTick}, applying at current tick ${this.matchState.tick}`);
       // No history for that tick - apply at current tick
       input.clientTick = this.matchState.tick;
       this.inputQueue.push(input);
       return;
     }
     
+    console.log(`Rollback: restoring tick ${targetTick}, current tick ${this.matchState.tick}`);
+    
     // Deep clone the historical state
     const restoredState = JSON.parse(JSON.stringify(historyEntry)) as MatchState;
     
     // Re-simulate from targetTick to current tick with the new input
-    const inputs: PlayerInput[] = [input];
     const ticksToResimulate = this.matchState.tick - targetTick;
     
     let currentState = restoredState;
-    for (let i = 0; i < ticksToResimulate; i++) {
-      const result = step(currentState, i === 0 ? inputs : []);
+    // Apply input at the first tick (targetTick)
+    const result = step(currentState, [input]);
+    currentState = result.state;
+    
+    // Continue simulation without new inputs for remaining ticks
+    for (let i = 1; i < ticksToResimulate; i++) {
+      const result = step(currentState, []);
       currentState = result.state;
     }
+    
+    console.log(`Rollback complete: from tick ${targetTick} to ${this.matchState.tick}, player ${input.player} applied ${input.direction}`);
     
     // Update matchState with re-simulated state
     this.matchState = currentState;

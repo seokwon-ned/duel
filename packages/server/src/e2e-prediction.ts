@@ -35,60 +35,72 @@ async function testPredictionWithLatency(): Promise<TestResult> {
     const room2 = await client2.joinOrCreate('turf_duel');
     console.log(`✓ Both clients connected to room: ${room1.roomId}`);
 
-    // Wait for game to start
-    await delay(200);
+    // Wait for game to start and state sync
+    await delay(300);
 
-    // Record player 1's position before turn
-    const initialPos = {
+    // Record player 1's position and tick when we send the input
+    let initialPos = {
       x: (room1.state as any).player1.position.x,
       y: (room1.state as any).player1.position.y,
     };
-    const currentTick = (room1.state as any).tick;
+    let currentTick = (room1.state as any).tick;
 
     console.log(`Initial P1 position: (${initialPos.x}, ${initialPos.y}) at tick ${currentTick}`);
 
-    // Send input with clientTick (simulating client prediction)
-    // Player 1 turns DOWN (should happen at current cell)
+    // Send input with clientTick
     room1.send('input', { 
       direction: Direction.DOWN, 
       clientTick: currentTick,
     });
 
-    // Add 200ms latency before checking result
+    // Wait for server to process (simulate 200ms network latency)
     await delay(200);
 
-    // Check where the turn actually happened on the server
-    // The turn should have been applied at tick currentTick, not later
+    // Server should have rolled back and applied input at clientTick
+    // Check the direction changed (turn happened)
+    const newDirection = (room1.state as any).player1.direction;
     const turnPosition = {
       x: (room1.state as any).player1.position.x,
       y: (room1.state as any).player1.position.y,
     };
 
-    console.log(`Turn position: (${turnPosition.x}, ${turnPosition.y})`);
+    console.log(`After rollback: direction=${newDirection}, position=(${turnPosition.x}, ${turnPosition.y})`);
 
-    // With prediction and rollback, even with 200ms latency:
-    // - The turn should happen at or near the intended cell
-    // - Not 4+ cells away (which would happen without prediction)
-    
-    const distance = Math.abs(turnPosition.x - initialPos.x) + Math.abs(turnPosition.y - initialPos.y);
-    
-    if (distance > 2) {
-      await room1.leave();
-      await room2.leave();
+    // Verify direction changed (input was applied)
+    if (newDirection !== Direction.DOWN) {
+      await room1.leave(true);
+      await room2.leave(true);
       await server.gracefullyShutdown();
       return {
         passed: false,
-        message: `Turn happened too far from intended cell: distance=${distance} cells (expected ≤2)`,
+        message: `Input not applied: direction is ${newDirection}, expected DOWN`,
       };
     }
 
-    await room1.leave(true); // consented leave, no reconnection
+    // With rollback, position should be close to initial (within lag window tolerance)
+    // Since we applied at clientTick but server continued, some movement is expected
+    const distance = Math.abs(turnPosition.x - initialPos.x) + Math.abs(turnPosition.y - initialPos.y);
+    
+    console.log(`Distance from intended cell: ${distance}`);
+    
+    // Accept if turn happened within reasonable range (rollback worked)
+    if (distance > 1) {
+      await room1.leave(true);
+      await room2.leave(true);
+      await server.gracefullyShutdown();
+      return {
+        passed: false,
+        message: `Turn too far from intended cell: distance=${distance} (expected ≤1). Initial: (${initialPos.x},${initialPos.y}), Turn: (${turnPosition.x},${turnPosition.y})`,
+      };
+    }
+
+    await room1.leave(true);
     await room2.leave(true);
     await server.gracefullyShutdown();
 
     return {
       passed: true,
-      message: `✓ Turn at intended cell with 200ms latency (distance=${distance})`,
+      message: `✓ Rollback worked: input applied with 200ms latency (distance=${distance})`,
     };
   } catch (error) {
     await server.gracefullyShutdown();
