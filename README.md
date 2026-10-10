@@ -179,23 +179,26 @@ QA 테스트용 (200ms 지연 / 5% 손실)
 
 #### 방법 1: Network Link Conditioner (권장)
 
-1. Xcode → Preferences → Components → "Additional Tools for Xcode" 다운로드
-2. `/Applications/Xcode.app/Contents/Applications/Network Link Conditioner.prefPane` 열기
-3. 프로필 설정:
+1. Xcode → Settings → Downloads → Components → "Additional Tools for Xcode" 다운로드
+2. `/Applications/Xcode.app/Contents/Applications/Network Link Conditioner.prefPane` 더블클릭하여 설치
+3. 시스템 설정 → Network Link Conditioner 열기
+4. 프로필 설정:
    - Profile: Custom
    - Downlink: Bandwidth 1000 kbps, Delay 100ms, Packet Loss 5%
    - Uplink: Bandwidth 1000 kbps, Delay 100ms, Packet Loss 5%
-4. "Turn On" 활성화
+   - (양방향 100ms씩 = 총 200ms RTT)
+5. "Turn On" 활성화
+6. 테스트 완료 후 "Turn Off" 또는 시스템 재부팅
 
 #### 방법 2: dnctl + pfctl (고급)
 
 포트 2567만 대상으로:
 
 ```bash
-# Dummynet 파이프 생성
+# Dummynet 파이프 생성 (200ms 지연, 5% 손실)
 sudo dnctl pipe 1 config delay 200 plr 0.05
 
-# PF 규칙 파일 생성
+# PF 규칙 추가
 echo "dummynet in proto tcp from any to any port 2567 pipe 1" | sudo pfctl -f -
 
 # 활성화
@@ -210,7 +213,7 @@ sudo pfctl -d
 `tc netem` 사용:
 
 ```bash
-# 지연 200ms, 손실 5% 추가
+# 지연 200ms, 손실 5% 추가 (loopback)
 sudo tc qdisc add dev lo root netem delay 200ms loss 5%
 
 # 제거
@@ -240,6 +243,43 @@ sudo tc qdisc del dev eth0 root
    - Lag: 체크, 200ms
    - Drop: 체크, Inbound/Outbound 5%
 4. Start 클릭
+5. 테스트 완료 후 Stop 클릭
+
+## 대역폭 측정
+
+실제 WebSocket 트래픽을 확인하여 네트워크 사용량을 모니터링할 수 있습니다.
+
+### 브라우저 DevTools에서 확인
+
+1. 클라이언트 실행 (`cd packages/client && npm run dev`)
+2. 브라우저에서 `http://localhost:3000` 열기
+3. **DevTools 열기** (F12 또는 우클릭 → "검사")
+4. **Network 탭** 선택
+5. **WS 필터** 클릭 (WebSocket만 표시)
+6. "Connect to Server" 클릭하여 게임 시작
+7. WebSocket 연결 클릭 → **Messages 탭**에서 실시간 메시지 확인
+8. 각 메시지의 크기(Bytes)와 시간(Time) 확인 가능
+
+### 서버 측 측정
+
+서버는 매 틱마다 각 플레이어에게 전송된 실제 바이트를 측정하고 있습니다. 매치 종료 시 콘솔에 다음 정보가 출력됩니다:
+
+- **Total**: 매치당 총 전송 바이트
+- **Average**: 초당 평균 바이트 (bytes/sec)
+- **P95**: 95 백분위수 바이트/sec (피크 트래픽의 상한선)
+- **Peak**: 최대 바이트/sec
+
+예상 대역폭 (실제 측정값은 플레이 패턴에 따라 다름):
+- **평균**: ~800-1200 bytes/sec per player
+- **피크**: ~1500-2000 bytes/sec per player
+- **150초 매치**: ~120-180 KB per player
+
+Colyseus Schema의 델타 인코딩 덕분에 변경된 필드만 전송되어 대역폭이 효율적입니다.
+
+```bash
+# 대역폭 측정 도구 실행 (예정)
+npm run sim:bandwidth
+```
 
 ## 게임 엔진 설계
 
