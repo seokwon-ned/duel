@@ -12,6 +12,8 @@ import {
   GRID_SIZE,
   START_AREA_SIZE,
   MATCH_DURATION_TICKS,
+  MOVEMENT_INCREMENT,
+  MOVEMENT_THRESHOLD,
 } from './types.js';
 import {
   isOppositeDirection,
@@ -49,6 +51,7 @@ export function createInitialState(): MatchState {
     inputBuffer: null,
     isAlive: true,
     territoryCells: START_AREA_SIZE * START_AREA_SIZE,
+    movementAccumulator: 0,
   };
 
   const player2: PlayerState = {
@@ -57,6 +60,7 @@ export function createInitialState(): MatchState {
     inputBuffer: null,
     isAlive: true,
     territoryCells: START_AREA_SIZE * START_AREA_SIZE,
+    movementAccumulator: 0,
   };
 
   return {
@@ -108,13 +112,19 @@ function movePhase(state: MatchState): void {
   for (const player of [state.player1, state.player2]) {
     if (!player.isAlive) continue;
 
-    if (player.inputBuffer !== null) {
-      player.direction = player.inputBuffer;
-      player.inputBuffer = null;
-    }
+    player.movementAccumulator += MOVEMENT_INCREMENT;
 
-    const nextPos = getNextPosition(player.position, player.direction);
-    player.position = nextPos;
+    if (player.movementAccumulator >= MOVEMENT_THRESHOLD) {
+      player.movementAccumulator -= MOVEMENT_THRESHOLD;
+      
+      if (player.inputBuffer !== null) {
+        player.direction = player.inputBuffer;
+        player.inputBuffer = null;
+      }
+
+      const nextPos = getNextPosition(player.position, player.direction);
+      player.position = nextPos;
+    }
   }
 }
 

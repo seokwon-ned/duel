@@ -24,6 +24,7 @@ export interface PlayerState {
   inputBuffer: Direction | null;
   isAlive: boolean;
   territoryCells: number;
+  movementAccumulator: number;
 }
 
 export enum ResultReason {
@@ -69,4 +70,7 @@ export interface StepResult {
 export const GRID_SIZE = 40;
 export const MATCH_DURATION_TICKS = 3000; // 150s * 20 ticks/s
 export const TICKS_PER_SECOND = 20;
+export const CELLS_PER_SECOND = 8;
+export const MOVEMENT_THRESHOLD = TICKS_PER_SECOND; // 20
+export const MOVEMENT_INCREMENT = CELLS_PER_SECOND; // 8
 export const START_AREA_SIZE = 3;

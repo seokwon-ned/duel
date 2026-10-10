@@ -28,12 +28,16 @@ describe('Game Engine - 판정 Tests', () => {
     state.player1.direction = Direction.RIGHT;
     state.player2.direction = Direction.LEFT;
     
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 25; i++) {
       const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
       state = result.state;
     }
     
-    state.player2.position = { x: 13, y: 11 };
+    state.grid[11][14] = CellType.PLAYER1_TRAIL;
+    state.grid[11][15] = CellType.PLAYER1_TRAIL;
+    
+    state.player2.position = { x: 14, y: 12 };
+    state.player2.movementAccumulator = 20;
     state.player2.direction = Direction.UP;
     
     const result = step(state, [{ player: 2, direction: Direction.UP }]);
@@ -48,6 +52,7 @@ describe('Game Engine - 판정 Tests', () => {
     let state = createInitialState();
     
     state.player1.position = { x: 10, y: 10 };
+    state.player1.movementAccumulator = 20;
     
     for (let y = 8; y <= 12; y++) {
       for (let x = 8; x <= 12; x++) {
@@ -116,6 +121,8 @@ describe('Game Engine - 판정 Tests', () => {
     state.player2.position = { x: 39, y: 5 };
     state.player1.direction = Direction.LEFT;
     state.player2.direction = Direction.RIGHT;
+    state.player1.movementAccumulator = 20;
+    state.player2.movementAccumulator = 20;
     
     const result = step(state, []);
     
@@ -129,6 +136,8 @@ describe('Game Engine - 판정 Tests', () => {
     
     state.player1.position = { x: 10, y: 10 };
     state.player2.position = { x: 15, y: 15 };
+    state.player1.movementAccumulator = 20;
+    state.player2.movementAccumulator = 20;
     
     state.grid[10][11] = CellType.PLAYER2_TRAIL;
     state.grid[15][14] = CellType.PLAYER1_TRAIL;
@@ -148,6 +157,8 @@ describe('Game Engine - 판정 Tests', () => {
     
     state.player1.position = { x: 5, y: 5 };
     state.player2.position = { x: 6, y: 6 };
+    state.player1.movementAccumulator = 20;
+    state.player2.movementAccumulator = 20;
     
     for (let y = 3; y <= 5; y++) {
       for (let x = 3; x <= 5; x++) {
@@ -277,23 +288,28 @@ describe('Game Engine - 판정 Tests', () => {
   test('입력 버퍼 1개 - Fast input sequence does not suicide', () => {
     let state = createInitialState();
     
-    for (let y = 0; y < 5; y++) {
-      for (let x = 0; x < 5; x++) {
+    for (let y = 0; y < 10; y++) {
+      for (let x = 0; x < 10; x++) {
         state.grid[y][x] = CellType.PLAYER1_TERRITORY;
       }
     }
     
     state.player1.position = { x: 5, y: 5 };
     state.player1.direction = Direction.RIGHT;
+    state.player1.movementAccumulator = 12;
     
     let result = step(state, [{ player: 1, direction: Direction.UP }]);
     state = result.state;
     
-    result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
-    state = result.state;
+    for (let i = 0; i < 5; i++) {
+      result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
+      state = result.state;
+    }
     
-    result = step(state, [{ player: 1, direction: Direction.DOWN }]);
-    state = result.state;
+    for (let i = 0; i < 5; i++) {
+      result = step(state, [{ player: 1, direction: Direction.DOWN }]);
+      state = result.state;
+    }
     
     expect(state.player1.isAlive).toBe(true);
   });
@@ -318,6 +334,52 @@ describe('Game Engine - 판정 Tests', () => {
     expect(result1.tick).toBe(result2.tick);
   });
 
+  test('이동 속도 - 8 cells/s: 20 ticks = 8 cells moved', () => {
+    let state = createInitialState();
+    const startX = state.player1.position.x;
+    
+    for (let i = 0; i < 20; i++) {
+      const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
+      state = result.state;
+    }
+    
+    const distance = state.player1.position.x - startX;
+    expect(distance).toBe(8);
+  });
+
+  test('이동 타이밍 - Both players move identically', () => {
+    let state = createInitialState();
+    
+    state.player1.position = { x: 10, y: 10 };
+    state.player2.position = { x: 30, y: 30 };
+    state.player1.direction = Direction.RIGHT;
+    state.player2.direction = Direction.LEFT;
+    state.player1.movementAccumulator = 0;
+    state.player2.movementAccumulator = 0;
+    
+    for (let y = 8; y <= 12; y++) {
+      for (let x = 8; x <= 12; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    for (let y = 28; y <= 32; y++) {
+      for (let x = 28; x <= 32; x++) {
+        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
+      }
+    }
+    
+    for (let i = 0; i < 20; i++) {
+      const result = step(state, [
+        { player: 1, direction: Direction.RIGHT },
+        { player: 2, direction: Direction.LEFT },
+      ]);
+      state = result.state;
+    }
+    
+    expect(state.player1.movementAccumulator).toBe(state.player2.movementAccumulator);
+  });
+
   test('감싼 영역 안 상대 선 - Opponent trail inside enclosure survives', () => {
     let state = createInitialState();
     
@@ -329,6 +391,7 @@ describe('Game Engine - 판정 Tests', () => {
     
     state.player1.position = { x: 10, y: 0 };
     state.player1.direction = Direction.LEFT;
+    state.player1.movementAccumulator = 20;
     
     state.grid[5][5] = CellType.PLAYER1_TRAIL;
     state.grid[5][6] = CellType.PLAYER1_TRAIL;
