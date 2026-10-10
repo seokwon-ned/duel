@@ -23,7 +23,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   maxClients = 2;
 
   onCreate(options: any) {
-    this.setState(new TurfDuelState());
+    const state = new TurfDuelState();
+    this.setState(state);
     this.matchState = createInitialState();
     
     this.onMessage('input', (client, message) => {
@@ -46,18 +47,24 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
-    // Intercept client.send to measure actual bytes
-    const originalSend = client.send.bind(client);
-    (client as any).send = (type: any, message?: any) => {
-      const encoded = typeof message === 'string' ? Buffer.byteLength(message) : 
-                      message?.byteLength || message?.length || 
-                      (message ? Buffer.byteLength(JSON.stringify(message)) : 0);
-      
-      const current = this.bytesSentPerPlayer.get(client.sessionId) || 0;
-      this.bytesSentPerPlayer.set(client.sessionId, current + encoded);
-      
-      return originalSend(type, message);
-    };
+    // Hook into WebSocket to measure actual bytes sent
+    const ws = (client as any).raw;
+    if (ws && ws.send) {
+      const originalWsSend = ws.send.bind(ws);
+      ws.send = (data: any, ...args: any[]) => {
+        const byteLength = Buffer.isBuffer(data) ? data.length :
+                          ArrayBuffer.isView(data) ? data.byteLength :
+                          typeof data === 'string' ? Buffer.byteLength(data, 'utf8') :
+                          data?.byteLength || data?.length || 0;
+        
+        if (byteLength > 0) {
+          const current = this.bytesSentPerPlayer.get(client.sessionId) || 0;
+          this.bytesSentPerPlayer.set(client.sessionId, current + byteLength);
+        }
+        
+        return originalWsSend(data, ...args);
+      };
+    }
 
     if (this.playerMapping.size === 2) {
       this.startGame();
@@ -183,28 +190,38 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   }
 
   private logBandwidth() {
-    console.log('\n=== Bandwidth Report (Estimated) ===');
+    console.log('\n=== Bandwidth Report (Measured) ===');
     const seconds = this.matchState.tick / TICKS_PER_SECOND;
-    
-    // Estimate bandwidth based on Colyseus Schema delta encoding
-    // Each tick sends: player positions (8 bytes), directions (2 bytes), 
-    // territoryCells (4 bytes), tick (4 bytes), cellUpdates (~10-20 bytes avg)
-    // Protocol overhead (~15 bytes) = ~43-57 bytes per tick
-    const bytesPerTick = 50; // Conservative estimate
-    const totalBytes = this.matchState.tick * bytesPerTick;
-    const avgBytesPerSec = Math.round(totalBytes / seconds);
-    const peakBytesPerSec = Math.round(bytesPerTick * TICKS_PER_SECOND * 1.2); // 20% overhead for heavy frames
     
     for (const [sessionId] of this.bytesSentPerPlayer) {
       const playerNum = this.playerMapping.get(sessionId);
+      const totalBytes = this.bytesSentPerPlayer.get(sessionId) || 0;
+      const bytesPerSecondList = this.bytesPerSecondPerPlayer.get(sessionId) || [];
+      
+      const avgBytesPerSec = Math.round(totalBytes / seconds);
+      const peakBytesPerSec = Math.max(...bytesPerSecondList, 0);
+      
+      // Calculate P95
+      const sorted = [...bytesPerSecondList].sort((a, b) => a - b);
+      const p95Index = Math.ceil(sorted.length * 0.95) - 1;
+      const p95BytesPerSec = sorted[Math.max(0, p95Index)] || 0;
       
       console.log(`\nPlayer ${playerNum} (${sessionId}):`);
-      console.log(`  Total: ${totalBytes} bytes`);
-      console.log(`  Average: ${avgBytesPerSec} bytes/sec`);
-      console.log(`  Peak: ${peakBytesPerSec} bytes/sec (estimated)`);
+      console.log(`  Total: ${totalBytes.toLocaleString()} bytes (${(totalBytes / 1024).toFixed(2)} KB)`);
+      console.log(`  Average: ${avgBytesPerSec.toLocaleString()} bytes/sec (~${(avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
+      console.log(`  P95: ${p95BytesPerSec.toLocaleString()} bytes/sec (~${(p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
+      console.log(`  Peak: ${peakBytesPerSec.toLocaleString()} bytes/sec (~${(peakBytesPerSec / 1024).toFixed(2)} KB/s)`);
     }
-    console.log('\nNote: Bandwidth is estimated based on Colyseus Schema delta encoding.');
-    console.log('Actual bytes may vary based on compression and protocol overhead.');
+    
+    // Calculate total
+    const players = Array.from(this.bytesSentPerPlayer.keys());
+    const totalBytes = players.reduce((sum, id) => sum + (this.bytesSentPerPlayer.get(id) || 0), 0);
+    const avgPerPlayer = Math.round(totalBytes / players.length / seconds);
+    
+    console.log(`\nPer-Player Average: ${avgPerPlayer.toLocaleString()} bytes/sec (~${(avgPerPlayer / 1024).toFixed(2)} KB/s)`);
+    console.log(`Total Match Data: ${totalBytes.toLocaleString()} bytes (${(totalBytes / 1024).toFixed(2)} KB)`);
+    console.log('\nNote: Measured by intercepting client.send() calls on the server.');
+    console.log('      Includes Colyseus Schema delta encoding + protocol overhead.');
     console.log();
   }
 }

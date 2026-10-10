@@ -29,6 +29,6 @@ export class TurfDuelState extends Schema {
   @type(PlayerSchema) player2 = new PlayerSchema();
   @type('number') tick: number = 0;
   @type('boolean') paused: boolean = false;
-  @type(MatchResultSchema) result: MatchResultSchema | undefined;
+  @type(MatchResultSchema) result?: MatchResultSchema;
   @type([CellUpdate]) cellUpdates = new Array<CellUpdate>();
 }
