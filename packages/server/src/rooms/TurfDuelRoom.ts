@@ -19,18 +19,18 @@ interface PlayerDisconnectInfo {
 }
 
 export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
-  private matchState!: MatchState;
-  private gameLoop: NodeJS.Timeout | null = null;
-  private playerMapping = new Map<string, 1 | 2>();
-  private bytesSentPerPlayer = new Map<string, number>();
-  private previousGrid: CellType[][] | null = null;
-  private inputQueue: PlayerInput[] = [];
-  private bytesPerSecondPerPlayer = new Map<string, number[]>();
-  private lastBandwidthReset = Date.now();
-  private disconnectInfo = new Map<string, PlayerDisconnectInfo>();
-  private countdownInterval: NodeJS.Timeout | null = null;
-  private tickIntervals: number[] = [];
-  private lastTickTime: number = 0;
+  protected inputQueue: PlayerInput[] = [];
+  protected bytesPerSecondPerPlayer = new Map<string, number[]>();
+  protected lastBandwidthReset = Date.now();
+  protected disconnectInfo = new Map<string, PlayerDisconnectInfo>();
+  protected countdownInterval: NodeJS.Timeout | null = null;
+  protected tickIntervals: number[] = [];
+  protected lastTickTime: number = 0;
+  protected matchState!: MatchState;
+  protected gameLoop: NodeJS.Timeout | null = null;
+  protected bytesSentPerPlayer = new Map<string, number>();
+  protected playerMapping = new Map<string, 1 | 2>();
+  protected previousGrid: CellType[][] | null = null;
 
   maxClients = 2;
 
@@ -318,7 +318,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }
   }
 
-  private startGame() {
+  protected startGame() {
     console.log('Starting game loop at 20Hz');
     
     const tickInterval = 1000 / TICKS_PER_SECOND;
@@ -369,15 +369,6 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       
       if (!this.matchState.paused && this.matchState.result === null) {
         try {
-          // Test-only fault injection
-          if (process.env.TURF_DUEL_TEST_INJECT_FAULT === 'true' && 
-              (global as any).FAULT_ROOM_ID === this.roomId &&
-              this.matchState.tick > 10 &&
-              this.matchState.tick < 15) {
-            console.log(`[TEST] Injecting fault in room ${this.roomId} at tick ${this.matchState.tick}`);
-            throw new Error('TEST_INJECTED_FAULT');
-          }
-
           const inputs = [...this.inputQueue];
           this.inputQueue = [];
           
@@ -428,7 +419,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.inputQueue.push(input);
   }
 
-  private syncState() {
+  protected syncState() {
     const state = this.state;
     
     state.player1.position.x = this.matchState.player1.position.x;
@@ -493,7 +484,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     return changed;
   }
 
-  private logBandwidth() {
+  protected logBandwidth() {
     console.log('\n=== Bandwidth Report (Measured) ===');
     const seconds = this.matchState.tick / TICKS_PER_SECOND;
     

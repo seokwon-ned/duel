@@ -3,7 +3,7 @@
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
-import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
+import { TurfDuelTestRoom } from './rooms/TurfDuelTestRoom.js';
 
 async function testFaultIsolation(): Promise<void> {
   console.log('\n=== Fault Isolation: Room Error Doesn\'t Crash Other Rooms ===\n');
@@ -15,7 +15,7 @@ async function testFaultIsolation(): Promise<void> {
     transport: new WebSocketTransport({}),
   });
 
-  server.define('turf_duel', TurfDuelRoom);
+  server.define('turf_duel', TurfDuelTestRoom);
   await server.listen(12572);
   console.log('✓ Server started on port 12572');
   console.log('✓ Fault injection enabled (TEST_INJECT_FAULT=true)');
