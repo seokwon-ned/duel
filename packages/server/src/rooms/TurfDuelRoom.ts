@@ -85,6 +85,15 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.playerMapping.set(client.sessionId, playerNum);
     this.bytesSentPerPlayer.set(client.sessionId, 0);
     this.bytesPerSecondPerPlayer.set(client.sessionId, []);
+    
+    // Initialize disconnect tracking
+    if (!this.disconnectInfo.has(client.sessionId)) {
+      this.disconnectInfo.set(client.sessionId, {
+        disconnectCount: 0,
+        totalDisconnectedMs: 0,
+        currentDisconnectStartTime: null,
+      });
+    }
 
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
@@ -136,22 +145,176 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }
   }
 
-  onLeave(client: Client, code?: number) {
+  async onLeave(client: Client, code?: number) {
     const playerNum = this.playerMapping.get(client.sessionId);
+    if (!playerNum) return;
+    
     console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
     
+    const info = this.disconnectInfo.get(client.sessionId);
+    if (!info) return;
+
+    // Track disconnect
+    info.disconnectCount++;
+    info.currentDisconnectStartTime = Date.now();
+    
+    const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
+    playerState.connected = false;
+    playerState.disconnectCount = info.disconnectCount;
+    
+    console.log(`Player ${playerNum} disconnect #${info.disconnectCount}, total time: ${info.totalDisconnectedMs}ms`);
+    
+    // Check if player exceeded disconnect limits
+    if (info.disconnectCount > 2) {
+      console.log(`Player ${playerNum} exceeded 2 disconnects, loses match`);
+      this.handleDisconnectLoss(playerNum);
+      return;
+    }
+    
+    if (info.totalDisconnectedMs > 30000) {
+      console.log(`Player ${playerNum} exceeded 30s total disconnect time, loses match`);
+      this.handleDisconnectLoss(playerNum);
+      return;
+    }
+    
+    // Pause game and start countdown
     this.matchState.paused = true;
-    this.syncState();
+    this.updatePauseState();
+    this.startDisconnectCountdown();
+    
+    // Allow reconnection for 30 seconds
+    try {
+      await this.allowReconnection(client, 30);
+      console.log(`Player ${playerNum} reconnection window closed`);
+      
+      // Check if they exceeded time limit during disconnect
+      if (info.currentDisconnectStartTime !== null) {
+        const disconnectDuration = Date.now() - info.currentDisconnectStartTime;
+        info.totalDisconnectedMs += disconnectDuration;
+        
+        if (info.totalDisconnectedMs > 30000) {
+          console.log(`Player ${playerNum} exceeded 30s total disconnect time, loses match`);
+          this.handleDisconnectLoss(playerNum);
+        }
+      }
+    } catch (e) {
+      console.log(`Player ${playerNum} reconnection failed:`, e);
+    }
+  }
+  
+  async onReconnect(client: Client) {
+    const playerNum = this.playerMapping.get(client.sessionId);
+    if (!playerNum) return;
+    
+    console.log(`Player ${playerNum} reconnected: ${client.sessionId}`);
+    
+    const info = this.disconnectInfo.get(client.sessionId);
+    if (info && info.currentDisconnectStartTime !== null) {
+      const disconnectDuration = Date.now() - info.currentDisconnectStartTime;
+      info.totalDisconnectedMs += disconnectDuration;
+      info.currentDisconnectStartTime = null;
+      
+      console.log(`Player ${playerNum} was disconnected for ${disconnectDuration}ms (total: ${info.totalDisconnectedMs}ms)`);
+    }
+    
+    const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
+    playerState.connected = true;
+    playerState.totalDisconnectedMs = info?.totalDisconnectedMs || 0;
+    
+    this.updatePauseState();
   }
 
   onDispose() {
     if (this.gameLoop) {
       clearInterval(this.gameLoop);
     }
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+    }
     
     // Log bandwidth when room is disposed (match ended or players left)
     if (this.matchState && this.matchState.tick > 0) {
       this.logBandwidth();
+    }
+  }
+  
+  private updatePauseState() {
+    const p1Connected = this.state.player1.connected;
+    const p2Connected = this.state.player2.connected;
+    
+    if (!p1Connected && !p2Connected) {
+      this.state.disconnectedPlayer = 3;
+      this.matchState.paused = true;
+    } else if (!p1Connected) {
+      this.state.disconnectedPlayer = 1;
+      this.matchState.paused = true;
+    } else if (!p2Connected) {
+      this.state.disconnectedPlayer = 2;
+      this.matchState.paused = true;
+    } else {
+      this.state.disconnectedPlayer = 0;
+      this.matchState.paused = false;
+      this.state.disconnectCountdownSeconds = 0;
+      if (this.countdownInterval) {
+        clearInterval(this.countdownInterval);
+        this.countdownInterval = null;
+      }
+    }
+    
+    this.syncState();
+  }
+  
+  private startDisconnectCountdown() {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+    }
+    
+    this.countdownInterval = setInterval(() => {
+      for (const [sessionId, info] of this.disconnectInfo) {
+        if (info.currentDisconnectStartTime !== null) {
+          const elapsed = Date.now() - info.currentDisconnectStartTime;
+          const remaining = Math.max(0, 30000 - (info.totalDisconnectedMs + elapsed));
+          this.state.disconnectCountdownSeconds = Math.ceil(remaining / 1000);
+          
+          if (info.totalDisconnectedMs + elapsed > 30000) {
+            const playerNum = this.playerMapping.get(sessionId);
+            if (playerNum) {
+              console.log(`Player ${playerNum} exceeded 30s total disconnect time during countdown`);
+              this.handleDisconnectLoss(playerNum);
+            }
+            return;
+          }
+        }
+      }
+      
+      this.syncState();
+    }, 1000);
+  }
+  
+  private handleDisconnectLoss(loserNum: 1 | 2) {
+    const p1Disconnected = !this.state.player1.connected;
+    const p2Disconnected = !this.state.player2.connected;
+    
+    if (p1Disconnected && p2Disconnected) {
+      console.log('Both players disconnected, match void');
+      this.matchState.result = {
+        winner: 0,
+        reason: ResultReason.BOTH_DISCONNECTED,
+        tick: this.matchState.tick,
+      };
+    } else {
+      this.matchState.result = {
+        winner: loserNum === 1 ? 2 : 1,
+        reason: ResultReason.DISCONNECTED,
+        tick: this.matchState.tick,
+      };
+    }
+    
+    this.syncState();
+    
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
     }
   }
 

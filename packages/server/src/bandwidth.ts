@@ -75,27 +75,6 @@ async function measureBandwidth(): Promise<void> {
       stats1.totalBytes += byteLength;
       bytesThisSecond1 += byteLength;
 
-<<<<<<< HEAD
-    let finalTick = 0;
-
-    await new Promise<void>((resolve) => {
-      room1.onStateChange((state: any) => {
-        if (state.result) {
-          clearInterval(interval);
-          finalTick = state.tick;
-          
-          // Flush last second
-          if (bytesThisSecond1 > 0) {
-            stats1.bytesPerSecond.push(bytesThisSecond1);
-            stats1.peakBytesPerSecond = Math.max(stats1.peakBytesPerSecond, bytesThisSecond1);
-          }
-          if (bytesThisSecond2 > 0) {
-            stats2.bytesPerSecond.push(bytesThisSecond2);
-            stats2.peakBytesPerSecond = Math.max(stats2.peakBytesPerSecond, bytesThisSecond2);
-          }
-          
-          setTimeout(resolve, 1000);
-=======
       // Check for match result (very basic - just look for large state updates stopping)
       if (matchStarted && byteLength < 10) {
         matchEnded = true;
@@ -143,7 +122,6 @@ async function measureBandwidth(): Promise<void> {
           clearInterval(inputInterval);
           clearInterval(bandwidthInterval);
           resolve();
->>>>>>> origin/main
         }
       }, 1000);
     });
@@ -177,17 +155,7 @@ async function measureBandwidth(): Promise<void> {
     stats2.p95BytesPerSecond = calculateP95(stats2.bytesPerSecond);
 
     console.log('✓ Match completed\n');
-<<<<<<< HEAD
-    
-    // Assert exact tick count
-    if (finalTick !== 3000) {
-      throw new Error(`Expected exactly 3000 ticks, got ${finalTick}`);
-    }
-    console.log('✓ Tick accuracy verified: exactly 3000 ticks\n');
-    console.log('=== Bandwidth Report ===\n');
-=======
     console.log('=== Real WebSocket Bandwidth Report ===\n');
->>>>>>> origin/main
     console.log(`Match duration: ${duration.toFixed(1)}s\n`);
     
     const totalBytesPerMatch = stats1.totalBytes + stats2.totalBytes;
