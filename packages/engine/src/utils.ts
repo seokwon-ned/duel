@@ -24,6 +24,8 @@ export function getNextPosition(pos: Position, dir: Direction): Position {
       return { x: pos.x - 1, y: pos.y };
     case Direction.RIGHT:
       return { x: pos.x + 1, y: pos.y };
+    default:
+      return pos;
   }
 }
 

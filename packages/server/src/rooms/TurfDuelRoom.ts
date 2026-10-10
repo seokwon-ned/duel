@@ -8,6 +8,7 @@ import {
   PlayerInput,
   CellType,
   TICKS_PER_SECOND,
+  GRID_SIZE,
 } from '@turf-duel/engine';
 
 export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
@@ -26,6 +27,13 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     const state = new TurfDuelState();
     this.setState(state);
     this.matchState = createInitialState();
+    
+    // Initialize grid in schema
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        state.grid.push(this.matchState.grid[y][x]);
+      }
+    }
     
     // Hook broadcast to measure actual bytes sent
     const originalBroadcast = this.broadcast.bind(this);
@@ -58,13 +66,6 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     
     this.onMessage('input', (client, message) => {
       this.handleInput(client, message);
-    });
-
-    this.onMessage('pause', (client, message) => {
-      const playerNum = this.playerMapping.get(client.sessionId);
-      if (playerNum) {
-        this.matchState.paused = message.paused;
-      }
     });
   }
 
@@ -166,25 +167,47 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     
     this.gameLoop = setInterval(() => {
       if (!this.matchState.paused && this.matchState.result === null) {
-        const inputs = [...this.inputQueue];
-        this.inputQueue = [];
-        
-        const result = step(this.matchState, inputs);
-        this.matchState = result.state;
-        this.syncState();
+        try {
+          const inputs = [...this.inputQueue];
+          this.inputQueue = [];
+          
+          const result = step(this.matchState, inputs);
+          this.matchState = result.state;
+          this.syncState();
 
-        if (this.matchState.result !== null) {
+          if (this.matchState.result !== null) {
+            clearInterval(bandwidthInterval);
+            console.log('Match ended:', this.matchState.result);
+            this.logBandwidth();
+          }
+        } catch (error) {
+          console.error(`Room ${this.roomId} tick error:`, error);
           clearInterval(bandwidthInterval);
-          console.log('Match ended:', this.matchState.result);
-          this.logBandwidth();
+          if (this.gameLoop) {
+            clearInterval(this.gameLoop);
+          }
+          this.disconnect().catch(err => console.error('Failed to dispose room:', err));
         }
       }
     }, tickInterval);
   }
 
-  private handleInput(client: Client, message: { direction: string }) {
+  private handleInput(client: Client, message: any) {
     const playerNum = this.playerMapping.get(client.sessionId);
     if (!playerNum) return;
+
+    // Validate message structure
+    if (!message || typeof message !== 'object' || typeof message.direction !== 'string') {
+      console.warn(`Invalid input from ${client.sessionId}: malformed message`);
+      return;
+    }
+
+    // Validate direction against whitelist
+    const validDirections = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+    if (!validDirections.includes(message.direction)) {
+      console.warn(`Invalid input from ${client.sessionId}: unknown direction '${message.direction}'`);
+      return;
+    }
 
     const direction = message.direction as Direction;
     const input: PlayerInput = {
@@ -220,6 +243,15 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       state.result.tick = this.matchState.result.tick;
     }
 
+    // Sync full grid for lossless state
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const index = y * GRID_SIZE + x;
+        state.grid[index] = this.matchState.grid[y][x];
+      }
+    }
+
+    // Keep cellUpdates for backward compatibility and debugging
     state.cellUpdates.length = 0;
     const changedCells = this.getChangedCells();
     for (const cell of changedCells) {
