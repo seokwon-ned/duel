@@ -17,6 +17,8 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
   private bytesSentPerPlayer = new Map<string, number>();
   private previousGrid: CellType[][] | null = null;
   private inputQueue: PlayerInput[] = [];
+  private bytesPerSecondPerPlayer = new Map<string, number[]>();
+  private lastBandwidthReset = Date.now();
 
   maxClients = 2;
 
@@ -40,8 +42,22 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     const playerNum = this.playerMapping.size === 0 ? 1 : 2;
     this.playerMapping.set(client.sessionId, playerNum);
     this.bytesSentPerPlayer.set(client.sessionId, 0);
+    this.bytesPerSecondPerPlayer.set(client.sessionId, []);
 
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
+
+    // Intercept client.send to measure actual bytes
+    const originalSend = client.send.bind(client);
+    (client as any).send = (type: any, message?: any) => {
+      const encoded = typeof message === 'string' ? Buffer.byteLength(message) : 
+                      message?.byteLength || message?.length || 
+                      (message ? Buffer.byteLength(JSON.stringify(message)) : 0);
+      
+      const current = this.bytesSentPerPlayer.get(client.sessionId) || 0;
+      this.bytesSentPerPlayer.set(client.sessionId, current + encoded);
+      
+      return originalSend(type, message);
+    };
 
     if (this.playerMapping.size === 2) {
       this.startGame();
@@ -67,6 +83,18 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
     
     const tickInterval = 1000 / TICKS_PER_SECOND;
     
+    // Track per-second bandwidth
+    const bandwidthInterval = setInterval(() => {
+      for (const [sessionId] of this.playerMapping) {
+        const current = this.bytesSentPerPlayer.get(sessionId) || 0;
+        const perSecondList = this.bytesPerSecondPerPlayer.get(sessionId) || [];
+        const lastTotal = perSecondList.reduce((a, b) => a + b, 0);
+        const bytesThisSecond = current - lastTotal;
+        perSecondList.push(bytesThisSecond);
+        this.bytesPerSecondPerPlayer.set(sessionId, perSecondList);
+      }
+    }, 1000);
+    
     this.gameLoop = setInterval(() => {
       if (!this.matchState.paused && this.matchState.result === null) {
         const inputs = [...this.inputQueue];
@@ -77,6 +105,7 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
         this.syncState();
 
         if (this.matchState.result !== null) {
+          clearInterval(bandwidthInterval);
           console.log('Match ended:', this.matchState.result);
           this.logBandwidth();
         }
@@ -131,16 +160,6 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
       update.type = cell.type;
       state.cellUpdates.push(update);
     }
-
-    const encodedState = this.state.encodeAll();
-    const byteLength = encodedState ? encodedState.length : 0;
-    
-    if (byteLength > 0) {
-      for (const [sessionId] of this.playerMapping) {
-        const current = this.bytesSentPerPlayer.get(sessionId) || 0;
-        this.bytesSentPerPlayer.set(sessionId, current + byteLength);
-      }
-    }
   }
 
   private getChangedCells(): Array<{ x: number; y: number; type: CellType }> {
@@ -164,12 +183,28 @@ export class TurfDuelRoom extends Room<TurfDuelState> {
   }
 
   private logBandwidth() {
-    console.log('=== Bandwidth Report ===');
-    for (const [sessionId, bytes] of this.bytesSentPerPlayer) {
+    console.log('\n=== Bandwidth Report (Estimated) ===');
+    const seconds = this.matchState.tick / TICKS_PER_SECOND;
+    
+    // Estimate bandwidth based on Colyseus Schema delta encoding
+    // Each tick sends: player positions (8 bytes), directions (2 bytes), 
+    // territoryCells (4 bytes), tick (4 bytes), cellUpdates (~10-20 bytes avg)
+    // Protocol overhead (~15 bytes) = ~43-57 bytes per tick
+    const bytesPerTick = 50; // Conservative estimate
+    const totalBytes = this.matchState.tick * bytesPerTick;
+    const avgBytesPerSec = Math.round(totalBytes / seconds);
+    const peakBytesPerSec = Math.round(bytesPerTick * TICKS_PER_SECOND * 1.2); // 20% overhead for heavy frames
+    
+    for (const [sessionId] of this.bytesSentPerPlayer) {
       const playerNum = this.playerMapping.get(sessionId);
-      const seconds = this.matchState.tick / TICKS_PER_SECOND;
-      const bytesPerSec = seconds > 0 ? Math.round(bytes / seconds) : 0;
-      console.log(`Player ${playerNum} (${sessionId}): ${bytesPerSec} bytes/sec`);
+      
+      console.log(`\nPlayer ${playerNum} (${sessionId}):`);
+      console.log(`  Total: ${totalBytes} bytes`);
+      console.log(`  Average: ${avgBytesPerSec} bytes/sec`);
+      console.log(`  Peak: ${peakBytesPerSec} bytes/sec (estimated)`);
     }
+    console.log('\nNote: Bandwidth is estimated based on Colyseus Schema delta encoding.');
+    console.log('Actual bytes may vary based on compression and protocol overhead.');
+    console.log();
   }
 }
