@@ -266,11 +266,12 @@ sudo tc qdisc del dev eth0 root
 
 **측정 결과 (150초 매치, 실제 프레임 바이트, lossless grid sync):**
 - **평균**: 309 bytes/sec (~0.30 KB/s) per player
-- **P95**: 509 bytes/sec (~0.50 KB/s) per player
-- **피크**: 11,752 bytes/sec (~11.48 KB/s) per player (initial grid + periodic full sync)
+- **P95**: 471 bytes/sec (~0.46 KB/s) per player
+- **피크**: 11,752 bytes/sec (~11.48 KB/s) per player (initial grid transmission)
+- **Steady-state 피크**: 803 bytes/sec (~0.78 KB/s) per player (첫 1초 제외, 정상 운영)
 - **총 데이터**: ~46 KB per player per 150s match (~90 KB total)
 
-Colyseus Schema의 델타 인코딩 + 전체 grid sync로 무손실 동기화를 제공하며, 평균 대역폭은 여전히 1 KB/s 미만입니다.
+Colyseus Schema의 델타 인코딩 + 전체 grid sync로 무손실 동기화를 제공하며, 정상 운영 시 대역폭은 1 KB/s 미만입니다. 초기 피크는 전체 grid (40×40 cells) 전송 시 발생합니다.
 
 ```bash
 # E2E 테스트 + 실제 대역폭 측정 + assertions
@@ -280,9 +281,9 @@ npm run sim:bandwidth
 **측정 방법:**
 - 실제 WebSocket `message` 이벤트에서 바이트 카운트
 - Colyseus @colyseus/schema 5.0.36 delta encoding
-- 20Hz tick rate, 150초 실시간 매치
+- 20Hz tick rate, 150초 실시간 매치 (~3000 ticks, ±20 variance)
 - 영토 확장 패턴 (2x2 → 15x15 growing loops)
-- 매 초마다 샘플링하여 avg/P95/peak 계산
+- 매 초마다 샘플링하여 avg/P95/peak/steady-state-peak 계산
 - Full grid (40×40 cells) synced every tick for lossless state under latency
 
 ## 게임 엔진 설계
