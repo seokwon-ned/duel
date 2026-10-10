@@ -93,9 +93,14 @@ class GameScene extends Phaser.Scene {
     this.isOnlineMode = true;
     this.room = room;
 
-    room.state.onChange = () => {
+    room.onStateChange.once((state) => {
+      // Initial state received, render full board
+      this.renderFromSchema(state);
+    });
+
+    room.onStateChange((state) => {
       this.updateFromServerState();
-    };
+    });
 
     room.onMessage('*', (type, message) => {
       console.log('Message from server:', type, message);
@@ -138,7 +143,18 @@ class GameScene extends Phaser.Scene {
 
     const state = this.room.state;
 
-    if (state.cellUpdates) {
+    // Render from full grid if available (lossless sync)
+    if (state.grid && state.grid.length > 0) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const index = y * GRID_SIZE + x;
+          const cellType = state.grid[index];
+          const color = this.getCellColor(cellType);
+          this.cells[y][x].setFillStyle(color);
+        }
+      }
+    } else if (state.cellUpdates) {
+      // Fallback to incremental updates
       state.cellUpdates.forEach((update: any) => {
         const color = this.getCellColor(update.type);
         this.cells[update.y][update.x].setFillStyle(color);
@@ -161,6 +177,20 @@ class GameScene extends Phaser.Scene {
 
     if (state.result) {
       this.showResult(state.result);
+    }
+  }
+
+  private renderFromSchema(state: any) {
+    // Initial full render from grid
+    if (state.grid && state.grid.length > 0) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const index = y * GRID_SIZE + x;
+          const cellType = state.grid[index];
+          const color = this.getCellColor(cellType);
+          this.cells[y][x].setFillStyle(color);
+        }
+      }
     }
   }
 
