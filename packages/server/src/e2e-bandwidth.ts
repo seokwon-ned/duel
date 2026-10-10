@@ -186,10 +186,27 @@ async function runE2ETest(): Promise<void> {
       }
     }, 50); // 20Hz
 
-    // Wait for 150 seconds
-    await new Promise(resolve => setTimeout(resolve, 150000));
-    clearInterval(inputInterval);
-    clearInterval(bandwidthInterval);
+    // Wait for match result
+    let finalTick = 0;
+    await new Promise<void>((resolve) => {
+      const checkResult = () => {
+        if ((room1.state as any).result) {
+          finalTick = (room1.state as any).tick;
+          clearInterval(inputInterval);
+          clearInterval(bandwidthInterval);
+          resolve();
+        }
+      };
+      
+      room1.onStateChange(checkResult);
+      
+      // Fallback timeout after 151s
+      setTimeout(() => {
+        clearInterval(inputInterval);
+        clearInterval(bandwidthInterval);
+        resolve();
+      }, 151000);
+    });
 
     // Flush last second
     if (bytesThisSecond1 > 0) stats1.bytesPerSecond.push(bytesThisSecond1);
@@ -197,6 +214,12 @@ async function runE2ETest(): Promise<void> {
 
     const endTime = Date.now();
     const duration = (endTime - startTime) / 1000;
+    
+    // Assert tick accuracy
+    if (finalTick !== 3000) {
+      throw new Error(`❌ Tick accuracy FAILED: Expected exactly 3000 ticks, got ${finalTick}`);
+    }
+    console.log(`\n✅ Tick accuracy verified: exactly ${finalTick} ticks\n`);
 
     // Calculate statistics from ACTUAL measured bytes
     const result1 = calculateStats(stats1, duration);

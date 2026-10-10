@@ -340,6 +340,33 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }, 1000);
     
     this.gameLoop = setInterval(() => {
+      const now = Date.now();
+      if (this.lastTickTime > 0) {
+        const interval = now - this.lastTickTime;
+        this.tickIntervals.push(interval);
+        
+        // Log tick interval distribution every 60 seconds
+        if (this.tickIntervals.length === 1200) { // 60s * 20 ticks/s
+          const within50ms = this.tickIntervals.filter(i => Math.abs(i - 50) <= 5).length;
+          const percentage = (within50ms / this.tickIntervals.length) * 100;
+          
+          const sorted = [...this.tickIntervals].sort((a, b) => a - b);
+          const p50 = sorted[Math.floor(sorted.length * 0.5)];
+          const p95 = sorted[Math.floor(sorted.length * 0.95)];
+          const p99 = sorted[Math.floor(sorted.length * 0.99)];
+          const min = sorted[0];
+          const max = sorted[sorted.length - 1];
+          
+          console.log(`\n=== Tick Interval Accuracy (1 min) ===`);
+          console.log(`Within 50±5ms: ${within50ms}/${this.tickIntervals.length} (${percentage.toFixed(2)}%)`);
+          console.log(`Distribution: min=${min.toFixed(1)}ms, p50=${p50.toFixed(1)}ms, p95=${p95.toFixed(1)}ms, p99=${p99.toFixed(1)}ms, max=${max.toFixed(1)}ms`);
+          console.log(`Target: ≥99%\n`);
+          
+          this.tickIntervals = [];
+        }
+      }
+      this.lastTickTime = now;
+      
       if (!this.matchState.paused && this.matchState.result === null) {
         try {
           // Test-only fault injection
