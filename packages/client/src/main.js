@@ -10,6 +10,13 @@ const COLORS = {
     PLAYER1_TRAIL: 0xFF9A4A,
     PLAYER2_TRAIL: 0x4F8BFF,
 };
+if (typeof window !== 'undefined') {
+    window.__turfDebug = {
+        tick: 0,
+        ownedCells: { p1: 0, p2: 0 },
+        renderedFrames: 0,
+    };
+}
 class GameScene extends Phaser.Scene {
     cells = [];
     room = null;
@@ -70,9 +77,13 @@ class GameScene extends Phaser.Scene {
     startOnlineMode(room) {
         this.isOnlineMode = true;
         this.room = room;
-        room.state.onChange = () => {
+        room.onStateChange.once((state) => {
+            // Initial state received, render full board
+            this.renderFromSchema(state);
+        });
+        room.onStateChange((state) => {
             this.updateFromServerState();
-        };
+        });
         room.onMessage('*', (type, message) => {
             console.log('Message from server:', type, message);
         });
@@ -105,7 +116,19 @@ class GameScene extends Phaser.Scene {
         if (!this.room)
             return;
         const state = this.room.state;
-        if (state.cellUpdates) {
+        // Render from full grid if available (lossless sync)
+        if (state.grid && state.grid.length > 0) {
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const index = y * GRID_SIZE + x;
+                    const cellType = state.grid[index];
+                    const color = this.getCellColor(cellType);
+                    this.cells[y][x].setFillStyle(color);
+                }
+            }
+        }
+        else if (state.cellUpdates) {
+            // Fallback to incremental updates
             state.cellUpdates.forEach((update) => {
                 const color = this.getCellColor(update.type);
                 this.cells[update.y][update.x].setFillStyle(color);
@@ -122,6 +145,28 @@ class GameScene extends Phaser.Scene {
         }
         if (state.result) {
             this.showResult(state.result);
+        }
+        // Update debug hook
+        if (typeof window !== 'undefined' && window.__turfDebug) {
+            window.__turfDebug.tick = state.tick;
+            window.__turfDebug.ownedCells = {
+                p1: state.player1.territoryCells,
+                p2: state.player2.territoryCells,
+            };
+            window.__turfDebug.renderedFrames++;
+        }
+    }
+    renderFromSchema(state) {
+        // Initial full render from grid
+        if (state.grid && state.grid.length > 0) {
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const index = y * GRID_SIZE + x;
+                    const cellType = state.grid[index];
+                    const color = this.getCellColor(cellType);
+                    this.cells[y][x].setFillStyle(color);
+                }
+            }
         }
     }
     renderState(state) {

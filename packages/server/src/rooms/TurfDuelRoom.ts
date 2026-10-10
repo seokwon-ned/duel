@@ -168,6 +168,15 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.gameLoop = setInterval(() => {
       if (!this.matchState.paused && this.matchState.result === null) {
         try {
+          // Test-only fault injection
+          if (process.env.TURF_DUEL_TEST_INJECT_FAULT === 'true' && 
+              (global as any).FAULT_ROOM_ID === this.roomId &&
+              this.matchState.tick > 10 &&
+              this.matchState.tick < 15) {
+            console.log(`[TEST] Injecting fault in room ${this.roomId} at tick ${this.matchState.tick}`);
+            throw new Error('TEST_INJECTED_FAULT');
+          }
+
           const inputs = [...this.inputQueue];
           this.inputQueue = [];
           

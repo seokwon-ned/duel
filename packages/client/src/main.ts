@@ -19,6 +19,27 @@ const COLORS = {
   PLAYER2_TRAIL: 0x4F8BFF,
 };
 
+// Debug hook for E2E tests
+interface TurfDebug {
+  tick: number;
+  ownedCells: { p1: number; p2: number };
+  renderedFrames: number;
+}
+
+declare global {
+  interface Window {
+    __turfDebug?: TurfDebug;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.__turfDebug = {
+    tick: 0,
+    ownedCells: { p1: 0, p2: 0 },
+    renderedFrames: 0,
+  };
+}
+
 class GameScene extends Phaser.Scene {
   private cells: Phaser.GameObjects.Rectangle[][] = [];
   private room: Room | null = null;
@@ -177,6 +198,16 @@ class GameScene extends Phaser.Scene {
 
     if (state.result) {
       this.showResult(state.result);
+    }
+
+    // Update debug hook
+    if (typeof window !== 'undefined' && window.__turfDebug) {
+      window.__turfDebug.tick = state.tick;
+      window.__turfDebug.ownedCells = {
+        p1: state.player1.territoryCells,
+        p2: state.player2.territoryCells,
+      };
+      window.__turfDebug.renderedFrames++;
     }
   }
 
