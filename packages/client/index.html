@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>땅따 | Turf Duel</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0F172A;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: white;
+      overflow: hidden;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    #settings {
+      margin-bottom: 20px;
+      padding: 20px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 8px;
+    }
+    #settings input {
+      padding: 8px;
+      margin: 5px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    #settings button {
+      padding: 8px 16px;
+      margin: 5px;
+      background: #FF7A1A;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #settings button:hover {
+      background: #e66910;
+    }
+    #game-container {
+      position: relative;
+    }
+    #info {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="settings">
+      <h2>땅따 | Turf Duel - Test Client</h2>
+      <div>
+        <label>Server URL:</label>
+        <input type="text" id="serverUrl" value="ws://localhost:2567" placeholder="ws://localhost:2567">
+      </div>
+      <div>
+        <button id="connectBtn">Connect to Server</button>
+        <button id="botBtn">Play vs Bot (Local)</button>
+      </div>
+      <div id="info">
+        <p>Controls: Arrow keys or WASD</p>
+        <p id="status">Ready to connect</p>
+      </div>
+    </div>
+    <div id="game-container"></div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
