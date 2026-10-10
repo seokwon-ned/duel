@@ -56,6 +56,7 @@ export interface MatchState {
 export interface PlayerInput {
   player: 1 | 2;
   direction: Direction;
+  clientTick?: number; // Client's intended tick for this input (for prediction/rollback)
 }
 
 export interface GameEvent {

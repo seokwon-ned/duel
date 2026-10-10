@@ -31,6 +31,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected bytesSentPerPlayer = new Map<string, number>();
   protected playerMapping = new Map<string, 1 | 2>();
   protected previousGrid: CellType[][] | null = null;
+  protected stateHistory: MatchState[] = []; // For rollback (keep last 10 ticks)
+  protected readonly LAG_WINDOW_TICKS = 6; // ~300ms at 20Hz
+  protected readonly HISTORY_SIZE = 10;
 
   maxClients = 2;
 
@@ -369,6 +372,12 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       
       if (!this.matchState.paused && this.matchState.result === null) {
         try {
+          // Save state history for rollback (deep clone)
+          this.stateHistory.push(JSON.parse(JSON.stringify(this.matchState)));
+          if (this.stateHistory.length > this.HISTORY_SIZE) {
+            this.stateHistory.shift();
+          }
+          
           const inputs = [...this.inputQueue];
           this.inputQueue = [];
           
@@ -411,12 +420,63 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }
 
     const direction = message.direction as Direction;
+    const clientTick = typeof message.clientTick === 'number' ? message.clientTick : undefined;
+    
     const input: PlayerInput = {
       player: playerNum,
       direction,
+      clientTick,
     };
 
-    this.inputQueue.push(input);
+    // Client-side prediction with rollback
+    if (clientTick !== undefined) {
+      const tickDiff = this.matchState.tick - clientTick;
+      
+      // Clamp to lag window: accept inputs up to LAG_WINDOW_TICKS behind
+      if (tickDiff < 0) {
+        // Future tick - clamp to current tick
+        input.clientTick = this.matchState.tick;
+        this.inputQueue.push(input);
+      } else if (tickDiff <= this.LAG_WINDOW_TICKS) {
+        // Within lag window - perform rollback
+        this.handleRollback(input, clientTick);
+      } else {
+        // Too old - clamp to current tick
+        input.clientTick = this.matchState.tick;
+        this.inputQueue.push(input);
+      }
+    } else {
+      // No clientTick - legacy behavior
+      this.inputQueue.push(input);
+    }
+  }
+  
+  private handleRollback(input: PlayerInput, targetTick: number) {
+    // Find state at targetTick
+    const historyEntry = this.stateHistory.find(s => s.tick === targetTick);
+    if (!historyEntry) {
+      // No history for that tick - apply at current tick
+      input.clientTick = this.matchState.tick;
+      this.inputQueue.push(input);
+      return;
+    }
+    
+    // Deep clone the historical state
+    const restoredState = JSON.parse(JSON.stringify(historyEntry)) as MatchState;
+    
+    // Re-simulate from targetTick to current tick with the new input
+    const inputs: PlayerInput[] = [input];
+    const ticksToResimulate = this.matchState.tick - targetTick;
+    
+    let currentState = restoredState;
+    for (let i = 0; i < ticksToResimulate; i++) {
+      const result = step(currentState, i === 0 ? inputs : []);
+      currentState = result.state;
+    }
+    
+    // Update matchState with re-simulated state
+    this.matchState = currentState;
+    this.syncState();
   }
 
   protected syncState() {
