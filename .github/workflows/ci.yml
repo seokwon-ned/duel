@@ -26,6 +26,9 @@ jobs:
       - name: Run tests
         run: npm test
       
+      - name: Run crash resistance tests
+        run: npm run test:crash --workspace=packages/server
+      
       - name: Build server
         run: npm run build --workspace=packages/server
       

@@ -22,7 +22,11 @@ function calculateStats(stats: BandwidthStats, duration: number) {
   // Peak is max
   const peakBytesPerSec = Math.max(...stats.bytesPerSecond, 0);
   
-  return { avgBytesPerSec, p95BytesPerSec, peakBytesPerSec };
+  // Steady-state peak (excluding first second for initial grid transmission)
+  const steadyStateBytes = stats.bytesPerSecond.slice(1);
+  const steadyStatePeak = steadyStateBytes.length > 0 ? Math.max(...steadyStateBytes, 0) : 0;
+  
+  return { avgBytesPerSec, p95BytesPerSec, peakBytesPerSec, steadyStatePeak };
 }
 
 async function runE2ETest(): Promise<void> {
@@ -211,23 +215,27 @@ async function runE2ETest(): Promise<void> {
     console.log(`  Total: ${stats1.totalBytes.toLocaleString()} bytes (${(stats1.totalBytes / 1024).toFixed(2)} KB)`);
     console.log(`  Average: ${result1.avgBytesPerSec.toLocaleString()} bytes/sec (~${(result1.avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
     console.log(`  P95: ${result1.p95BytesPerSec.toLocaleString()} bytes/sec (~${(result1.p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
-    console.log(`  Peak: ${result1.peakBytesPerSec.toLocaleString()} bytes/sec (~${(result1.peakBytesPerSec / 1024).toFixed(2)} KB/s)\n`);
+    console.log(`  Peak: ${result1.peakBytesPerSec.toLocaleString()} bytes/sec (~${(result1.peakBytesPerSec / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Steady-state peak: ${result1.steadyStatePeak.toLocaleString()} bytes/sec (~${(result1.steadyStatePeak / 1024).toFixed(2)} KB/s, excluding first 1s)\n`);
 
     console.log('Player 2:');
     console.log(`  Total: ${stats2.totalBytes.toLocaleString()} bytes (${(stats2.totalBytes / 1024).toFixed(2)} KB)`);
     console.log(`  Average: ${result2.avgBytesPerSec.toLocaleString()} bytes/sec (~${(result2.avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
     console.log(`  P95: ${result2.p95BytesPerSec.toLocaleString()} bytes/sec (~${(result2.p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
-    console.log(`  Peak: ${result2.peakBytesPerSec.toLocaleString()} bytes/sec (~${(result2.peakBytesPerSec / 1024).toFixed(2)} KB/s)\n`);
+    console.log(`  Peak: ${result2.peakBytesPerSec.toLocaleString()} bytes/sec (~${(result2.peakBytesPerSec / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Steady-state peak: ${result2.steadyStatePeak.toLocaleString()} bytes/sec (~${(result2.steadyStatePeak / 1024).toFixed(2)} KB/s, excluding first 1s)\n`);
 
     const avgPerPlayer = Math.round((result1.avgBytesPerSec + result2.avgBytesPerSec) / 2);
     const p95PerPlayer = Math.round((result1.p95BytesPerSec + result2.p95BytesPerSec) / 2);
     const peakPerPlayer = Math.round((result1.peakBytesPerSec + result2.peakBytesPerSec) / 2);
+    const steadyStatePeakPerPlayer = Math.round((result1.steadyStatePeak + result2.steadyStatePeak) / 2);
     const totalPerPlayer = Math.round((stats1.totalBytes + stats2.totalBytes) / 2);
 
     console.log('Per-Player Average:');
     console.log(`  Average: ${avgPerPlayer.toLocaleString()} bytes/sec (~${(avgPerPlayer / 1024).toFixed(2)} KB/s)`);
     console.log(`  P95: ${p95PerPlayer.toLocaleString()} bytes/sec (~${(p95PerPlayer / 1024).toFixed(2)} KB/s)`);
     console.log(`  Peak: ${peakPerPlayer.toLocaleString()} bytes/sec (~${(peakPerPlayer / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Steady-state peak: ${steadyStatePeakPerPlayer.toLocaleString()} bytes/sec (~${(steadyStatePeakPerPlayer / 1024).toFixed(2)} KB/s, excluding first 1s)`);
     console.log(`  Total per match: ${totalPerPlayer.toLocaleString()} bytes (~${(totalPerPlayer / 1024).toFixed(2)} KB)\n`);
 
     const totalMatch = stats1.totalBytes + stats2.totalBytes;
@@ -244,13 +252,18 @@ async function runE2ETest(): Promise<void> {
     // Assertions
     console.log('=== Assertions ===\n');
     
-    // Check match completed
+    // Check match ticks
+    const actualTicks = room1.state.tick;
     const expectedTicks = 150 * TICKS_PER_SECOND;
-    console.log(`✓ Expected ticks: ${expectedTicks} (150s × ${TICKS_PER_SECOND}Hz)`);
-    if (room1.state.tick < expectedTicks - 10) {
-      throw new Error(`Match incomplete: only ${room1.state.tick} ticks (expected ~${expectedTicks})`);
+    console.log(`✓ Expected ~${expectedTicks} ticks (150s × ${TICKS_PER_SECOND}Hz)`);
+    console.log(`✓ Actual ticks: ${actualTicks}`);
+    
+    // Allow small variance due to timing drift
+    const tickVariance = Math.abs(actualTicks - expectedTicks);
+    if (tickVariance > 20) {
+      throw new Error(`Match tick count off by ${tickVariance}: expected ~${expectedTicks}, got ${actualTicks}`);
     }
-    console.log(`✓ Match completed: ${room1.state.tick} ticks\n`);
+    console.log(`✓ Tick variance: ${tickVariance} ticks (acceptable < 20)\n`);
     
     // Check bytes received
     if (stats1.totalBytes === 0 || stats2.totalBytes === 0) {
