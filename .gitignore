@@ -7,3 +7,5 @@ dist/
 .idea/
 coverage/
 *.tsbuildinfo
+test-results/
+playwright-report/

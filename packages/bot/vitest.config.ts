@@ -7,7 +7,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@turf-duel/engine': resolve(__dirname, '../engine/src/index.ts'),
+      '@turf-duel/engine': resolve(import.meta.dirname, '../engine/src/index.ts'),
     },
   },
 });
