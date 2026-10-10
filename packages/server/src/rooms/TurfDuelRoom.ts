@@ -154,6 +154,11 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     
     console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
     
+    // If consented leave (code 1000 or 4001), don't track reconnection
+    if (code === 1000 || code === 4001) {
+      return;
+    }
+    
     const info = this.disconnectInfo.get(client.sessionId);
     if (!info) return;
 
