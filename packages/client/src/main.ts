@@ -50,6 +50,11 @@ class GameScene extends Phaser.Scene {
   private bot: Bot | null = null;
   private botInterval: NodeJS.Timeout | null = null;
   private infoText: Phaser.GameObjects.Text | null = null;
+  
+  // Client-side prediction
+  private predictedState: MatchState | null = null;
+  private pendingInputs: Array<{ direction: Direction; tick: number }> = [];
+  private lastServerTick = 0;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -103,8 +108,30 @@ class GameScene extends Phaser.Scene {
 
       if (newDirection) {
         this.currentDirection = newDirection;
-        if (this.room) {
-          this.room.send('input', { direction: newDirection });
+        if (this.room && this.matchState) {
+          // Client-side prediction: apply input immediately
+          const currentTick = this.matchState.tick;
+          this.pendingInputs.push({ direction: newDirection, tick: currentTick });
+          
+          // Predict next state
+          if (!this.predictedState) {
+            this.predictedState = JSON.parse(JSON.stringify(this.matchState));
+          }
+          
+          const result = step(this.predictedState!, [{
+            player: this.playerNum,
+            direction: newDirection,
+          }]);
+          this.predictedState = result.state;
+          
+          // Render predicted state
+          this.renderState(this.predictedState!);
+          
+          // Send to server with clientTick
+          this.room.send('input', { 
+            direction: newDirection,
+            clientTick: currentTick,
+          });
         }
       }
     });
@@ -117,15 +144,85 @@ class GameScene extends Phaser.Scene {
     room.onStateChange.once((state) => {
       // Initial state received, render full board
       this.renderFromSchema(state);
+      
+      // Initialize matchState for prediction
+      this.matchState = this.convertSchemaToMatchState(state);
+      this.lastServerTick = this.matchState.tick;
     });
 
     room.onStateChange((state) => {
-      this.updateFromServerState();
+      // Server reconciliation
+      const serverState = this.convertSchemaToMatchState(state);
+      const serverTick = serverState.tick;
+      
+      // Remove acknowledged inputs
+      this.pendingInputs = this.pendingInputs.filter(input => input.tick > serverTick);
+      
+      // Reconcile: start from server state and re-apply pending inputs
+      if (this.pendingInputs.length > 0) {
+        this.predictedState = JSON.parse(JSON.stringify(serverState));
+        
+        for (const input of this.pendingInputs) {
+          const result = step(this.predictedState!, [{
+            player: this.playerNum,
+            direction: input.direction,
+          }]);
+          this.predictedState = result.state;
+        }
+        
+        // Render reconciled predicted state
+        this.renderState(this.predictedState!);
+      } else {
+        // No pending inputs, use server state directly
+        this.predictedState = null;
+        this.renderState(serverState);
+      }
+      
+      this.matchState = serverState;
+      this.lastServerTick = serverTick;
     });
 
     room.onMessage('*', (type, message) => {
       console.log('Message from server:', type, message);
     });
+  }
+  
+  private convertSchemaToMatchState(state: any): MatchState {
+    // Convert Colyseus schema to engine MatchState
+    const grid: CellType[][] = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+      grid[y] = [];
+      for (let x = 0; x < GRID_SIZE; x++) {
+        grid[y][x] = state.grid[y * GRID_SIZE + x];
+      }
+    }
+    
+    return {
+      grid,
+      player1: {
+        position: { x: state.player1.position.x, y: state.player1.position.y },
+        direction: state.player1.direction as Direction,
+        inputBuffer: null,
+        isAlive: state.player1.isAlive,
+        territoryCells: state.player1.territoryCells,
+        movementAccumulator: 0,
+      },
+      player2: {
+        position: { x: state.player2.position.x, y: state.player2.position.y },
+        direction: state.player2.direction as Direction,
+        inputBuffer: null,
+        isAlive: state.player2.isAlive,
+        territoryCells: state.player2.territoryCells,
+        movementAccumulator: 0,
+      },
+      tick: state.tick,
+      paused: state.paused,
+      result: state.result ? {
+        winner: state.result.winner,
+        reason: state.result.reason,
+        tick: state.result.tick,
+      } : null,
+    };
   }
 
   startBotMode() {
