@@ -34,10 +34,7 @@ export class TurfDuelState extends Schema {
   @type('boolean') paused: boolean = false;
   @type(MatchResultSchema) result?: MatchResultSchema;
   @type([CellUpdate]) cellUpdates = new Array<CellUpdate>();
-<<<<<<< HEAD
+  @type(['number']) grid = new ArraySchema<number>();
   @type('number') disconnectedPlayer: number = 0; // 0 = none, 1 = player1, 2 = player2, 3 = both
   @type('number') disconnectCountdownSeconds: number = 0;
-=======
-  @type(['number']) grid = new ArraySchema<number>();
->>>>>>> origin/main
 }
