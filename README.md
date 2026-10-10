@@ -264,16 +264,16 @@ sudo tc qdisc del dev eth0 root
 
 실제 WebSocket 바이트 측정 (`npm run sim:bandwidth`로 실행):
 
-**측정 결과 (150초 매치, 실제 프레임 바이트):**
-- **평균**: 224 bytes/sec (~0.22 KB/s) per player
-- **P95**: 375 bytes/sec (~0.37 KB/s) per player
-- **피크**: 639 bytes/sec (~0.62 KB/s) per player
-- **총 데이터**: ~33 KB per player per 150s match (~66 KB total)
+**측정 결과 (150초 매치, 실제 프레임 바이트, lossless grid sync):**
+- **평균**: 309 bytes/sec (~0.30 KB/s) per player
+- **P95**: 509 bytes/sec (~0.50 KB/s) per player
+- **피크**: 11,752 bytes/sec (~11.48 KB/s) per player (initial grid + periodic full sync)
+- **총 데이터**: ~46 KB per player per 150s match (~90 KB total)
 
-Colyseus Schema의 델타 인코딩 덕분에 변경된 필드만 전송되어 대역폭이 매우 효율적입니다.
+Colyseus Schema의 델타 인코딩 + 전체 grid sync로 무손실 동기화를 제공하며, 평균 대역폭은 여전히 1 KB/s 미만입니다.
 
 ```bash
-# E2E 테스트 + 실제 대역폭 측정
+# E2E 테스트 + 실제 대역폭 측정 + assertions
 npm run sim:bandwidth
 ```
 
@@ -283,6 +283,7 @@ npm run sim:bandwidth
 - 20Hz tick rate, 150초 실시간 매치
 - 영토 확장 패턴 (2x2 → 15x15 growing loops)
 - 매 초마다 샘플링하여 avg/P95/peak 계산
+- Full grid (40×40 cells) synced every tick for lossless state under latency
 
 ## 게임 엔진 설계
 
@@ -309,7 +310,7 @@ npm run sim:bandwidth
 - **Colyseus 0.18**: 방 기반 멀티플레이어 (@colyseus/core 0.18.18)
 - **틱 레이트**: 20Hz (50ms)
 - **델타 동기화**: 머리 위치와 변경된 칸만 전송 (@colyseus/schema 5.0)
-- **대역폭**: ~1.04 KB/s per player average (measured)
+- **대역폭**: ~0.22 KB/s per player average (measured from real WebSocket frames)
 
 ## 다음 단계 (v1.2+)
 

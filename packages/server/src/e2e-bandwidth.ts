@@ -241,6 +241,30 @@ async function runE2ETest(): Promise<void> {
     console.log(`  - Colyseus @colyseus/schema 5.0.36 delta encoding`);
     console.log(`  - ${stats1.bytesPerSecond.length} seconds of per-second samples\n`);
 
+    // Assertions
+    console.log('=== Assertions ===\n');
+    
+    // Check match completed
+    const expectedTicks = 150 * TICKS_PER_SECOND;
+    console.log(`✓ Expected ticks: ${expectedTicks} (150s × ${TICKS_PER_SECOND}Hz)`);
+    if (room1.state.tick < expectedTicks - 10) {
+      throw new Error(`Match incomplete: only ${room1.state.tick} ticks (expected ~${expectedTicks})`);
+    }
+    console.log(`✓ Match completed: ${room1.state.tick} ticks\n`);
+    
+    // Check bytes received
+    if (stats1.totalBytes === 0 || stats2.totalBytes === 0) {
+      throw new Error(`No bytes measured: P1=${stats1.totalBytes}, P2=${stats2.totalBytes}`);
+    }
+    console.log(`✓ Bytes received: P1=${stats1.totalBytes}, P2=${stats2.totalBytes}\n`);
+    
+    // Check bandwidth threshold
+    const maxAvgBytesPerSec = 3 * 1024; // 3 KB/s
+    if (avgPerPlayer > maxAvgBytesPerSec) {
+      throw new Error(`Average bandwidth ${avgPerPlayer} bytes/s exceeds threshold ${maxAvgBytesPerSec} bytes/s`);
+    }
+    console.log(`✓ Average bandwidth ${avgPerPlayer} bytes/s under threshold ${maxAvgBytesPerSec} bytes/s (${(maxAvgBytesPerSec / 1024).toFixed(1)} KB/s)\n`);
+
     await room1.leave();
     await room2.leave();
   } catch (error) {
