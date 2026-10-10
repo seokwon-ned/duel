@@ -29,6 +29,12 @@ jobs:
       - name: Run crash resistance tests
         run: npm run test:crash --workspace=packages/server
       
+      - name: Run lossless sync test
+        run: npm run test:lossless --workspace=packages/server
+      
+      - name: Run fault isolation test
+        run: npm run test:fault --workspace=packages/server
+      
       - name: Build server
         run: npm run build --workspace=packages/server
       
