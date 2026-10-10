@@ -313,9 +313,22 @@ npm run sim:bandwidth
 - [ ] 로비/매칭 시스템
 - [ ] 재접속 로직 (틱 정지, 30초 타임아웃)
 - [ ] Capacitor 앱 빌드 (Android/iOS)
+  - Android launcher icon: `assets/brand/icon_1024.png` 사용 예정
+  - iOS launcher icon: `assets/brand/icon_1024.png` 사용 예정
 - [ ] 터치 드래그 조작 (20px 임계값, 입력 버퍼)
 - [ ] 랭크 시스템
 - [ ] AWS Lightsail 배포
+
+## 브랜드 에셋
+
+앱 아이콘, 로고, 브랜드 가이드라인은 `assets/brand/` 참조.
+
+- **앱 아이콘**: 4×4 그리드 디자인 (오렌지/파랑 영토, 다크 네이비 배경)
+- **로고**: 한글(Black Han Sans) + 영문(Press Start 2P) 워드마크
+- **웹 클라이언트**: favicon, apple-touch-icon, PWA manifest 아이콘 적용됨
+- **Capacitor**: Android/iOS 런처 아이콘은 `icon_1024.png`에서 생성 (앱 셸 추가 시)
+
+상세 정보: `assets/brand/README.md`
 
 ## 기술 스택
 
