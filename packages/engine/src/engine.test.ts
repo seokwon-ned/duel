@@ -12,6 +12,8 @@ import {
   GRID_SIZE,
   CellType,
   TICKS_PER_SECOND,
+  MOVEMENT_THRESHOLD,
+  MOVEMENT_INCREMENT,
 } from './types.js';
 
 describe('Game Engine - 판정 Tests', () => {
@@ -492,7 +494,40 @@ describe('Game Engine - 판정 Tests', () => {
     expect(result.state.player2.isAlive).toBe(false);
   });
 
-  test.skip('3000 ticks = 1200 moves (8 cells/s * 150s)', () => {
+  test('정면 충돌 (staggered) - Players cross on adjacent move ticks', () => {
+    let state = createInitialState();
+    
+    for (let y = 8; y <= 12; y++) {
+      for (let x = 8; x <= 30; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    for (let y = 18; y <= 22; y++) {
+      for (let x = 10; x <= 32; x++) {
+        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 14, y: 10 };
+    state.player2.position = { x: 16, y: 10 };
+    state.player1.direction = Direction.RIGHT;
+    state.player2.direction = Direction.LEFT;
+    state.player1.movementAccumulator = 16;
+    state.player2.movementAccumulator = 8;
+    
+    const result1 = step(state, []);
+    expect(result1.state.player1.position).toEqual({ x: 15, y: 10 });
+    expect(result1.state.player2.position).toEqual({ x: 16, y: 10 });
+    expect(result1.state.result).toBeNull();
+    
+    const result2 = step(result1.state, []);
+    expect(result2.state.result).not.toBeNull();
+    expect(result2.state.result?.winner).toBe(0);
+    expect(result2.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
+  });
+
+  test('3000 ticks = 1200 moves (8 cells/s * 150s)', () => {
     const ticksToTest = MATCH_DURATION_TICKS;
     const expectedMoves = (ticksToTest / TICKS_PER_SECOND) * 8;
     
@@ -504,21 +539,37 @@ describe('Game Engine - 판정 Tests', () => {
       }
     }
     
-    state.player1.position = { x: 20, y: 20 };
+    state.player1.position = { x: 15, y: 15 };
     state.player1.direction = Direction.RIGHT;
-    state.player2.position = { x: 30, y: 30 };
+    state.player2.position = { x: 0, y: 0 };
     state.player2.isAlive = false;
     
     let p1Moves = 0;
     const startAcc = state.player1.movementAccumulator;
     
-    for (let i = 0; i < ticksToTest; i++) {
+    const loopPattern = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP];
+    const cellsPerSide = 5;
+    const ticksPerCell = MOVEMENT_THRESHOLD / MOVEMENT_INCREMENT;
+    const ticksPerSide = cellsPerSide * ticksPerCell;
+    
+    for (let tick = 0; tick < ticksToTest; tick++) {
+      const sideIndex = Math.floor(tick / ticksPerSide) % 4;
+      const direction = loopPattern[sideIndex];
+      
       const prevPos = { ...state.player1.position };
-      const result = step(state, []);
+      const result = step(state, [{ player: 1, direction }]);
       state = result.state;
       
       if (state.player1.position.x !== prevPos.x || state.player1.position.y !== prevPos.y) {
         p1Moves++;
+      }
+      
+      if (!state.player1.isAlive) {
+        throw new Error(`Player died at tick ${tick}, moves: ${p1Moves}`);
+      }
+      
+      if (state.result && state.result.reason !== ResultReason.TIME_UP_WIN && state.result.reason !== ResultReason.TERRITORY_TIE) {
+        throw new Error(`Game ended unexpectedly at tick ${tick}, reason: ${state.result.reason}, moves: ${p1Moves}`);
       }
     }
     

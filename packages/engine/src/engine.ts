@@ -92,10 +92,6 @@ export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
 
   newState.tick++;
 
-  if (newState.tick >= MATCH_DURATION_TICKS) {
-    return handleTimeUp(newState, events);
-  }
-
   const movedPlayers = movePhase(newState);
 
   const collisionResult = collisionPhase(newState, events, movedPlayers);
@@ -104,6 +100,10 @@ export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
   }
 
   closePhase(newState, events);
+
+  if (newState.tick >= MATCH_DURATION_TICKS) {
+    return handleTimeUp(newState, events);
+  }
 
   return { state: newState, events };
 }
@@ -191,7 +191,7 @@ function collisionPhase(state: MatchState, events: GameEvent[], movedPlayers: Se
   const p1CutP2Trail = p1Moved && p1Cell !== null && isPlayerTrail(p1Cell, 2);
   const p2CutP1Trail = p2Moved && p2Cell !== null && isPlayerTrail(p2Cell, 1);
 
-  const headOnCollision = p1Moved && p2Moved && positionsEqual(p1.position, p2.position);
+  const headOnCollision = positionsEqual(p1.position, p2.position);
 
   if (headOnCollision || (p1SteppedOwnTrail && p2SteppedOwnTrail) || 
       (p1CutP2Trail && p2CutP1Trail) ||
