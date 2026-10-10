@@ -11,6 +11,7 @@ import {
   MATCH_DURATION_TICKS,
   GRID_SIZE,
   CellType,
+  TICKS_PER_SECOND,
 } from './types.js';
 
 describe('Game Engine - 판정 Tests', () => {
@@ -429,6 +430,100 @@ describe('Game Engine - 판정 Tests', () => {
     
     expect(result.state.player1.inputBuffer).toBe(Direction.DOWN);
     expect(result.state.player1.direction).toBe(Direction.RIGHT);
+  });
+
+  test('정면 충돌 - Heads pass through => head-on collision detected', () => {
+    let state = createInitialState();
+    
+    for (let y = 8; y <= 12; y++) {
+      for (let x = 8; x <= 12; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    for (let y = 18; y <= 22; y++) {
+      for (let x = 18; x <= 22; x++) {
+        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 14, y: 10 };
+    state.player2.position = { x: 16, y: 10 };
+    state.player1.direction = Direction.RIGHT;
+    state.player2.direction = Direction.LEFT;
+    state.player1.movementAccumulator = 12;
+    state.player2.movementAccumulator = 12;
+    
+    const result = step(state, []);
+    
+    expect(result.state.result).not.toBeNull();
+    expect(result.state.result?.winner).toBe(0);
+    expect(result.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
+  });
+
+  test('정면 충돌은 한 틱에 감지됨 - No pass-through', () => {
+    let state = createInitialState();
+    
+    for (let y = 8; y <= 12; y++) {
+      for (let x = 8; x <= 30; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    for (let y = 18; y <= 22; y++) {
+      for (let x = 10; x <= 32; x++) {
+        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 14, y: 10 };
+    state.player2.position = { x: 16, y: 10 };
+    state.player1.direction = Direction.RIGHT;
+    state.player2.direction = Direction.LEFT;
+    state.player1.movementAccumulator = 12;
+    state.player2.movementAccumulator = 12;
+    
+    const result = step(state, []);
+    
+    expect(result.state.result).not.toBeNull();
+    expect(result.state.result?.winner).toBe(0);
+    expect(result.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
+    expect(result.state.player1.isAlive).toBe(false);
+    expect(result.state.player2.isAlive).toBe(false);
+  });
+
+  test.skip('3000 ticks = 1200 moves (8 cells/s * 150s)', () => {
+    const ticksToTest = MATCH_DURATION_TICKS;
+    const expectedMoves = (ticksToTest / TICKS_PER_SECOND) * 8;
+    
+    let state = createInitialState();
+    
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let x = 0; x < GRID_SIZE; x++) {
+        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+      }
+    }
+    
+    state.player1.position = { x: 20, y: 20 };
+    state.player1.direction = Direction.RIGHT;
+    state.player2.position = { x: 30, y: 30 };
+    state.player2.isAlive = false;
+    
+    let p1Moves = 0;
+    const startAcc = state.player1.movementAccumulator;
+    
+    for (let i = 0; i < ticksToTest; i++) {
+      const prevPos = { ...state.player1.position };
+      const result = step(state, []);
+      state = result.state;
+      
+      if (state.player1.position.x !== prevPos.x || state.player1.position.y !== prevPos.y) {
+        p1Moves++;
+      }
+    }
+    
+    expect(p1Moves).toBe(expectedMoves);
+    expect(state.player1.movementAccumulator).toBe(startAcc);
   });
 
   test('감싼 영역 안 상대 선 - Opponent trail inside enclosure survives', () => {
