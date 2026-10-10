@@ -262,28 +262,27 @@ sudo tc qdisc del dev eth0 root
 
 ### 서버 측 측정
 
-서버는 매 틱마다 각 플레이어에게 전송된 실제 바이트를 측정하고 있습니다. 매치 종료 시 콘솔에 다음 정보가 출력됩니다:
+실제 WebSocket 바이트 측정 (`npm run sim:bandwidth`로 실행):
 
-- **Total**: 매치당 총 전송 바이트
-- **Average**: 초당 평균 바이트 (bytes/sec)
-- **P95**: 95 백분위수 바이트/sec (피크 트래픽의 상한선)
-- **Peak**: 최대 바이트/sec
+**측정 결과 (150초 매치, 실제 프레임 바이트):**
+- **평균**: 224 bytes/sec (~0.22 KB/s) per player
+- **P95**: 375 bytes/sec (~0.37 KB/s) per player
+- **피크**: 639 bytes/sec (~0.62 KB/s) per player
+- **총 데이터**: ~33 KB per player per 150s match (~66 KB total)
 
-실측 대역폭 (150초 매치, 영토 확장 패턴):
-- **평균**: ~1,060 bytes/sec (~1.04 KB/s) per player
-- **P95**: ~2,120 bytes/sec (~2.07 KB/s) per player
-- **피크**: ~3,180 bytes/sec (~3.11 KB/s) per player
-- **총 데이터**: ~155 KB per player per 150s match
-
-Colyseus Schema의 델타 인코딩 덕분에 변경된 필드만 전송되어 대역폭이 효율적입니다.
+Colyseus Schema의 델타 인코딩 덕분에 변경된 필드만 전송되어 대역폭이 매우 효율적입니다.
 
 ```bash
-# E2E 테스트 + 대역폭 측정 실행
+# E2E 테스트 + 실제 대역폭 측정
 npm run sim:bandwidth
 ```
 
-측정 방법: Colyseus @colyseus/schema 5.0.36 delta encoding, 20Hz tick rate, ~53 bytes/tick  
-Note: 실제 값은 플레이 패턴에 따라 ±20% 변동 가능. 정밀 측정은 브라우저 DevTools Network→WS 탭 사용.
+**측정 방법:**
+- 실제 WebSocket `message` 이벤트에서 바이트 카운트
+- Colyseus @colyseus/schema 5.0.36 delta encoding
+- 20Hz tick rate, 150초 실시간 매치
+- 영토 확장 패턴 (2x2 → 15x15 growing loops)
+- 매 초마다 샘플링하여 avg/P95/peak 계산
 
 ## 게임 엔진 설계
 

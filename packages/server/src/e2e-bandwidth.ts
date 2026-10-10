@@ -1,14 +1,33 @@
-// E2E Test with Schema-based Bandwidth Estimation
-// Verified: SDK clients can connect, join, send inputs, receive state updates
+// E2E Test with ACTUAL WebSocket byte measurement
+// Measures real bytes from WebSocket frames, not formulas
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
 import { Direction, TICKS_PER_SECOND } from '@turf-duel/engine';
 
+interface BandwidthStats {
+  totalBytes: number;
+  bytesPerSecond: number[];
+}
+
+function calculateStats(stats: BandwidthStats, duration: number) {
+  const avgBytesPerSec = Math.round(stats.totalBytes / duration);
+  
+  // Calculate P95
+  const sorted = [...stats.bytesPerSecond].sort((a, b) => a - b);
+  const p95Index = Math.ceil(sorted.length * 0.95) - 1;
+  const p95BytesPerSec = sorted[Math.max(0, p95Index)] || 0;
+  
+  // Peak is max
+  const peakBytesPerSec = Math.max(...stats.bytesPerSecond, 0);
+  
+  return { avgBytesPerSec, p95BytesPerSec, peakBytesPerSec };
+}
+
 async function runE2ETest(): Promise<void> {
-  console.log('🎮 E2E Test & Bandwidth Measurement\n');
-  console.log('Mode: Real-time (150s match with growing territory loops)\n');
+  console.log('🎮 E2E Test & REAL WebSocket Bandwidth Measurement\n');
+  console.log('Mode: Real-time 150s match, measuring actual WebSocket frame bytes\n');
 
   const server = new Server({
     transport: new WebSocketTransport({}),
@@ -21,28 +40,112 @@ async function runE2ETest(): Promise<void> {
   const client1 = new Client('ws://localhost:12567');
   const client2 = new Client('ws://localhost:12567');
 
-  let inputsSent1 = 0;
-  let inputsSent2 = 0;
+  const stats1: BandwidthStats = { totalBytes: 0, bytesPerSecond: [] };
+  const stats2: BandwidthStats = { totalBytes: 0, bytesPerSecond: [] };
+
+  let inputsSent = 0;
   let stateUpdatesReceived = 0;
-  let cellUpdatesReceived = 0;
 
   try {
-    console.log('Connecting SDK clients (@colyseus/sdk 0.18.5)...');
+    console.log('Connecting SDK clients...');
     const room1 = await client1.joinOrCreate('turf_duel');
     const room2 = await client2.joinOrCreate('turf_duel');
 
     console.log('✓ Both clients connected to room:', room1.roomId);
     console.log('✓ Protocol: @colyseus/sdk 0.18.5 ↔ @colyseus/core 0.18.18 ✅\n');
+
+    // Access underlying WebSocket connections
+    const ws1 = (room1.connection as any).transport?.ws || 
+                (room1.connection as any).ws ||
+                (room1 as any).connection?.ws;
+    const ws2 = (room2.connection as any).transport?.ws || 
+                (room2.connection as any).ws ||
+                (room2 as any).connection?.ws;
+
+    if (!ws1 || !ws2) {
+      throw new Error('Failed to access WebSocket connections');
+    }
+
+    console.log('✓ WebSocket connections accessed\n');
     console.log('Running 150s match with growing rectangular loops (2x2 → 15x15)...\n');
 
     const startTime = Date.now();
+    let lastSecondMark = startTime;
+    let bytesThisSecond1 = 0;
+    let bytesThisSecond2 = 0;
 
-    // Track state updates and estimate bandwidth
-    room1.onStateChange((state: any) => {
-      stateUpdatesReceived++;
-      if (state.cellUpdates) {
-        cellUpdatesReceived += state.cellUpdates.length;
+    // Track bytes per second
+    const bandwidthInterval = setInterval(() => {
+      const now = Date.now();
+      if (now - lastSecondMark >= 1000) {
+        stats1.bytesPerSecond.push(bytesThisSecond1);
+        stats2.bytesPerSecond.push(bytesThisSecond2);
+        bytesThisSecond1 = 0;
+        bytesThisSecond2 = 0;
+        lastSecondMark = now;
       }
+    }, 100);
+
+    // Hook WebSocket message events to measure ACTUAL bytes
+    const originalAddEventListener1 = ws1.addEventListener?.bind(ws1) || ws1.on?.bind(ws1);
+    const originalAddEventListener2 = ws2.addEventListener?.bind(ws2) || ws2.on?.bind(ws2);
+
+    const messageHandler1 = (event: any) => {
+      const data = event.data || event;
+      let byteLength = 0;
+      
+      if (Buffer.isBuffer(data)) {
+        byteLength = data.length;
+      } else if (data instanceof ArrayBuffer) {
+        byteLength = data.byteLength;
+      } else if (ArrayBuffer.isView(data)) {
+        byteLength = data.byteLength;
+      } else if (typeof data === 'string') {
+        byteLength = Buffer.byteLength(data, 'utf8');
+      }
+      
+      if (byteLength > 0) {
+        stats1.totalBytes += byteLength;
+        bytesThisSecond1 += byteLength;
+      }
+    };
+
+    const messageHandler2 = (event: any) => {
+      const data = event.data || event;
+      let byteLength = 0;
+      
+      if (Buffer.isBuffer(data)) {
+        byteLength = data.length;
+      } else if (data instanceof ArrayBuffer) {
+        byteLength = data.byteLength;
+      } else if (ArrayBuffer.isView(data)) {
+        byteLength = data.byteLength;
+      } else if (typeof data === 'string') {
+        byteLength = Buffer.byteLength(data, 'utf8');
+      }
+      
+      if (byteLength > 0) {
+        stats2.totalBytes += byteLength;
+        bytesThisSecond2 += byteLength;
+      }
+    };
+
+    // Register message handlers
+    if (ws1.addEventListener) {
+      ws1.addEventListener('message', messageHandler1);
+    } else if (ws1.on) {
+      ws1.on('message', messageHandler1);
+    }
+
+    if (ws2.addEventListener) {
+      ws2.addEventListener('message', messageHandler2);
+    } else if (ws2.on) {
+      ws2.on('message', messageHandler2);
+    }
+
+    // Track state updates
+    room1.onStateChange(() => {
+      stateUpdatesReceived++;
     });
 
     // Growing rectangular loop pattern
@@ -61,9 +164,7 @@ async function runE2ETest(): Promise<void> {
       
       room1.send('input', { direction: dir1 });
       room2.send('input', { direction: dir2 });
-      
-      inputsSent1++;
-      inputsSent2++;
+      inputsSent += 2;
       
       stepsInCurrentDirection++;
       if (stepsInCurrentDirection >= stepsPerSide) {
@@ -84,61 +185,61 @@ async function runE2ETest(): Promise<void> {
     // Wait for 150 seconds
     await new Promise(resolve => setTimeout(resolve, 150000));
     clearInterval(inputInterval);
+    clearInterval(bandwidthInterval);
+
+    // Flush last second
+    if (bytesThisSecond1 > 0) stats1.bytesPerSecond.push(bytesThisSecond1);
+    if (bytesThisSecond2 > 0) stats2.bytesPerSecond.push(bytesThisSecond2);
 
     const endTime = Date.now();
     const duration = (endTime - startTime) / 1000;
-    const totalTicks = Math.floor(duration * TICKS_PER_SECOND);
+
+    // Calculate statistics from ACTUAL measured bytes
+    const result1 = calculateStats(stats1, duration);
+    const result2 = calculateStats(stats2, duration);
 
     console.log('\n✅ E2E Test Results:\n');
-    console.log(`SDK Connection: ✅ (@colyseus/sdk 0.18.5 works with server 0.18.18)`);
+    console.log(`SDK Connection: ✅ (@colyseus/sdk 0.18.5 ↔ @colyseus/core 0.18.18)`);
     console.log(`Room Join: ✅ (${room1.roomId})`);
-    console.log(`Input Messages: ✅ (${inputsSent1 + inputsSent2} sent)`);
-    console.log(`State Updates: ✅ (${stateUpdatesReceived} received)`);
-    console.log(`Match Duration: ${duration.toFixed(1)}s (${totalTicks} ticks)\n`);
+    console.log(`Input Messages Sent: ✅ (${inputsSent} total)`);
+    console.log(`State Updates Received: ✅ (${stateUpdatesReceived} patches)`);
+    console.log(`Match Duration: ${duration.toFixed(1)}s\n`);
 
-    // Calculate bandwidth based on Colyseus Schema delta encoding
-    // Per tick transmission:
-    // - Player positions (2 players × 2 coords × 2 bytes) = 8 bytes
-    // - Player directions (2 players × 1 byte) = 2 bytes  
-    // - Territory cells (2 players × 4 bytes) = 8 bytes
-    // - Tick number (4 bytes) = 4 bytes
-    // - Cell updates (avg ~5 cells × 3 bytes per cell) = 15 bytes
-    // - Schema overhead (field IDs, deltas) = ~10 bytes
-    // - WebSocket frame overhead = ~6 bytes
-    // Total per tick per player: ~53 bytes
+    console.log('=== MEASURED WebSocket Bandwidth (Real Frames) ===\n');
     
-    const bytesPerTick = 53;
-    const totalBytesPerPlayer = totalTicks * bytesPerTick;
-    const avgBytesPerSec = Math.round(totalBytesPerPlayer / duration);
-    
-    // Peak occurs when many cells update (territory capture)
-    // Estimate: 3x normal during heavy territory changes
-    const peakBytesPerSec = Math.round(avgBytesPerSec * 3);
-    
-    // P95: 2x normal for occasional territory updates
-    const p95BytesPerSec = Math.round(avgBytesPerSec * 2);
+    console.log('Player 1:');
+    console.log(`  Total: ${stats1.totalBytes.toLocaleString()} bytes (${(stats1.totalBytes / 1024).toFixed(2)} KB)`);
+    console.log(`  Average: ${result1.avgBytesPerSec.toLocaleString()} bytes/sec (~${(result1.avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
+    console.log(`  P95: ${result1.p95BytesPerSec.toLocaleString()} bytes/sec (~${(result1.p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Peak: ${result1.peakBytesPerSec.toLocaleString()} bytes/sec (~${(result1.peakBytesPerSec / 1024).toFixed(2)} KB/s)\n`);
 
-    console.log('=== Bandwidth Measurement (Schema-based) ===\n');
-    console.log('Per Player:');
-    console.log(`  Total: ${totalBytesPerPlayer.toLocaleString()} bytes (~${(totalBytesPerPlayer / 1024).toFixed(2)} KB)`);
-    console.log(`  Average: ${avgBytesPerSec.toLocaleString()} bytes/sec (~${(avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
-    console.log(`  P95: ${p95BytesPerSec.toLocaleString()} bytes/sec (~${(p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
-    console.log(`  Peak: ${peakBytesPerSec.toLocaleString()} bytes/sec (~${(peakBytesPerSec / 1024).toFixed(2)} KB/s)\n`);
+    console.log('Player 2:');
+    console.log(`  Total: ${stats2.totalBytes.toLocaleString()} bytes (${(stats2.totalBytes / 1024).toFixed(2)} KB)`);
+    console.log(`  Average: ${result2.avgBytesPerSec.toLocaleString()} bytes/sec (~${(result2.avgBytesPerSec / 1024).toFixed(2)} KB/s)`);
+    console.log(`  P95: ${result2.p95BytesPerSec.toLocaleString()} bytes/sec (~${(result2.p95BytesPerSec / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Peak: ${result2.peakBytesPerSec.toLocaleString()} bytes/sec (~${(result2.peakBytesPerSec / 1024).toFixed(2)} KB/s)\n`);
 
-    const totalMatchBytes = totalBytesPerPlayer * 2;
+    const avgPerPlayer = Math.round((result1.avgBytesPerSec + result2.avgBytesPerSec) / 2);
+    const p95PerPlayer = Math.round((result1.p95BytesPerSec + result2.p95BytesPerSec) / 2);
+    const peakPerPlayer = Math.round((result1.peakBytesPerSec + result2.peakBytesPerSec) / 2);
+    const totalPerPlayer = Math.round((stats1.totalBytes + stats2.totalBytes) / 2);
+
+    console.log('Per-Player Average:');
+    console.log(`  Average: ${avgPerPlayer.toLocaleString()} bytes/sec (~${(avgPerPlayer / 1024).toFixed(2)} KB/s)`);
+    console.log(`  P95: ${p95PerPlayer.toLocaleString()} bytes/sec (~${(p95PerPlayer / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Peak: ${peakPerPlayer.toLocaleString()} bytes/sec (~${(peakPerPlayer / 1024).toFixed(2)} KB/s)`);
+    console.log(`  Total per match: ${totalPerPlayer.toLocaleString()} bytes (~${(totalPerPlayer / 1024).toFixed(2)} KB)\n`);
+
+    const totalMatch = stats1.totalBytes + stats2.totalBytes;
     console.log('Total per Match (both players):');
-    console.log(`  ${totalMatchBytes.toLocaleString()} bytes (~${(totalMatchBytes / 1024).toFixed(2)} KB)\n`);
+    console.log(`  ${totalMatch.toLocaleString()} bytes (${(totalMatch / 1024).toFixed(2)} KB)\n`);
 
     console.log('Measurement Method:');
-    console.log(`  - Schema delta encoding: Colyseus @colyseus/schema 5.0.36`);
-    console.log(`  - Tick rate: ${TICKS_PER_SECOND}Hz (${1000/TICKS_PER_SECOND}ms per tick)`);
-    console.log(`  - Per-tick payload: ~${bytesPerTick} bytes (positions + state + deltas + overhead)`);
-    console.log(`  - Cell updates: ${cellUpdatesReceived} total (~${(cellUpdatesReceived/totalTicks).toFixed(1)} per tick avg)`);
-    console.log(`  - Based on: ${stateUpdatesReceived} state patches over ${totalTicks} ticks\n`);
-
-    console.log('Note: Values are calculated from Colyseus Schema encoding format.');
-    console.log('      Actual bytes may vary ±20% based on play patterns and compression.');
-    console.log('      For precise measurement, use browser DevTools Network→WS tab.\n');
+    console.log(`  - ACTUAL WebSocket frame bytes (measured from ws.on('message') events)`);
+    console.log(`  - Real-time 150s match at 20Hz tick rate`);
+    console.log(`  - Growing rectangular loops (2x2 → 15x15) capturing territory`);
+    console.log(`  - Colyseus @colyseus/schema 5.0.36 delta encoding`);
+    console.log(`  - ${stats1.bytesPerSecond.length} seconds of per-second samples\n`);
 
     await room1.leave();
     await room2.leave();
