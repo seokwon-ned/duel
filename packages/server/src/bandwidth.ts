@@ -106,10 +106,13 @@ async function measureBandwidth(): Promise<void> {
       tickCount++;
     }, 50); // 20Hz = 50ms per tick
 
+    let finalTick = 0;
+
     await new Promise<void>((resolve) => {
       room1.onStateChange((state: any) => {
         if (state.result) {
           clearInterval(interval);
+          finalTick = state.tick;
           
           // Flush last second
           if (bytesThisSecond1 > 0) {
@@ -133,6 +136,12 @@ async function measureBandwidth(): Promise<void> {
     stats2.averageBytesPerSecond = stats2.totalBytes / duration;
 
     console.log('✓ Match completed\n');
+    
+    // Assert exact tick count
+    if (finalTick !== 3000) {
+      throw new Error(`Expected exactly 3000 ticks, got ${finalTick}`);
+    }
+    console.log('✓ Tick accuracy verified: exactly 3000 ticks\n');
     console.log('=== Bandwidth Report ===\n');
     console.log(`Match duration: ${duration.toFixed(1)}s\n`);
     

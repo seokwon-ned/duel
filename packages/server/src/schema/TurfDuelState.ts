@@ -10,6 +10,9 @@ export class PlayerSchema extends Schema {
   @type('string') direction: string = 'RIGHT';
   @type('boolean') isAlive: boolean = true;
   @type('number') territoryCells: number = 9;
+  @type('boolean') connected: boolean = true;
+  @type('number') disconnectCount: number = 0;
+  @type('number') totalDisconnectedMs: number = 0;
 }
 
 export class CellUpdate extends Schema {
@@ -31,4 +34,6 @@ export class TurfDuelState extends Schema {
   @type('boolean') paused: boolean = false;
   @type(MatchResultSchema) result: MatchResultSchema | undefined;
   @type([CellUpdate]) cellUpdates = new Array<CellUpdate>();
+  @type('number') disconnectedPlayer: number = 0; // 0 = none, 1 = player1, 2 = player2, 3 = both
+  @type('number') disconnectCountdownSeconds: number = 0;
 }

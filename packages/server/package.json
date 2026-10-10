@@ -6,7 +6,8 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "start:prod": "node dist/index.js",
-    "bandwidth": "tsx src/bandwidth.ts"
+    "bandwidth": "tsx src/bandwidth.ts",
+    "test:reconnection": "tsx src/reconnection.test.ts"
   },
   "dependencies": {
     "@colyseus/core": "^0.15.0",

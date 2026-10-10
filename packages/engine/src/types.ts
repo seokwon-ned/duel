@@ -34,6 +34,8 @@ export enum ResultReason {
   SIMULTANEOUS_COLLISION = '동시 충돌',
   TERRITORY_TIE = '땅 동률',
   TIME_UP_WIN = '시간 종료 승리',
+  DISCONNECTED = '연결 끊김',
+  BOTH_DISCONNECTED = '양쪽 연결 끊김 (무효)',
 }
 
 export interface MatchResult {
