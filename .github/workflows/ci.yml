@@ -35,6 +35,9 @@ jobs:
       - name: Run fault isolation test
         run: npm run test:fault --workspace=packages/server
       
+      - name: Run reconnection tests
+        run: npm run test:reconnection --workspace=packages/server
+      
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       

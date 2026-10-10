@@ -1,12 +1,9 @@
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { Client, Room } from 'colyseus.js';
-import * as WebSocket from 'ws';
+import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
 import { Direction, MATCH_DURATION_TICKS } from '@turf-duel/engine';
 import { TurfDuelState } from './schema/TurfDuelState.js';
-
-(global as any).WebSocket = WebSocket;
 
 interface ReconnectionTestResult {
   passed: boolean;

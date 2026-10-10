@@ -10,7 +10,8 @@
     "test:e2e": "tsx src/e2e-bandwidth.ts",
     "test:crash": "tsx src/e2e-crash.ts",
     "test:lossless": "tsx src/e2e-lossless.ts",
-    "test:fault": "tsx src/e2e-fault-isolation.ts"
+    "test:fault": "tsx src/e2e-fault-isolation.ts",
+    "test:reconnection": "tsx src/reconnection.test.ts"
   },
   "dependencies": {
     "@colyseus/core": "0.18.18",
