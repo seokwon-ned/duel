@@ -6,15 +6,16 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "start:prod": "node dist/index.js",
-    "bandwidth": "tsx src/bandwidth.ts"
+    "bandwidth": "tsx src/bandwidth.ts",
+    "test:e2e": "tsx src/e2e-bandwidth.ts"
   },
   "dependencies": {
     "@colyseus/core": "0.18.18",
     "@colyseus/schema": "^5.0.36",
+    "@colyseus/sdk": "^0.18.5",
     "@colyseus/ws-transport": "0.18.4",
     "@turf-duel/bot": "^1.1.0",
     "@turf-duel/engine": "^1.1.0",
-    "colyseus.js": "^0.16.22",
     "express": "^4.18.0",
     "ws": "^8.14.0"
   },

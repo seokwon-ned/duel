@@ -10,7 +10,7 @@
   "dependencies": {
     "@turf-duel/engine": "^1.1.0",
     "@turf-duel/bot": "^1.1.0",
-    "colyseus.js": "^0.16.22",
+    "@colyseus/sdk": "^0.18.5",
     "phaser": "^3.70.0"
   },
   "devDependencies": {

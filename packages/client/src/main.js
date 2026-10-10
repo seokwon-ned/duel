@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Client } from 'colyseus.js';
+import { Client } from '@colyseus/sdk';
 import { createInitialState, step, Direction, CellType, GRID_SIZE, } from '@turf-duel/engine';
 import { Bot } from '@turf-duel/bot';
 const CELL_SIZE = 15;

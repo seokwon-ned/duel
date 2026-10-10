@@ -27,6 +27,35 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.setState(state);
     this.matchState = createInitialState();
     
+    // Hook broadcast to measure actual bytes sent
+    const originalBroadcast = this.broadcast.bind(this);
+    (this as any).broadcast = (type: any, message?: any, options?: any) => {
+      // Measure message size
+      let byteLength = 0;
+      if (message) {
+        if (Buffer.isBuffer(message)) {
+          byteLength = message.length;
+        } else if (ArrayBuffer.isView(message)) {
+          byteLength = message.byteLength;
+        } else if (typeof message === 'string') {
+          byteLength = Buffer.byteLength(message, 'utf8');
+        } else {
+          // For objects, estimate JSON size
+          byteLength = Buffer.byteLength(JSON.stringify(message), 'utf8');
+        }
+      }
+      
+      // Add to each player's byte count
+      if (byteLength > 0) {
+        for (const [sessionId] of this.playerMapping) {
+          const current = this.bytesSentPerPlayer.get(sessionId) || 0;
+          this.bytesSentPerPlayer.set(sessionId, current + byteLength);
+        }
+      }
+      
+      return originalBroadcast(type, message, options);
+    };
+    
     this.onMessage('input', (client, message) => {
       this.handleInput(client, message);
     });
@@ -48,7 +77,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
     // Hook into WebSocket to measure actual bytes sent
-    const ws = (client as any).raw;
+    // Try multiple paths to access the underlying WebSocket
+    const ws = (client as any).raw || (client as any)._connection || (client as any).connection;
+    
     if (ws && ws.send) {
       const originalWsSend = ws.send.bind(ws);
       ws.send = (data: any, ...args: any[]) => {
@@ -64,6 +95,28 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
         
         return originalWsSend(data, ...args);
       };
+    } else {
+      // Fallback: Try to find ws in the transport
+      const transport = (this as any).presence?.transport || (this as any).transport;
+      if (transport && transport.clients) {
+        const wsClient = transport.clients.get(client.sessionId);
+        if (wsClient && wsClient.send) {
+          const originalTransportSend = wsClient.send.bind(wsClient);
+          wsClient.send = (data: any, ...args: any[]) => {
+            const byteLength = Buffer.isBuffer(data) ? data.length :
+                              ArrayBuffer.isView(data) ? data.byteLength :
+                              typeof data === 'string' ? Buffer.byteLength(data, 'utf8') :
+                              data?.byteLength || data?.length || 0;
+            
+            if (byteLength > 0) {
+              const current = this.bytesSentPerPlayer.get(client.sessionId) || 0;
+              this.bytesSentPerPlayer.set(client.sessionId, current + byteLength);
+            }
+            
+            return originalTransportSend(data, ...args);
+          };
+        }
+      }
     }
 
     if (this.playerMapping.size === 2) {
@@ -83,6 +136,11 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (this.gameLoop) {
       clearInterval(this.gameLoop);
     }
+    
+    // Log bandwidth when room is disposed (match ended or players left)
+    if (this.matchState && this.matchState.tick > 0) {
+      this.logBandwidth();
+    }
   }
 
   private startGame() {
@@ -95,8 +153,12 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       for (const [sessionId] of this.playerMapping) {
         const current = this.bytesSentPerPlayer.get(sessionId) || 0;
         const perSecondList = this.bytesPerSecondPerPlayer.get(sessionId) || [];
-        const lastTotal = perSecondList.reduce((a, b) => a + b, 0);
+        
+        // Calculate bytes sent in this second
+        const lastTotal = perSecondList.length > 0 ? 
+          perSecondList.reduce((sum, b) => sum + b, 0) : 0;
         const bytesThisSecond = current - lastTotal;
+        
         perSecondList.push(bytesThisSecond);
         this.bytesPerSecondPerPlayer.set(sessionId, perSecondList);
       }
