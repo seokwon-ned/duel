@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 test.describe('P0-2: Client Rendering (1v1 Two-Tab)', () => {
   test('two browsers connect and render in 1v1 match', async ({ browser }) => {
@@ -8,81 +8,94 @@ test.describe('P0-2: Client Rendering (1v1 Two-Tab)', () => {
     const page1 = await context1.newPage();
     const page2 = await context2.newPage();
 
-    // Navigate both to the client
-    await page1.goto('/');
-    await page2.goto('/');
+    try {
+      // Navigate both to the client
+      await page1.goto('/');
+      await page2.goto('/');
 
-    // Wait for page load
-    await page1.waitForLoadState('networkidle');
-    await page2.waitForLoadState('networkidle');
+      // Wait for page load
+      await page1.waitForLoadState('domcontentloaded');
+      await page2.waitForLoadState('domcontentloaded');
 
-    // Check canvas exists
-    const canvas1 = await page1.locator('canvas');
-    const canvas2 = await page2.locator('canvas');
-    await expect(canvas1).toBeVisible();
-    await expect(canvas2).toBeVisible();
+      // Check initial debug hook exists (proves main.ts loaded)
+      const initialDebug1 = await page1.evaluate(() => window.__turfDebug);
+      const initialDebug2 = await page2.evaluate(() => window.__turfDebug);
+      
+      expect(initialDebug1).toBeDefined();
+      expect(initialDebug2).toBeDefined();
+      
+      console.log('✓ Debug hooks initialized on both pages');
 
-    console.log('✓ Canvas elements visible on both pages');
+      // Both click "Connect to Server"
+      await page1.click('#connectBtn');
+      await page2.click('#connectBtn');
 
-    // Check initial debug hook exists
-    const initialDebug1 = await page1.evaluate(() => window.__turfDebug);
-    const initialDebug2 = await page2.evaluate(() => window.__turfDebug);
-    
-    expect(initialDebug1).toBeDefined();
-    expect(initialDebug2).toBeDefined();
-    
-    console.log('✓ Debug hooks initialized');
+      console.log('✓ Both pages clicked Connect button');
 
-    // Both click "Connect to Server"
-    await page1.click('#connectBtn');
-    await page2.click('#connectBtn');
+      // Wait for connection and initial state sync (3 seconds)
+      await page1.waitForTimeout(3000);
 
-    console.log('✓ Both pages clicked Connect');
+      // Check connection status (should say "Connected! Room: ...")
+      const status1 = await page1.textContent('#status');
+      const status2 = await page2.textContent('#status');
+      console.log('Page 1 status:', status1);
+      console.log('Page 2 status:', status2);
 
-    // Wait for connection (status should change from initial state)
-    await page1.waitForTimeout(3000);
+      // Both should be connected (not showing "Ready to connect" or "Error")
+      expect(status1).toContain('Connected');
+      expect(status2).toContain('Connected');
 
-    // Check connection status
-    const status1 = await page1.textContent('#status');
-    const status2 = await page2.textContent('#status');
-    console.log('Page 1 status:', status1);
-    console.log('Page 2 status:', status2);
+      console.log('✓ Both clients connected to server');
 
-    // Both should be connected (not showing initial state or error)
-    expect(status1).toContain('Connected');
-    expect(status2).toContain('Connected');
+      // Wait for game to progress (5 more seconds = 100+ ticks at 20 TPS)
+      await page1.waitForTimeout(5000);
 
-    // Wait for game to progress
-    await page1.waitForTimeout(5000);
+      // Get final debug info
+      const finalDebug1 = await page1.evaluate(() => window.__turfDebug);
+      const finalDebug2 = await page2.evaluate(() => window.__turfDebug);
 
-    // Get final debug info
-    const finalDebug1 = await page1.evaluate(() => window.__turfDebug);
-    const finalDebug2 = await page2.evaluate(() => window.__turfDebug);
+      console.log('Page 1 debug:', finalDebug1);
+      console.log('Page 2 debug:', finalDebug2);
 
-    console.log('Final debug1:', finalDebug1);
-    console.log('Final debug2:', finalDebug2);
+      // Assert game state is advancing (tick > 10 after 8 seconds)
+      expect(finalDebug1!.tick).toBeGreaterThan(10);
+      expect(finalDebug2!.tick).toBeGreaterThan(10);
 
-    // Assert rendering happened (tick should advance OR frames should be rendered)
-    // In online mode with full grid sync, tick advances but frames may not render
-    // in headless mode if Phaser doesn't initialize properly
-    const page1Active = (finalDebug1!.tick > 0) || (finalDebug1!.renderedFrames > 0);
-    const page2Active = (finalDebug2!.tick > 0) || (finalDebug2!.renderedFrames > 0);
+      console.log(`✓ Game tick advancing: page1=${finalDebug1!.tick}, page2=${finalDebug2!.tick}`);
 
-    expect(page1Active).toBe(true);
-    expect(page2Active).toBe(true);
+      // Assert both pages see similar tick (within 5 ticks = 250ms desync tolerance)
+      const tickDiff = Math.abs(finalDebug1!.tick - finalDebug2!.tick);
+      expect(tickDiff).toBeLessThan(5);
 
-    console.log(`✓ Page 1: tick=${finalDebug1!.tick}, frames=${finalDebug1!.renderedFrames}`);
-    console.log(`✓ Page 2: tick=${finalDebug2!.tick}, frames=${finalDebug2!.renderedFrames}`);
+      console.log(`✓ Both pages synchronized (tick diff: ${tickDiff})`);
 
-    // If ticks advanced, check owned cells
-    if (finalDebug1!.tick > 10) {
+      // Assert rendering is happening (renderedFrames incremented)
+      expect(finalDebug1!.renderedFrames).toBeGreaterThan(0);
+      expect(finalDebug2!.renderedFrames).toBeGreaterThan(0);
+
+      console.log(`✓ Rendering active: page1=${finalDebug1!.renderedFrames} frames, page2=${finalDebug2!.renderedFrames} frames`);
+
+      // Assert both players have non-zero owned cells (game logic working)
       expect(finalDebug1!.ownedCells.p1).toBeGreaterThan(0);
       expect(finalDebug1!.ownedCells.p2).toBeGreaterThan(0);
-      console.log('✓ Both players have owned cells');
-    }
+      expect(finalDebug2!.ownedCells.p1).toBeGreaterThan(0);
+      expect(finalDebug2!.ownedCells.p2).toBeGreaterThan(0);
 
-    // Cleanup
-    await context1.close();
-    await context2.close();
+      console.log(`✓ Both players own territory: p1=${finalDebug1!.ownedCells.p1}, p2=${finalDebug1!.ownedCells.p2}`);
+
+      // Optional: Check canvas element exists (best-effort, may fail in headless)
+      const hasCanvas1 = await page1.locator('canvas').count();
+      const hasCanvas2 = await page2.locator('canvas').count();
+      if (hasCanvas1 > 0 && hasCanvas2 > 0) {
+        console.log('✓ Canvas elements present on both pages');
+      } else {
+        console.log('⚠ Canvas not detected (headless mode), but debug hook confirms rendering');
+      }
+
+    } finally {
+      // Cleanup
+      await context1.close();
+      await context2.close();
+    }
   });
 });

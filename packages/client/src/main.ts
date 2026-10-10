@@ -279,7 +279,15 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [GameScene],
 };
 
-let game: Phaser.Game | null = null;
+// Initialize game on page load
+const game = new Phaser.Game(config);
+let gameSceneReady = false;
+
+// Wait for game scene to be created
+game.events.once('ready', () => {
+  gameSceneReady = true;
+  console.log('Phaser game ready');
+});
 
 document.getElementById('connectBtn')?.addEventListener('click', async () => {
   const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
@@ -293,13 +301,15 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
     
     if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
 
-    if (!game) {
-      game = new Phaser.Game(config);
+    // Get the game scene
+    const scene = game.scene.scenes[0] as GameScene;
+    
+    if (scene && typeof scene.startOnlineMode === 'function') {
+      scene.startOnlineMode(room);
+    } else {
+      console.error('Game scene not ready');
+      throw new Error('Game scene not initialized');
     }
-
-    game.scene.scenes[0].events.once('create', () => {
-      (game!.scene.scenes[0] as GameScene).startOnlineMode(room);
-    });
   } catch (error) {
     console.error('Connection error:', error);
     if (statusEl) statusEl.textContent = `Error: ${error}`;
@@ -310,11 +320,12 @@ document.getElementById('botBtn')?.addEventListener('click', () => {
   const statusEl = document.getElementById('status');
   if (statusEl) statusEl.textContent = 'Playing vs Bot (offline)';
 
-  if (!game) {
-    game = new Phaser.Game(config);
+  const scene = game.scene.scenes[0] as GameScene;
+  
+  if (scene && typeof scene.startBotMode === 'function') {
+    scene.startBotMode();
+  } else {
+    console.error('Game scene not ready');
+    if (statusEl) statusEl.textContent = 'Error: Game not initialized';
   }
-
-  game.scene.scenes[0].events.once('create', () => {
-    (game!.scene.scenes[0] as GameScene).startBotMode();
-  });
 });

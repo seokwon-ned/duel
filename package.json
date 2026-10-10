@@ -16,7 +16,8 @@
     "test": "npm run test --workspaces --if-present",
     "build": "npm run build --workspace=packages/engine && npm run build --workspaces --if-present",
     "server": "npm run start --workspace=packages/server",
-    "sim:bandwidth": "npm run test:e2e --workspace=packages/server"
+    "sim:bandwidth": "npm run test:e2e --workspace=packages/server",
+    "test:e2e:playwright": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",
