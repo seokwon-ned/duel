@@ -193,6 +193,7 @@ class GameScene extends Phaser.Scene {
   private qaHit = false;
   private qaLose = false;
   private qaClaimed = false;
+  private qaWinAtMs = 0;
   private melt = 0;
   private melting = false;
   private meltSkip = 0;
@@ -474,6 +475,7 @@ class GameScene extends Phaser.Scene {
     this.qaLose = qa === 'lose';
     this.qaMode = qa === '1' || qa === 'cut' || this.qaHit || this.qaLose;
     this.qaClaimed = false;
+    this.qaWinAtMs = 0;
     this.melt = 0;
     this.melting = false;
     this.meltSkip = 0;
@@ -540,7 +542,7 @@ class GameScene extends Phaser.Scene {
       this.matchState.player1.hearts = 0;
       this.matchState.player1.isAlive = false;
     }
-    if (this.qaMode && !this.qaHit && !this.qaLose && this.qaClaimed && !this.matchState.result) {
+    if (this.qaMode && !this.qaHit && !this.qaLose && this.qaWinAtMs > 0 && Date.now() >= this.qaWinAtMs && !this.matchState.result) {
       this.matchState.player1.territoryCells = Math.max(
         claimed,
         Math.ceil(TOTAL_CELLS / 2),
@@ -582,11 +584,17 @@ class GameScene extends Phaser.Scene {
     const notableCut = !this.qaMode || (this.matchState?.player1.territoryCells ?? 0) >= 18000;
     for (const ev of events) {
       if (ev.type === 'trap_bonus') {
-        if (ev.player === 1 && notableCut) this.qaClaimed = true;
+        if (ev.player === 1 && notableCut) {
+          this.qaClaimed = true;
+          if (!this.qaWinAtMs) this.qaWinAtMs = Date.now() + 1600;
+        }
         if (notableCut) this.playCutFx(undefined, ev.data?.percent ?? 5, prevTrail);
       }
       if (ev.type === 'claim' && !bonus) {
-        if (ev.player === 1 && notableCut) this.qaClaimed = true;
+        if (ev.player === 1 && notableCut) {
+          this.qaClaimed = true;
+          if (!this.qaWinAtMs) this.qaWinAtMs = Date.now() + 1600;
+        }
         if (notableCut) this.playCutFx(ev.data?.cells ?? 0, undefined, prevTrail);
       }
       if (ev.type === 'heart') this.playHitFx(ev.player === 1 ? prevTrail : []);
