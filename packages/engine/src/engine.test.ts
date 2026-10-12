@@ -310,6 +310,186 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player2.drawing).toBe(false);
     expect(state.player2.trail.length).toBe(0);
     expect(state.grid[topY][crossX]).not.toBe(CellType.PLAYER2_TRAIL);
+    expect(cellOf(state.player2.xFp)).toBe(state.player2.spawnX);
+    expect(cellOf(state.player2.yFp)).toBe(state.player2.spawnY);
+  });
+
+  test('invincible foe returned to spawn after sever can still move (qa/sever)', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 2000 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 3;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(19);
+    state.sparx2.yFp = toFp(0);
+    state.player1.xFp = toFp(5);
+    state.player1.yFp = toFp(19);
+    state.player1.position = { x: 5, y: 19 };
+
+    const walkUntil = (heading: number, done: () => boolean, max = 80) => {
+      for (let i = 0; i < max && !done() && !state.result; i++) {
+        state = step(state, [{ player: 1, heading, thrusting: true }]).state;
+      }
+    };
+    walkUntil(192, () => cellOf(state.player1.yFp) <= 10);
+    const topY = cellOf(state.player1.yFp);
+    const crossX = 9;
+    state.grid[topY][crossX] = CellType.PLAYER2_TRAIL;
+    state.player2.trail = [{ x: crossX, y: topY }, { x: crossX, y: topY + 1 }];
+    state.grid[topY + 1][crossX] = CellType.PLAYER2_TRAIL;
+    state.player2.drawing = true;
+    state.player2.lastHurtTick = state.tick;
+    state.player2.xFp = toFp(crossX);
+    state.player2.yFp = toFp(topY + 1);
+    state.player2.spawnX = 10;
+    state.player2.spawnY = 1;
+
+    walkUntil(0, () => cellOf(state.player1.xFp) >= 13);
+    walkUntil(64, () => !state.player1.drawing || cellOf(state.player1.yFp) >= 19);
+
+    expect(state.player2.hearts).toBe(3);
+    expect(state.player2.drawing).toBe(false);
+    expect(cellOf(state.player2.xFp)).toBe(10);
+    expect(cellOf(state.player2.yFp)).toBe(1);
+    const x0 = state.player2.xFp;
+    const y0 = state.player2.yFp;
+    state = run(state, [{ player: 2, heading: 0, thrusting: true }], 8);
+    expect(state.player2.xFp !== x0 || state.player2.yFp !== y0).toBe(true);
+    expect(state.player2.hearts).toBe(3);
+    expect(state.player2.isAlive).toBe(true);
+    expect(cellOf(state.player2.yFp)).toBe(1);
+  });
+
+  test('same-tick sever does not start a new foe line mid-cover (qa/sever2)', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+    state.player1.hearts = 3;
+    state.player2.hearts = 3;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(19);
+    state.sparx2.yFp = toFp(0);
+
+    state.player1.drawing = true;
+    state.player1.heading = 192;
+    state.player1.thrusting = true;
+    state.player1.xFp = toFp(5);
+    state.player1.yFp = toFp(1);
+    state.player1.position = { x: 5, y: 1 };
+    state.player1.trail = [
+      { x: 5, y: 18 },
+      { x: 5, y: 10 },
+      { x: 10, y: 10 },
+    ];
+    for (const p of state.player1.trail) {
+      state.grid[p.y][p.x] = CellType.PLAYER1_TRAIL;
+    }
+
+    state.player2.drawing = true;
+    state.player2.heading = 192;
+    state.player2.thrusting = true;
+    state.player2.xFp = toFp(10);
+    state.player2.yFp = toFp(10);
+    state.player2.position = { x: 10, y: 10 };
+    state.player2.spawnX = 10;
+    state.player2.spawnY = 1;
+    state.player2.trail = [
+      { x: 10, y: 16 },
+      { x: 10, y: 13 },
+      { x: 10, y: 10 },
+    ];
+    for (const p of state.player2.trail) {
+      state.grid[p.y][p.x] = CellType.PLAYER2_TRAIL;
+    }
+    // Closer’s polyline still records the crossed foe cell.
+    state.player1.trail.push({ x: 10, y: 10 });
+
+    const destY = cellOf(state.player2.yFp - 192);
+    state = step(state, [
+      { player: 1, heading: 192, thrusting: true },
+      { player: 2, heading: 192, thrusting: true },
+    ]).state;
+
+    expect(state.player1.drawing).toBe(false);
+    expect(state.player1.territoryCells).toBeGreaterThan(0);
+    expect(state.player2.hearts).toBe(2);
+    expect(state.player2.drawing).toBe(false);
+    expect(state.player2.trail.length).toBe(0);
+    expect(cellOf(state.player2.xFp)).toBe(10);
+    expect(cellOf(state.player2.yFp)).toBe(1);
+    expect(state.grid[destY][10]).not.toBe(CellType.PLAYER2_TRAIL);
+    expect(state.grid[destY][10]).not.toBe(CellType.PLAYER1_TRAIL);
+  });
+
+  test('same-tick double close both claim without P1-only sever bias (qa/sever2)', () => {
+    const runPair = (swap: boolean) => {
+      let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+      state.player1.hearts = 99;
+      state.player2.hearts = 99;
+      state.boss.xFp = toFp(1);
+      state.boss.yFp = toFp(1);
+      state.sparx1.xFp = toFp(0);
+      state.sparx1.yFp = toFp(0);
+      state.sparx2.xFp = toFp(19);
+      state.sparx2.yFp = toFp(0);
+
+      const a = swap ? 2 : 1;
+      const b = swap ? 1 : 2;
+      const pa = a === 1 ? state.player1 : state.player2;
+      const pb = b === 1 ? state.player1 : state.player2;
+      const trailA = a === 1 ? CellType.PLAYER1_TRAIL : CellType.PLAYER2_TRAIL;
+      const trailB = b === 1 ? CellType.PLAYER1_TRAIL : CellType.PLAYER2_TRAIL;
+
+      pa.drawing = true;
+      pa.heading = 192;
+      pa.thrusting = true;
+      pa.xFp = toFp(5);
+      pa.yFp = toFp(1);
+      pa.position = { x: 5, y: 1 };
+      pa.trail = [
+        { x: 5, y: 18 },
+        { x: 5, y: 8 },
+        { x: 8, y: 8 },
+      ];
+      for (const p of pa.trail) state.grid[p.y][p.x] = trailA;
+
+      pb.drawing = true;
+      pb.heading = 64;
+      pb.thrusting = true;
+      pb.xFp = toFp(14);
+      pb.yFp = toFp(18);
+      pb.position = { x: 14, y: 18 };
+      pb.trail = [
+        { x: 14, y: 1 },
+        { x: 14, y: 8 },
+        { x: 8, y: 8 },
+      ];
+      for (const p of pb.trail) state.grid[p.y][p.x] = trailB;
+      pa.trail.push({ x: 8, y: 8 });
+
+      return step(state, [
+        { player: 1, heading: swap ? 64 : 192, thrusting: true },
+        { player: 2, heading: swap ? 192 : 64, thrusting: true },
+      ]).state;
+    };
+
+    const normal = runPair(false);
+    const swapped = runPair(true);
+    expect(normal.player1.drawing).toBe(false);
+    expect(normal.player2.drawing).toBe(false);
+    expect(normal.player1.territoryCells).toBeGreaterThan(0);
+    expect(normal.player2.territoryCells).toBeGreaterThan(0);
+    expect(normal.player1.hearts).toBe(99);
+    expect(normal.player2.hearts).toBe(99);
+    expect(swapped.player1.territoryCells).toBeGreaterThan(0);
+    expect(swapped.player2.territoryCells).toBeGreaterThan(0);
+    expect(swapped.player1.hearts).toBe(99);
+    expect(swapped.player2.hearts).toBe(99);
+    expect(normal.player1.territoryCells).toBe(swapped.player2.territoryCells);
+    expect(normal.player2.territoryCells).toBe(swapped.player1.territoryCells);
   });
 
   test('simultaneous line steps hurt both and steal the crossed cells', () => {

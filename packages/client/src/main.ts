@@ -20,7 +20,6 @@ import { Bot } from '@turf-duel/bot';
 import {
   A,
   AH,
-  mixRgb,
   paintCoverSheet,
   paintHiddenIllustration,
   paintKkumuli,
@@ -52,6 +51,7 @@ interface TurfDebug {
   winFx: boolean;
   drawing: { p1: boolean; p2: boolean };
   trails: { p1: number; p2: number };
+  youHearts: number;
 }
 
 declare global {
@@ -72,6 +72,7 @@ if (typeof window !== 'undefined') {
     winFx: false,
     drawing: { p1: false, p2: false },
     trails: { p1: 0, p2: 0 },
+    youHearts: 3,
   };
 }
 
@@ -87,9 +88,25 @@ function renderHearts(el: HTMLElement | null, n: number, broke: boolean) {
     .map((i) => {
       const on = i < filled;
       const br = broke && i === filled;
-      return `<span class="heart${on ? ' on' : ''}${br ? ' break' : ''}"></span>`;
+      const gone = !on && !br && filled === 0;
+      return `<span class="heart${on ? ' on' : ''}${br ? ' break' : ''}${gone ? ' gone' : ''}"></span>`;
     })
     .join('');
+}
+
+function hideResultOverlay() {
+  const overlay = document.getElementById('resultOverlay');
+  overlay?.classList.remove('show', 'lose');
+}
+
+function showResultOverlay(kind: 'win' | 'lose' | 'tie', reason: string) {
+  const overlay = document.getElementById('resultOverlay');
+  const title = document.getElementById('resultTitle');
+  const sub = document.getElementById('resultSub');
+  if (title) title.textContent = kind === 'win' ? '승리!' : kind === 'lose' ? '패배' : '무승부';
+  if (sub) sub.textContent = reason;
+  overlay?.classList.toggle('lose', kind === 'lose');
+  overlay?.classList.add('show');
 }
 
 function setHud(opts: {
@@ -124,9 +141,10 @@ function setHud(opts: {
   if (foeL) foeL.textContent = `${foePct.toFixed(0)}%`;
   const hud = document.getElementById('matchHud');
   if (hud) {
-    hud.classList.toggle('result', Boolean(opts.result));
-    hud.textContent = opts.result ?? '';
+    hud.classList.remove('result');
+    hud.textContent = '';
   }
+  void opts.result;
 }
 
 type BurstEmitter = { explode: (quantity: number, x: number, y: number) => void };
@@ -173,15 +191,38 @@ class GameScene extends Phaser.Scene {
   private localGrid: CellType[][] = createInitialState().grid;
   private qaMode = false;
   private qaHit = false;
+  private qaLose = false;
   private qaClaimed = false;
   private melt = 0;
   private melting = false;
+  private meltSkip = 0;
   private lastYouHearts = 3;
   private lastFoeHearts = 3;
   private lastP1: { x: number; y: number }[] = [];
   private p1TrailCopy: { x: number; y: number }[] = [];
   private angry = false;
   private cutTimer: ReturnType<typeof setTimeout> | null = null;
+  private artPix: Uint8ClampedArray | null = null;
+  private covPix: Uint8ClampedArray | null = null;
+  private outImg: ImageData | null = null;
+  private lastKk = 0;
+  private resultShown = false;
+  private lockedScale = 0;
+  private lerpReady = false;
+  private shown = {
+    p1: { x: 0, y: 0 },
+    p2: { x: 0, y: 0 },
+    boss: { x: 0, y: 0 },
+    s1: { x: 0, y: 0 },
+    s2: { x: 0, y: 0 },
+  };
+  private goal = {
+    p1: { x: 0, y: 0 },
+    p2: { x: 0, y: 0 },
+    boss: { x: 0, y: 0 },
+    s1: { x: 0, y: 0 },
+    s2: { x: 0, y: 0 },
+  };
 
   constructor() {
     super({ key: 'GameScene' });
@@ -255,8 +296,10 @@ class GameScene extends Phaser.Scene {
     this.attachDragPad();
   }
 
-  update(time: number) {
-    if (this.kkumuli?.visible && this.kkTexture) {
+  update(time: number, delta: number) {
+    this.tickActorLerp(delta);
+    if (this.kkumuli?.visible && this.kkTexture && time - this.lastKk > 80) {
+      this.lastKk = time;
       paintKkumuli(this.kkCanvas.getContext('2d')!, KK_TEX, time / 1000, this.angry);
       this.kkTexture.refresh();
     }
@@ -264,9 +307,12 @@ class GameScene extends Phaser.Scene {
       if (spark.visible) spark.rotation += 0.04;
     }
     if (this.melting && this.localGrid) {
-      this.melt = Math.min(1, this.melt + 0.012);
-      this.paintGrid(this.localGrid);
-      if (this.melt >= 1) this.melting = false;
+      this.meltSkip++;
+      if (this.meltSkip % 3 === 0) {
+        this.melt = Math.min(1, this.melt + 0.08);
+        this.paintGrid(this.localGrid);
+        if (this.melt >= 1) this.melting = false;
+      }
     }
   }
 
@@ -297,11 +343,15 @@ class GameScene extends Phaser.Scene {
   private layoutBoard() {
     const w = this.scale.width;
     const h = this.scale.height;
-    const scale = Math.min(w / BOARD_W, h / BOARD_H);
+    const overlayOn = document.getElementById('resultOverlay')?.classList.contains('show');
+    const next = Math.min(w / BOARD_W, h / BOARD_H);
+    const scale = overlayOn && this.lockedScale > 0 ? this.lockedScale : next;
+    if (!overlayOn) this.lockedScale = next;
     if (this.boardImage) {
       this.boardImage.setScale(scale).setPosition((w - BOARD_W * scale) / 2, (h - BOARD_H * scale) / 2);
     }
     this.redrawOverlay(this.matchState?.player1.trail ?? this.p1TrailCopy, this.matchState?.player2.trail ?? []);
+    this.placeShownActors();
   }
 
   private attachKeyboard() {
@@ -378,9 +428,26 @@ class GameScene extends Phaser.Scene {
     for (const g of this.afterimages2) g.setVisible(visible);
   }
 
+  isOnline(): boolean {
+    return Boolean(this.room);
+  }
+
+  leaveRoom() {
+    this.room?.leave();
+    this.room = null;
+  }
+
   startOnlineMode(room: Room) {
     this.room = room;
     this.qaMode = false;
+    this.qaLose = false;
+    this.resultShown = false;
+    this.lerpReady = false;
+    this.lastYouHearts = 3;
+    this.lastFoeHearts = 3;
+    this.melt = 0;
+    this.melting = false;
+    hideResultOverlay();
     this.setActorsVisible(true);
     setPlaying(true);
     room.onMessage('player', (message: { num: 1 | 2 }) => {
@@ -397,13 +464,24 @@ class GameScene extends Phaser.Scene {
   }
 
   startBotMode() {
+    if (this.botInterval) {
+      clearInterval(this.botInterval);
+      this.botInterval = null;
+    }
     this.room = null;
     const qa = new URLSearchParams(window.location.search).get('qa');
     this.qaHit = qa === 'hit';
-    this.qaMode = qa === '1' || qa === 'cut' || this.qaHit;
+    this.qaLose = qa === 'lose';
+    this.qaMode = qa === '1' || qa === 'cut' || this.qaHit || this.qaLose;
     this.qaClaimed = false;
     this.melt = 0;
     this.melting = false;
+    this.meltSkip = 0;
+    this.resultShown = false;
+    this.lerpReady = false;
+    this.lastYouHearts = 3;
+    this.lastFoeHearts = 3;
+    hideResultOverlay();
     this.matchState = createInitialState();
     this.qaP1 = this.qaMode
       ? new QaPilot(this.qaHit ? p1HitWaypoints() : p1CaptureWaypoints())
@@ -419,7 +497,7 @@ class GameScene extends Phaser.Scene {
   private pulseBot() {
     if (!this.matchState || this.matchState.result) {
       if (this.botInterval) clearInterval(this.botInterval);
-      if (this.matchState?.result) this.playWinFx();
+      if (this.matchState?.result) this.presentResult(this.matchState.result.winner, this.matchState.result.reason);
       return;
     }
     const pulses = this.qaMode
@@ -457,6 +535,10 @@ class GameScene extends Phaser.Scene {
       this.matchState.sparx2.xFp = toFp(199);
       this.matchState.sparx2.yFp = toFp(0);
       this.matchState.sparx2.edgeDir = 2;
+    }
+    if (this.qaLose && claimed >= 12000 && !this.matchState.result) {
+      this.matchState.player1.hearts = 0;
+      this.matchState.player1.isAlive = false;
     }
     if (this.qaHit && claimed >= 15000 && this.matchState.player1.drawing) {
       const rim = this.matchState.player1.trail.find(
@@ -502,7 +584,6 @@ class GameScene extends Phaser.Scene {
         if (notableCut) this.playCutFx(ev.data?.cells ?? 0, undefined, prevTrail);
       }
       if (ev.type === 'heart') this.playHitFx(ev.player === 1 ? prevTrail : []);
-      if (ev.type === 'win') this.playWinFx();
     }
   }
 
@@ -525,7 +606,7 @@ class GameScene extends Phaser.Scene {
     const cx = src.reduce((s, p) => s + p.x, 0) / src.length;
     const cy = src.reduce((s, p) => s + p.y, 0) / src.length;
     const pos = this.worldOf({ x: cx, y: cy });
-    this.burst(this.cutEmitter, pos.x, pos.y, 80, ['dot-me', 'dot-accent', 'dot-white'], 1.4);
+    this.burst(this.cutEmitter, pos.x, pos.y, 20, ['dot-me', 'dot-accent', 'dot-white'], 1.2);
   }
 
   private playHitFx(trail: { x: number; y: number }[]) {
@@ -535,11 +616,17 @@ class GameScene extends Phaser.Scene {
     setTimeout(() => {
       flash?.classList.remove('on');
       if (window.__turfDebug) window.__turfDebug.hitFx = false;
-    }, 900);
+    }, 480);
     const pts = trail.length ? trail : this.p1TrailCopy;
-    for (const p of pts.slice(0, 48)) {
-      const w = this.worldOf(p);
+    const stride = Math.max(1, Math.ceil(pts.length / 8));
+    let n = 0;
+    for (let i = 0; i < pts.length && n < 8; i += stride, n++) {
+      const w = this.worldOf(pts[i]);
       this.shatterAt(w.x, w.y);
+    }
+    if (n === 0) {
+      const mid = this.worldOf(this.matchState?.player1.position ?? { x: BOARD_W / 2, y: BOARD_H - 8 });
+      this.burst(this.hitEmitter, mid.x, mid.y, 10, ['dot-heart', 'dot-white'], 1.1);
     }
   }
 
@@ -547,11 +634,20 @@ class GameScene extends Phaser.Scene {
     if (window.__turfDebug) window.__turfDebug.winFx = true;
     this.melting = true;
     const w = this.scale.width;
-    const h = this.scale.height * 0.62;
-    for (let i = 0; i < 72; i++) {
+    const h = this.scale.height * 0.55;
+    for (let i = 0; i < 16; i++) {
       const x = Math.random() * w;
-      this.burst(this.winEmitter, x, 6 + Math.random() * 20, 3, ['dot-accent', 'dot-spark', 'dot-me', 'dot-white', 'dot-heart'], 1.6, h);
+      this.burst(this.winEmitter, x, 6 + Math.random() * 16, 2, ['dot-accent', 'dot-spark', 'dot-me'], 1.2, h);
     }
+  }
+
+  private presentResult(winner: number, reason: string) {
+    if (this.resultShown) return;
+    this.resultShown = true;
+    const kind: 'win' | 'lose' | 'tie' = winner === 0 ? 'tie' : winner === this.playerNum ? 'win' : 'lose';
+    showResultOverlay(kind, reason);
+    if (kind !== 'lose') this.playWinFx();
+    else if (window.__turfDebug) window.__turfDebug.winFx = false;
   }
 
   private burst(
@@ -587,20 +683,20 @@ class GameScene extends Phaser.Scene {
   }
 
   private shatterAt(x: number, y: number) {
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 2; i++) {
       const img = this.add.image(x, y, i % 2 === 0 ? 'dot-me' : 'dot-white');
       img.setDepth(21);
-      img.setScale(2.2);
+      img.setScale(1.6);
       const ang = Math.random() * Math.PI * 2;
-      const dist = 16 + Math.random() * 54;
+      const dist = 12 + Math.random() * 36;
       this.tweens.add({
         targets: img,
         x: x + Math.cos(ang) * dist,
         y: y + Math.sin(ang) * dist,
-        angle: 180 + Math.random() * 220,
+        angle: 140 + Math.random() * 160,
         alpha: 0,
         scale: 0.2,
-        duration: 420 + Math.random() * 260,
+        duration: 280 + Math.random() * 160,
         onComplete: () => img.destroy(),
       });
     }
@@ -638,19 +734,26 @@ class GameScene extends Phaser.Scene {
     }
     this.paintGrid(this.localGrid);
     if (state.player1?.position) {
-      this.paintActors(state.player1.position, state.player2.position, state.boss, state.sparx1, state.sparx2);
+      const mid = (p: { x: number; y: number }) => ({ x: p.x + 0.5, y: p.y + 0.5 });
+      this.paintActors(
+        mid(state.player1.position),
+        mid(state.player2.position),
+        mid(state.boss),
+        mid(state.sparx1),
+        mid(state.sparx2),
+      );
     }
     const you = this.playerNum === 1 ? state.player1 : state.player2;
     const foe = this.playerNum === 1 ? state.player2 : state.player1;
     const result = state.result
-      ? `${state.result.winner === 0 ? '무승부' : `플레이어 ${state.result.winner} 승`} · ${state.result.reason}`
+      ? this.perspectiveLabel(state.result.winner, state.result.reason)
       : null;
     const brokeYou = (you.hearts ?? 3) < this.lastYouHearts;
     const brokeFoe = (foe.hearts ?? 3) < this.lastFoeHearts;
     if (brokeYou) this.playHitFx(this.p1TrailCopy);
     this.lastYouHearts = you.hearts ?? 3;
     this.lastFoeHearts = foe.hearts ?? 3;
-    if (result && !this.melting && this.melt === 0) this.playWinFx();
+    if (state.result) this.presentResult(state.result.winner, state.result.reason);
     this.redrawOverlay(state.player1.trail ?? [], state.player2.trail ?? []);
     setHud({
       youHearts: you.hearts ?? 3,
@@ -663,22 +766,19 @@ class GameScene extends Phaser.Scene {
       brokeFoe,
       matchTicks: (state as { matchTicks?: number }).matchTicks,
     });
-    this.bumpDebug(state.tick, state.player1.territoryCells, state.player2.territoryCells, result);
+    this.bumpDebug(state.tick, state.player1.territoryCells, state.player2.territoryCells, result, you.hearts ?? 3);
   }
 
   private renderState(state: MatchState, events: GameEvent[]) {
     this.localGrid = state.grid;
     this.paintGrid(state.grid);
-    this.paintActors(state.player1.position, state.player2.position, {
-      x: state.boss.xFp >> 8,
-      y: state.boss.yFp >> 8,
-    }, {
-      x: state.sparx1.xFp >> 8,
-      y: state.sparx1.yFp >> 8,
-    }, {
-      x: state.sparx2.xFp >> 8,
-      y: state.sparx2.yFp >> 8,
-    });
+    this.paintActors(
+      { x: state.player1.xFp / 256, y: state.player1.yFp / 256 },
+      { x: state.player2.xFp / 256, y: state.player2.yFp / 256 },
+      { x: state.boss.xFp / 256, y: state.boss.yFp / 256 },
+      { x: state.sparx1.xFp / 256, y: state.sparx1.yFp / 256 },
+      { x: state.sparx2.xFp / 256, y: state.sparx2.yFp / 256 },
+    );
     const open = (state.player1.territoryCells + state.player2.territoryCells) / TOTAL_CELLS;
     const bx = state.boss.xFp >> 8;
     const by = state.boss.yFp >> 8;
@@ -689,8 +789,9 @@ class GameScene extends Phaser.Scene {
       (state.player2.drawing && nearBoss(state.player2.position));
     this.redrawOverlay(state.player1.trail, state.player2.trail);
     const result = state.result
-      ? `${state.result.winner === 0 ? '무승부' : `플레이어 ${state.result.winner} 승`} · ${state.result.reason}`
+      ? this.perspectiveLabel(state.result.winner, state.result.reason)
       : null;
+    if (state.result) this.presentResult(state.result.winner, state.result.reason);
     const brokeYou = state.player1.hearts < this.lastYouHearts;
     const brokeFoe = state.player2.hearts < this.lastFoeHearts;
     this.lastYouHearts = state.player1.hearts;
@@ -707,7 +808,7 @@ class GameScene extends Phaser.Scene {
       foeIsBot: true,
       matchTicks: state.matchTicks,
     });
-    this.bumpDebug(state.tick, state.player1.territoryCells, state.player2.territoryCells, result);
+    this.bumpDebug(state.tick, state.player1.territoryCells, state.player2.territoryCells, result, state.player1.hearts);
     void events;
   }
 
@@ -794,13 +895,19 @@ class GameScene extends Phaser.Scene {
     s2: { x: number; y: number },
   ) {
     if (!this.boardImage) return;
-    const scale = this.boardImage.scaleX;
-    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number) => {
-      if (!sprite) return;
-      const w = this.worldOf(p);
-      sprite.setPosition(w.x, w.y);
-      sprite.setDisplaySize(Math.max(10, size * scale), Math.max(10, size * scale));
-    };
+    this.goal.p1 = p1;
+    this.goal.p2 = p2;
+    this.goal.boss = boss;
+    this.goal.s1 = s1;
+    this.goal.s2 = s2;
+    if (!this.lerpReady) {
+      this.shown.p1 = { ...p1 };
+      this.shown.p2 = { ...p2 };
+      this.shown.boss = { ...boss };
+      this.shown.s1 = { ...s1 };
+      this.shown.s2 = { ...s2 };
+      this.lerpReady = true;
+    }
     this.lastP1.push(p1);
     if (this.lastP1.length > AFTERIMAGES) this.lastP1.shift();
     this.lastP2.push(p2);
@@ -809,11 +916,45 @@ class GameScene extends Phaser.Scene {
     const guide2 = this.matchState?.player2.trail ?? [];
     this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.95, { x: 0, y: -1 });
     this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.82, { x: -1, y: 0 });
-    place(this.p1Sprite, p1, ORB_CELLS);
-    place(this.p2Sprite, p2, ORB_CELLS);
-    place(this.kkumuli, boss, KK_CELLS);
-    place(this.sparkSprites[0], s1, 18);
-    place(this.sparkSprites[1], s2, 18);
+    this.placeShownActors();
+  }
+
+  private tickActorLerp(delta: number) {
+    if (!this.lerpReady) return;
+    const t = 1 - Math.exp(-(delta || 16) / 70);
+    const keys = ['p1', 'p2', 'boss', 's1', 's2'] as const;
+    for (const k of keys) {
+      this.shown[k].x += (this.goal[k].x - this.shown[k].x) * t;
+      this.shown[k].y += (this.goal[k].y - this.shown[k].y) * t;
+    }
+    this.placeShownActors();
+  }
+
+  private placeShownActors() {
+    if (!this.boardImage || !this.lerpReady) return;
+    const scale = this.boardImage.scaleX;
+    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number) => {
+      if (!sprite) return;
+      sprite.setPosition(this.actorWorld(p).x, this.actorWorld(p).y);
+      sprite.setDisplaySize(Math.max(10, size * scale), Math.max(10, size * scale));
+    };
+    place(this.p1Sprite, this.shown.p1, ORB_CELLS);
+    place(this.p2Sprite, this.shown.p2, ORB_CELLS);
+    place(this.kkumuli, this.shown.boss, KK_CELLS);
+    place(this.sparkSprites[0], this.shown.s1, 18);
+    place(this.sparkSprites[1], this.shown.s2, 18);
+  }
+
+  private actorWorld(p: { x: number; y: number }): { x: number; y: number } {
+    const scale = this.boardImage?.scaleX ?? 1;
+    const ox = this.boardImage?.x ?? 0;
+    const oy = this.boardImage?.y ?? 0;
+    return { x: ox + p.x * scale, y: oy + p.y * scale };
+  }
+
+  private perspectiveLabel(winner: number, reason: string): string {
+    const title = winner === 0 ? '무승부' : winner === this.playerNum ? '승리!' : '패배';
+    return `${title} · ${reason}`;
   }
 
   private stampAfterimages(
@@ -874,72 +1015,93 @@ class GameScene extends Phaser.Scene {
   private paintGrid(grid: CellType[][]) {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) return;
-    const art = this.art.getContext('2d')!;
-    const cover = this.coverSheet.getContext('2d')!;
     const h = grid.length;
     const w = grid[0]?.length ?? 0;
-    const img = art.getImageData(0, 0, w, h).data;
-    const cov = cover.getImageData(0, 0, w, h).data;
-    const out = ctx.createImageData(w, h);
-    const openish = (c: CellType) =>
-      c === CellType.PLAYER1_OPEN || c === CellType.PLAYER2_OPEN ||
-      c === CellType.PLAYER1_TRAIL || c === CellType.PLAYER2_TRAIL ||
-      c === CellType.SAFE_EDGE;
+    if (!this.artPix || !this.covPix || !this.outImg || this.outImg.width !== w) {
+      const art = this.art.getContext('2d')!;
+      const cover = this.coverSheet.getContext('2d')!;
+      this.artPix = art.getImageData(0, 0, w, h).data;
+      this.covPix = cover.getImageData(0, 0, w, h).data;
+      this.outImg = ctx.createImageData(w, h);
+    }
+    const img = this.artPix;
+    const cov = this.covPix;
+    const out = this.outImg.data;
+    const melt = this.melt;
     for (let y = 0; y < h; y++) {
+      const row = grid[y];
+      const rowUp = y > 0 ? grid[y - 1] : null;
+      const rowDn = y + 1 < h ? grid[y + 1] : null;
       for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4;
-        const cell = grid[y][x];
-        const besideOpen = (xx: number, yy: number) =>
-          xx >= 0 && yy >= 0 && xx < w && yy < h && openish(grid[yy][xx]);
-        const besideCover = (xx: number, yy: number) =>
-          xx >= 0 && yy >= 0 && xx < w && yy < h && grid[yy][xx] === CellType.COVER;
+        const cell = row[x];
+        const left = x > 0 ? row[x - 1] : -1;
+        const right = x + 1 < w ? row[x + 1] : -1;
+        const up = rowUp ? rowUp[x] : -1;
+        const down = rowDn ? rowDn[x] : -1;
         if (cell === CellType.COVER) {
-          if (this.melt > 0) {
-            const mixed = mixRgb([cov[i], cov[i + 1], cov[i + 2]], [img[i], img[i + 1], img[i + 2]], this.melt);
-            out.data[i] = mixed[0];
-            out.data[i + 1] = mixed[1];
-            out.data[i + 2] = mixed[2];
-            out.data[i + 3] = 255;
+          if (melt > 0) {
+            const a = melt;
+            out[i] = cov[i] + ((img[i] - cov[i]) * a + 0.5) | 0;
+            out[i + 1] = cov[i + 1] + ((img[i + 1] - cov[i + 1]) * a + 0.5) | 0;
+            out[i + 2] = cov[i + 2] + ((img[i + 2] - cov[i + 2]) * a + 0.5) | 0;
+            out[i + 3] = 255;
           } else {
-            let cr: [number, number, number] = [cov[i], cov[i + 1], cov[i + 2]];
-            if (besideOpen(x - 1, y) || besideOpen(x + 1, y) || besideOpen(x, y - 1) || besideOpen(x, y + 1)) {
-              cr = mixRgb(cr, [255, 214, 80], 0.72);
+            let r = cov[i];
+            let g = cov[i + 1];
+            let b = cov[i + 2];
+            if (left > 0 || right > 0 || up > 0 || down > 0) {
+              r = r + (((255 - r) * 0.72) + 0.5) | 0;
+              g = g + (((214 - g) * 0.72) + 0.5) | 0;
+              b = b + (((80 - b) * 0.72) + 0.5) | 0;
             }
-            out.data[i] = cr[0];
-            out.data[i + 1] = cr[1];
-            out.data[i + 2] = cr[2];
-            out.data[i + 3] = 255;
+            out[i] = r;
+            out[i + 1] = g;
+            out[i + 2] = b;
+            out[i + 3] = 255;
           }
         } else {
-          const src: [number, number, number] = [img[i], img[i + 1], img[i + 2]];
-          let tinted: [number, number, number] = src;
+          let r = img[i];
+          let g = img[i + 1];
+          let b = img[i + 2];
           if (cell === CellType.PLAYER1_OPEN || cell === CellType.PLAYER1_TRAIL) {
-            tinted = mixRgb(src, [255, 122, 26], cell === CellType.PLAYER1_TRAIL ? 0.35 : 0.08);
+            const a = cell === CellType.PLAYER1_TRAIL ? 0.35 : 0.08;
+            r = r + (((255 - r) * a) + 0.5) | 0;
+            g = g + (((122 - g) * a) + 0.5) | 0;
+            b = b + (((26 - b) * a) + 0.5) | 0;
           } else if (cell === CellType.PLAYER2_OPEN || cell === CellType.PLAYER2_TRAIL) {
-            tinted = mixRgb(src, [47, 107, 255], cell === CellType.PLAYER2_TRAIL ? 0.35 : 0.08);
+            const a = cell === CellType.PLAYER2_TRAIL ? 0.35 : 0.08;
+            r = r + (((47 - r) * a) + 0.5) | 0;
+            g = g + (((107 - g) * a) + 0.5) | 0;
+            b = b + (((255 - b) * a) + 0.5) | 0;
           } else if (cell === CellType.SAFE_EDGE) {
-            tinted = mixRgb(src, [250, 204, 21], 0.1);
+            r = r + (((250 - r) * 0.1) + 0.5) | 0;
+            g = g + (((204 - g) * 0.1) + 0.5) | 0;
+            b = b + (((21 - b) * 0.1) + 0.5) | 0;
           }
-          if (openish(cell) && (besideCover(x - 1, y) || besideCover(x + 1, y) || besideCover(x, y - 1) || besideCover(x, y + 1))) {
-            tinted = mixRgb(tinted, [255, 230, 120], 0.88);
+          if (cell > 0 && (left === 0 || right === 0 || up === 0 || down === 0)) {
+            r = r + (((255 - r) * 0.88) + 0.5) | 0;
+            g = g + (((230 - g) * 0.88) + 0.5) | 0;
+            b = b + (((120 - b) * 0.88) + 0.5) | 0;
           }
-          out.data[i] = tinted[0];
-          out.data[i + 1] = tinted[1];
-          out.data[i + 2] = tinted[2];
-          out.data[i + 3] = 255;
+          out[i] = r;
+          out[i + 1] = g;
+          out[i + 2] = b;
+          out[i + 3] = 255;
         }
       }
     }
-    ctx.putImageData(out, 0, 0);
+    ctx.putImageData(this.outImg, 0, 0);
     this.texture?.refresh();
   }
 
-  private bumpDebug(tick: number, p1: number, p2: number, result: string | null) {
+  private bumpDebug(tick: number, p1: number, p2: number, result: string | null, youHearts = 3) {
     if (!window.__turfDebug) return;
     window.__turfDebug.tick = tick;
     window.__turfDebug.ownedCells = { p1, p2 };
     window.__turfDebug.renderedFrames++;
     window.__turfDebug.result = result;
+    window.__turfDebug.youHearts = youHearts;
     window.__turfDebug.drawing = {
       p1: Boolean(this.matchState?.player1.drawing),
       p2: Boolean(this.matchState?.player2.drawing),
@@ -990,9 +1152,32 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
   }
 });
 
-document.getElementById('botBtn')?.addEventListener('click', () => {
+function startBotMatch() {
   const statusEl = document.getElementById('status');
-    if (statusEl) statusEl.textContent = 'Playing vs Bot (offline)';
+  if (statusEl) statusEl.textContent = 'Playing vs Bot (offline)';
   const scene = game.scene.scenes[0] as GameScene;
   scene.startBotMode();
+}
+
+document.getElementById('botBtn')?.addEventListener('click', () => startBotMatch());
+
+document.getElementById('rematchBtn')?.addEventListener('click', async () => {
+  hideResultOverlay();
+  const scene = game.scene.scenes[0] as GameScene;
+  const statusEl = document.getElementById('status');
+  if (scene.isOnline()) {
+    try {
+      const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
+      scene.leaveRoom();
+      const client = new Client(serverUrl);
+      const room = await client.joinOrCreate('turf_duel');
+      if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
+      scene.startOnlineMode(room);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = `오류: ${error}`;
+      startBotMatch();
+    }
+    return;
+  }
+  startBotMatch();
 });

@@ -76,8 +76,26 @@ test.describe('Cover spike 390x844', () => {
 
     await page.waitForFunction(() => Boolean(window.__turfDebug?.result), { timeout: 60000 });
     await expect(page.locator('#matchHud')).toBeVisible();
+    await expect(page.locator('#resultOverlay')).toBeVisible();
+    await expect(page.locator('#rematchBtn')).toBeVisible();
     await page.waitForTimeout(420);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'results.png') });
+  });
+
+  test('loss result is from my perspective and keeps board width', async ({ page }) => {
+    test.setTimeout(90000);
+    await page.goto('/?qa=lose');
+    await page.waitForSelector('#game-container canvas');
+    await page.click('#botBtn');
+    await page.waitForFunction(() => Boolean(window.__turfDebug?.result?.includes('패배')), { timeout: 60000 });
+    await expect(page.locator('#resultTitle')).toHaveText('패배');
+    await expect(page.locator('#rematchBtn')).toBeVisible();
+    await expect(page.locator('#heartsYou .heart.on')).toHaveCount(0);
+    const board = page.locator('#game-container');
+    const box = await board.boundingBox();
+    expect(box?.width).toBeGreaterThan(330);
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'results-loss.png') });
   });
 
   test('hit flashes the screen edge and breaks a heart', async ({ page }) => {
