@@ -213,9 +213,13 @@ function tryMovePlayer(
 
   if (isTrail(cell, num)) {
     const last = player.trail[player.trail.length - 1];
-    if (!last || last.x !== cx || last.y !== cy) {
-      hurt(state, num, events);
+    if (last && last.x === cx && last.y === cy) {
+      player.xFp = xFp;
+      player.yFp = yFp;
+      snapCell(player);
+      return;
     }
+    hurt(state, num, events);
     return;
   }
 

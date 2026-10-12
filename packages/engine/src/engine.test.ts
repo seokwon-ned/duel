@@ -42,6 +42,25 @@ describe('cover engine (Amy ★)', () => {
     expect(a.player1.hearts).toBe(b.player1.hearts);
   });
 
+  test('straight sub-cell movement continues through the last trail cell', () => {
+    let state = createInitialState({ width: 16, height: 16, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(15);
+    state.sparx2.yFp = toFp(0);
+    const startY = state.player1.position.y;
+    const startFp = state.player1.yFp;
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 8);
+    expect(state.player1.drawing).toBe(true);
+    expect(startFp - state.player1.yFp).toBe(192 * 8);
+    expect(startY - state.player1.position.y).toBeGreaterThanOrEqual(5);
+    expect(state.player1.trail.length).toBeGreaterThanOrEqual(5);
+  });
+
   test('returning to the edge claims the side without the boss', () => {
     let state = createInitialState({ width: 16, height: 16, matchTicks: 500 });
     const startY = state.gridHeight - 1;
