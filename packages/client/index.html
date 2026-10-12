@@ -87,8 +87,18 @@
       font-family: 'Black Han Sans', sans-serif; font-size: 15px;
       color: #F8FAFC; line-height: 1;
     }
-    .avatar.me { color: var(--me); }
-    .avatar.foe { color: var(--foe); }
+    .avatar.me {
+      color: #0F172A;
+      background: var(--me);
+      border-color: var(--me);
+      box-shadow: 0 0 14px rgba(255, 122, 26, 0.85);
+    }
+    .avatar.foe {
+      color: #F8FAFC;
+      background: var(--foe);
+      border-color: var(--foe);
+      box-shadow: 0 0 14px rgba(47, 107, 255, 0.85);
+    }
     .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .fighter .name { font-size: 13px; color: var(--text); line-height: 1.1; }
     .hearts { display: flex; gap: 2px; }

@@ -41,38 +41,30 @@ async function testLosslessSync(): Promise<void> {
 
     console.log('✓ WebSocket hooked for delayed processing');
 
-    // Message queue for delayed processing
-    interface QueuedMessage {
-      data: any;
-      timestamp: number;
-    }
-    const messageQueue: QueuedMessage[] = [];
-    
-    // Save original onmessage
+    // WebSocket/TCP is ordered. Hold 30% of messages 300-500ms, but never
+    // deliver a later patch before an earlier one.
     const originalOnMessage = ws2.onmessage;
+    let lastDeliverAt = 0;
+    const pending = new Set<Promise<void>>();
 
-    // Replace with our interceptor
     ws2.onmessage = (event: any) => {
-      // Randomly delay (300-500ms hold, then deliver)
-      if (Math.random() < 0.3) { // 30% chance to delay
-        messageQueue.push({ data: event.data, timestamp: Date.now() });
-        
-        // Process after delay
+      const hold = Math.random() < 0.3 ? 300 + Math.random() * 200 : 0;
+      const at = Math.max(Date.now() + hold, lastDeliverAt + 1);
+      lastDeliverAt = at;
+      const wait = Math.max(0, at - Date.now());
+      const p = new Promise<void>((resolve) => {
         setTimeout(() => {
-          const toProcess = messageQueue.shift();
-          if (toProcess && originalOnMessage) {
-            originalOnMessage.call(ws2, { data: toProcess.data } as any);
+          if (originalOnMessage) {
+            originalOnMessage.call(ws2, { data: event.data } as any);
           }
-        }, 300 + Math.random() * 200); // 300-500ms
-      } else {
-        // Deliver immediately
-        if (originalOnMessage) {
-          originalOnMessage.call(ws2, event);
-        }
-      }
+          resolve();
+        }, wait);
+      });
+      pending.add(p);
+      void p.finally(() => pending.delete(p));
     };
 
-    console.log('✓ Latency simulation active (30% messages delayed 300-500ms)');
+    console.log('✓ Latency simulation active (30% FIFO holds 300-500ms, no reorder)');
 
     // Send inputs for a short match
     console.log('\nRunning 5-second match with latency...');
@@ -92,9 +84,8 @@ async function testLosslessSync(): Promise<void> {
     clearInterval(inputInterval);
 
     console.log('\nProcessing remaining queued messages...');
-    
-    // Wait for all delayed messages to arrive
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await Promise.all([...pending]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Compare final grids
     console.log('\nComparing final grids...');
