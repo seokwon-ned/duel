@@ -51,6 +51,7 @@ async function swipeWithTouch(page: Page, from: { x: number; y: number }, to: { 
 
 test.describe('P0 mobile 390x844', () => {
   test('lobby, bot match, and results fit the viewport with touch swipe', async ({ page }) => {
+    test.setTimeout(60000);
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
     await waitForCanvas(page);

@@ -83,6 +83,11 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
+    this.add.rectangle(BOARD_SIZE / 2, BOARD_SIZE / 2, BOARD_SIZE - 1, BOARD_SIZE - 1)
+      .setStrokeStyle(2, 0x1E293B)
+      .setFillStyle(COLORS.EMPTY, 0)
+      .setDepth(-1);
+
     for (let y = 0; y < GRID_SIZE; y++) {
       this.cells[y] = [];
       for (let x = 0; x < GRID_SIZE; x++) {
@@ -232,8 +237,8 @@ class GameScene extends Phaser.Scene {
       });
     }
 
-    this.cells[state.player1.position.y][state.player1.position.x].setStrokeStyle(2, 0xFFFFFF);
-    this.cells[state.player2.position.y][state.player2.position.x].setStrokeStyle(2, 0xFFFFFF);
+    this.strokePlayerIfOnBoard(state.player1.position);
+    this.strokePlayerIfOnBoard(state.player2.position);
 
     const you = this.playerNum === 1 ? state.player1 : state.player2;
     const foe = this.playerNum === 1 ? state.player2 : state.player1;
@@ -277,8 +282,8 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    this.cells[state.player1.position.y][state.player1.position.x].setStrokeStyle(2, 0xFFFFFF);
-    this.cells[state.player2.position.y][state.player2.position.x].setStrokeStyle(2, 0xFFFFFF);
+    this.strokePlayerIfOnBoard(state.player1.position);
+    this.strokePlayerIfOnBoard(state.player2.position);
 
     if (typeof window !== 'undefined' && window.__turfDebug) {
       window.__turfDebug.tick = state.tick;
@@ -293,6 +298,14 @@ class GameScene extends Phaser.Scene {
     const foePercent = Math.round((state.player2.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
     const seconds = Math.floor((3000 - state.tick) / 20);
     setHud(`You: ${youPercent}% | Time: ${seconds}s | Bot: ${foePercent}%`);
+  }
+
+  private strokePlayerIfOnBoard(position: { x: number; y: number }) {
+    const { x, y } = position;
+    if (y < 0 || y >= GRID_SIZE || x < 0 || x >= GRID_SIZE) {
+      return;
+    }
+    this.cells[y][x].setStrokeStyle(2, 0xFFFFFF);
   }
 
   private getCellColor(cellType: CellType): number {

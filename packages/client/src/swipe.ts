@@ -86,25 +86,25 @@ export function attachSwipeControls(onDirection: (direction: Direction) => void)
   const usePointer = typeof window.PointerEvent !== 'undefined';
 
   if (usePointer) {
-    window.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove, { passive: false });
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
+    window.addEventListener('pointerdown', onPointerDown, { capture: true });
+    window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
+    window.addEventListener('pointerup', end, { capture: true });
+    window.addEventListener('pointercancel', end, { capture: true });
   } else {
-    window.addEventListener('touchstart', onTouchStart, { passive: true });
-    window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', end);
-    window.addEventListener('touchcancel', end);
+    window.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    window.addEventListener('touchend', end, { capture: true });
+    window.addEventListener('touchcancel', end, { capture: true });
   }
 
   return () => {
-    window.removeEventListener('pointerdown', onPointerDown);
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', end);
-    window.removeEventListener('pointercancel', end);
-    window.removeEventListener('touchstart', onTouchStart);
-    window.removeEventListener('touchmove', onTouchMove);
-    window.removeEventListener('touchend', end);
-    window.removeEventListener('touchcancel', end);
+    window.removeEventListener('pointerdown', onPointerDown, { capture: true });
+    window.removeEventListener('pointermove', onPointerMove, { capture: true });
+    window.removeEventListener('pointerup', end, { capture: true });
+    window.removeEventListener('pointercancel', end, { capture: true });
+    window.removeEventListener('touchstart', onTouchStart, { capture: true });
+    window.removeEventListener('touchmove', onTouchMove, { capture: true });
+    window.removeEventListener('touchend', end, { capture: true });
+    window.removeEventListener('touchcancel', end, { capture: true });
   };
 }
