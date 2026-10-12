@@ -106,6 +106,27 @@ test.describe('Cover spike 390x844', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'results.png') });
   });
 
+  test('player orb is small enough to show the line tip mid-draw', async ({ page }) => {
+    test.setTimeout(60000);
+    await page.goto('/?qa=1');
+    await page.waitForSelector('#game-container canvas');
+    await page.click('#botBtn');
+    await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
+    await page.waitForFunction(
+      () => {
+        const d = window.__turfDebug;
+        return Boolean(
+          d &&
+            d.ownedCells.p1 >= 15000 &&
+            d.drawing.p1 &&
+            d.trails.p1 >= 55,
+        );
+      },
+      { timeout: 45000 },
+    );
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
+  });
+
   test('loss result is from my perspective and keeps board width', async ({ page }) => {
     test.setTimeout(90000);
     await page.goto('/?qa=lose');
