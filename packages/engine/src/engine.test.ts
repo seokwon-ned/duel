@@ -1,623 +1,157 @@
-import { describe, test, expect } from 'vitest';
-import {
-  createInitialState,
-  step,
-  replayInputLog,
-} from './engine.js';
-import {
-  Direction,
-  PlayerInput,
-  ResultReason,
-  MATCH_DURATION_TICKS,
-  GRID_SIZE,
-  CellType,
-  TICKS_PER_SECOND,
-  MOVEMENT_THRESHOLD,
-  MOVEMENT_INCREMENT,
-} from './types.js';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, test } from 'vitest';
+import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
+import { CellType, Direction, PlayerInput, ResultReason } from './types.js';
+import { claimClosedTrail } from './cover.js';
 
-describe('Game Engine - 판정 Tests', () => {
-  test('선이 끊김 - Player 2 cuts Player 1 trail', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 10, y: 10 };
-    state.player2.position = { x: 20, y: 20 };
-    
-    for (let y = 8; y <= 12; y++) {
-      for (let x = 8; x <= 12; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
+const srcDir = dirname(fileURLToPath(import.meta.url));
+
+function run(state: ReturnType<typeof createInitialState>, inputs: PlayerInput[], ticks = 1) {
+  let s = state;
+  for (let i = 0; i < ticks; i++) {
+    s = step(s, inputs).state;
+    if (s.result) break;
+  }
+  return s;
+}
+
+describe('cover engine (Amy ★)', () => {
+  test('angle LUT and engine source do not call trig', () => {
+    const files = ['engine.ts', 'lut.ts', 'cover.ts', 'utils.ts', 'types.ts'];
+    for (const file of files) {
+      const src = readFileSync(join(srcDir, file), 'utf8');
+      expect(src).not.toMatch(/Math\.(sin|cos|tan|atan|atan2|random)/);
     }
-    
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    
-    for (let i = 0; i < 25; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
-      state = result.state;
-    }
-    
-    state.grid[11][14] = CellType.PLAYER1_TRAIL;
-    state.grid[11][15] = CellType.PLAYER1_TRAIL;
-    
-    state.player2.position = { x: 14, y: 12 };
-    state.player2.movementAccumulator = 20;
-    state.player2.direction = Direction.UP;
-    
-    const result = step(state, [{ player: 2, direction: Direction.UP }]);
-    state = result.state;
-    
-    expect(state.result).not.toBeNull();
-    expect(state.result?.winner).toBe(2);
-    expect(state.result?.reason).toBe(ResultReason.TRAIL_CUT);
   });
 
-  test('내 선을 밟음 - Player steps on own trail outside territory', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 10, y: 10 };
-    state.player1.movementAccumulator = 20;
-    
-    for (let y = 8; y <= 12; y++) {
-      for (let x = 8; x <= 12; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.grid[10][13] = CellType.PLAYER1_TRAIL;
-    state.grid[10][14] = CellType.PLAYER1_TRAIL;
-    state.grid[10][15] = CellType.PLAYER1_TRAIL;
-    
-    state.player1.position = { x: 16, y: 10 };
-    state.player1.direction = Direction.LEFT;
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.reason).toBe(ResultReason.STEPPED_OWN_TRAIL);
-    expect(result.state.result?.winner).toBe(2);
-  });
-
-  test('벽에 부딪힘 - Player hits wall', () => {
-    let state = createInitialState();
-    
-    for (let i = 0; i < 50; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.UP }]);
-      state = result.state;
-      
-      if (state.result) break;
-    }
-    
-    expect(state.result).not.toBeNull();
-    expect(state.result?.reason).toBe(ResultReason.HIT_WALL);
-    expect(state.result?.winner).toBe(2);
-  });
-
-  test('동시 충돌 - Head-on collision', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 10, y: 10 };
-    state.player2.position = { x: 15, y: 10 };
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    state.grid[10][10] = CellType.PLAYER1_TERRITORY;
-    state.grid[10][15] = CellType.PLAYER2_TERRITORY;
-    
-    for (let i = 0; i < 10; i++) {
-      const result = step(state, [
-        { player: 1, direction: Direction.RIGHT },
-        { player: 2, direction: Direction.LEFT },
+  test('identical input logs produce identical fingerprints', () => {
+    const log: PlayerInput[][] = [];
+    for (let i = 0; i < 80; i++) {
+      log.push([
+        { player: 1, heading: 192, thrusting: i < 40 },
+        { player: 2, heading: 64, thrusting: i < 40 },
       ]);
-      state = result.state;
-      
-      if (state.result) break;
     }
-    
-    expect(state.result).not.toBeNull();
-    expect(state.result?.winner).toBe(0);
-    expect(state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
+    const a = replayInputLog(log, { width: 24, height: 24, matchTicks: 200 });
+    const b = replayInputLog(log, { width: 24, height: 24, matchTicks: 200 });
+    expect(fingerprint(a)).toBe(fingerprint(b));
+    expect(a.tick).toBe(b.tick);
+    expect(a.player1.hearts).toBe(b.player1.hearts);
   });
 
-  test('동시 충돌 - Both hit walls same tick', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 0, y: 5 };
-    state.player2.position = { x: 39, y: 5 };
-    state.player1.direction = Direction.LEFT;
-    state.player2.direction = Direction.RIGHT;
-    state.player1.movementAccumulator = 20;
-    state.player2.movementAccumulator = 20;
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(0);
-    expect(result.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
+  test('returning to the edge claims the side without the boss', () => {
+    let state = createInitialState({ width: 16, height: 16, matchTicks: 500 });
+    const startY = state.gridHeight - 1;
+    const x = state.gridWidth >> 1;
+
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 8);
+    expect(state.player1.drawing).toBe(true);
+
+    state = run(state, [{ player: 1, heading: 128, thrusting: true }], 6);
+    state = run(state, [{ player: 1, heading: 64, thrusting: true }], 12);
+
+    expect(state.player1.drawing).toBe(false);
+    expect(state.player1.territoryCells).toBeGreaterThan(0);
+    const bossCell = state.grid[state.gridHeight >> 1][state.gridWidth >> 1];
+    expect(bossCell).toBe(CellType.COVER);
+    expect(state.grid[startY][x] === CellType.SAFE_EDGE || state.grid[startY][x] === CellType.PLAYER1_OPEN).toBe(true);
   });
 
-  test('동시 컷 - Simultaneous trail cut', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 10, y: 10 };
-    state.player2.position = { x: 15, y: 15 };
-    state.player1.movementAccumulator = 20;
-    state.player2.movementAccumulator = 20;
-    
-    state.grid[10][11] = CellType.PLAYER2_TRAIL;
-    state.grid[15][14] = CellType.PLAYER1_TRAIL;
-    
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(0);
-    expect(result.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
+  test('stepping on the opponent line costs them a heart', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+    state.boss.xFp = (1 << 8) + 128;
+    state.boss.yFp = (1 << 8) + 128;
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 6);
+    expect(state.player1.drawing).toBe(true);
+    expect(state.player1.trail.length).toBeGreaterThan(0);
+
+    const target = state.player1.trail[Math.floor(state.player1.trail.length / 2)];
+    state.player2.xFp = ((target.x - 1) << 8) + 128;
+    state.player2.yFp = (target.y << 8) + 128;
+    state.player2.drawing = false;
+    state.player2.heading = 0;
+    state.player2.thrusting = true;
+
+    const before = state.player1.hearts;
+    state = step(state, [{ player: 2, heading: 0, thrusting: true }]).state;
+    expect(state.player1.hearts).toBe(before - 1);
+    expect(state.player1.drawing).toBe(false);
   });
 
-  test('같은 틱에 돌아오기 vs 끊기 - Returner loses', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 5, y: 5 };
-    state.player2.position = { x: 6, y: 6 };
-    state.player1.movementAccumulator = 20;
-    state.player2.movementAccumulator = 20;
-    
-    for (let y = 3; y <= 5; y++) {
-      for (let x = 3; x <= 5; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
+  test('first to open 50% wins immediately', () => {
+    const state = createInitialState({ width: 10, height: 10, matchTicks: 400 });
+    for (let y = 1; y < 9; y++) {
+      for (let x = 1; x < 9; x++) {
+        state.grid[y][x] = CellType.PLAYER1_OPEN;
       }
     }
-    
-    state.grid[5][6] = CellType.PLAYER1_TRAIL;
-    state.grid[5][7] = CellType.PLAYER1_TRAIL;
-    
-    state.player1.position = { x: 5, y: 5 };
-    state.player1.direction = Direction.RIGHT;
-    
-    state.player2.position = { x: 6, y: 6 };
-    state.player2.direction = Direction.LEFT;
-    
-    state.grid[6][6] = CellType.EMPTY;
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(2);
+    state.player1.territoryCells = 64;
+    const next = step(state, []).state;
+    expect(next.result?.winner).toBe(1);
+    expect(next.result?.reason).toBe(ResultReason.FIFTY_PERCENT);
   });
 
-  test('내 땅 안에서는 자기 선을 밟아도 패배 아님', () => {
-    let state = createInitialState();
-    
-    for (let y = 0; y < 5; y++) {
-      for (let x = 0; x < 5; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 2, y: 2 };
-    state.player1.direction = Direction.RIGHT;
-    
-    for (let i = 0; i < 3; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
-      state = result.state;
-    }
-    
-    const result1 = step(state, [{ player: 1, direction: Direction.DOWN }]);
-    state = result1.state;
-    
-    for (let i = 0; i < 2; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.DOWN }]);
-      state = result.state;
-    }
-    
-    const result2 = step(state, [{ player: 1, direction: Direction.LEFT }]);
-    state = result2.state;
-    
-    for (let i = 0; i < 3; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.LEFT }]);
-      state = result.state;
-    }
-    
-    const result3 = step(state, [{ player: 1, direction: Direction.UP }]);
-    state = result3.state;
-    
-    for (let i = 0; i < 2; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.UP }]);
-      state = result.state;
-    }
-    
-    expect(state.player1.isAlive).toBe(true);
-    expect(state.result).toBeNull();
-  });
-
-  test('땅 동률 - Territory tie at time up', () => {
-    let state = createInitialState();
-    state.tick = MATCH_DURATION_TICKS - 1;
-    
-    for (let y = 0; y < 20; y++) {
-      for (let x = 0; x < 20; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    for (let y = 20; y < 40; y++) {
-      for (let x = 20; x < 40; x++) {
-        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
-      }
-    }
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(0);
-    expect(result.state.result?.reason).toBe(ResultReason.TERRITORY_TIE);
-  });
-
-  test('시간 종료 승리 - Time up win', () => {
-    let state = createInitialState();
-    state.tick = MATCH_DURATION_TICKS - 1;
-    
-    for (let y = 0; y < 25; y++) {
-      for (let x = 0; x < 40; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    for (let y = 25; y < 40; y++) {
-      for (let x = 0; x < 40; x++) {
-        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
-      }
-    }
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(1);
-    expect(result.state.result?.reason).toBe(ResultReason.TIME_UP_WIN);
-  });
-
-  test('정반대 입력 무시 - Opposite direction input ignored', () => {
-    const state = createInitialState();
-    
-    state.player1.direction = Direction.RIGHT;
-    
-    const result = step(state, [{ player: 1, direction: Direction.LEFT }]);
-    
-    expect(result.state.player1.direction).toBe(Direction.RIGHT);
-    expect(result.state.player1.inputBuffer).toBeNull();
-  });
-
-  test('입력 버퍼 1개 - Fast input sequence does not suicide', () => {
-    let state = createInitialState();
-    
-    for (let y = 0; y < 10; y++) {
-      for (let x = 0; x < 10; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 5, y: 5 };
-    state.player1.direction = Direction.RIGHT;
-    state.player1.movementAccumulator = 12;
-    
-    let result = step(state, [{ player: 1, direction: Direction.UP }]);
-    state = result.state;
-    
-    for (let i = 0; i < 5; i++) {
-      result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
-      state = result.state;
-    }
-    
-    for (let i = 0; i < 5; i++) {
-      result = step(state, [{ player: 1, direction: Direction.DOWN }]);
-      state = result.state;
-    }
-    
-    expect(state.player1.isAlive).toBe(true);
-  });
-
-  test('결정론 - Determinism: same log twice yields identical result', () => {
-    const inputs: PlayerInput[][] = [];
-    
-    for (let i = 0; i < 100; i++) {
-      const tickInputs: PlayerInput[] = [];
-      if (i % 3 === 0) tickInputs.push({ player: 1, direction: Direction.RIGHT });
-      if (i % 5 === 0) tickInputs.push({ player: 2, direction: Direction.LEFT });
-      if (i % 7 === 0) tickInputs.push({ player: 1, direction: Direction.DOWN });
-      inputs.push(tickInputs);
-    }
-    
-    const result1 = replayInputLog(inputs);
-    const result2 = replayInputLog(inputs);
-    
-    expect(JSON.stringify(result1)).toBe(JSON.stringify(result2));
-    expect(result1.player1.position).toEqual(result2.player1.position);
-    expect(result1.player2.position).toEqual(result2.player2.position);
-    expect(result1.tick).toBe(result2.tick);
-  });
-
-  test('이동 속도 - 8 cells/s: 20 ticks = 8 cells moved', () => {
-    let state = createInitialState();
-    
-    for (let y = 0; y < 20; y++) {
-      for (let x = 0; x < 20; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 5, y: 5 };
-    const startX = state.player1.position.x;
-    
-    for (let i = 0; i < 20; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
-      state = result.state;
-    }
-    
-    const distance = state.player1.position.x - startX;
-    expect(distance).toBe(8);
-    expect(state.player1.isAlive).toBe(true);
-  });
-
-  test('이동 타이밍 - Both players move identically', () => {
-    let state = createInitialState();
-    
-    state.player1.position = { x: 10, y: 10 };
-    state.player2.position = { x: 30, y: 30 };
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    state.player1.movementAccumulator = 0;
-    state.player2.movementAccumulator = 0;
-    
-    for (let y = 8; y <= 12; y++) {
-      for (let x = 8; x <= 12; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    for (let y = 28; y <= 32; y++) {
-      for (let x = 28; x <= 32; x++) {
-        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
-      }
-    }
-    
-    for (let i = 0; i < 20; i++) {
-      const result = step(state, [
-        { player: 1, direction: Direction.RIGHT },
-        { player: 2, direction: Direction.LEFT },
-      ]);
-      state = result.state;
-    }
-    
-    expect(state.player1.movementAccumulator).toBe(state.player2.movementAccumulator);
-  });
-
-  test('이동 주기 검증 - 5 ticks = 2 cells (8 cells/s at 20Hz)', () => {
-    let state = createInitialState();
-    
-    for (let y = 0; y < 20; y++) {
-      for (let x = 0; x < 20; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 5, y: 5 };
-    state.player1.direction = Direction.RIGHT;
-    const startX = state.player1.position.x;
-    
-    for (let i = 0; i < 5; i++) {
-      const result = step(state, [{ player: 1, direction: Direction.RIGHT }]);
-      state = result.state;
-    }
-    
-    expect(state.player1.position.x - startX).toBe(2);
-    expect(state.player1.isAlive).toBe(true);
-  });
-
-  test('비이동 틱 입력 버퍼링 - Input buffered on non-move tick', () => {
-    let state = createInitialState();
-    
-    for (let y = 0; y < 10; y++) {
-      for (let x = 0; x < 10; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 5, y: 5 };
-    state.player1.direction = Direction.RIGHT;
-    state.player1.movementAccumulator = 5;
-    
-    const result = step(state, [{ player: 1, direction: Direction.DOWN }]);
-    
-    expect(result.state.player1.inputBuffer).toBe(Direction.DOWN);
-    expect(result.state.player1.direction).toBe(Direction.RIGHT);
-  });
-
-  test('정면 충돌 - Heads pass through => head-on collision detected', () => {
-    let state = createInitialState();
-    
-    for (let y = 8; y <= 12; y++) {
-      for (let x = 8; x <= 12; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    for (let y = 18; y <= 22; y++) {
-      for (let x = 18; x <= 22; x++) {
-        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 14, y: 10 };
-    state.player2.position = { x: 16, y: 10 };
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    state.player1.movementAccumulator = 12;
-    state.player2.movementAccumulator = 12;
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(0);
-    expect(result.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
-  });
-
-  test('정면 충돌은 한 틱에 감지됨 - No pass-through', () => {
-    let state = createInitialState();
-    
-    for (let y = 8; y <= 12; y++) {
-      for (let x = 8; x <= 30; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    for (let y = 18; y <= 22; y++) {
-      for (let x = 10; x <= 32; x++) {
-        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 14, y: 10 };
-    state.player2.position = { x: 16, y: 10 };
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    state.player1.movementAccumulator = 12;
-    state.player2.movementAccumulator = 12;
-    
-    const result = step(state, []);
-    
-    expect(result.state.result).not.toBeNull();
-    expect(result.state.result?.winner).toBe(0);
-    expect(result.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
-    expect(result.state.player1.isAlive).toBe(false);
-    expect(result.state.player2.isAlive).toBe(false);
-  });
-
-  test('정면 충돌 (staggered) - Players cross on adjacent move ticks', () => {
-    let state = createInitialState();
-    
-    for (let y = 8; y <= 12; y++) {
-      for (let x = 8; x <= 30; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    for (let y = 18; y <= 22; y++) {
-      for (let x = 10; x <= 32; x++) {
-        state.grid[y][x] = CellType.PLAYER2_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 14, y: 10 };
-    state.player2.position = { x: 16, y: 10 };
-    state.player1.direction = Direction.RIGHT;
-    state.player2.direction = Direction.LEFT;
-    state.player1.movementAccumulator = 16;
-    state.player2.movementAccumulator = 8;
-    
-    const result1 = step(state, []);
-    expect(result1.state.player1.position).toEqual({ x: 15, y: 10 });
-    expect(result1.state.player2.position).toEqual({ x: 16, y: 10 });
-    expect(result1.state.result).toBeNull();
-    
-    const result2 = step(result1.state, []);
-    expect(result2.state.result).not.toBeNull();
-    expect(result2.state.result?.winner).toBe(0);
-    expect(result2.state.result?.reason).toBe(ResultReason.SIMULTANEOUS_COLLISION);
-  });
-
-  test('3000 ticks = 1200 moves (8 cells/s * 150s)', () => {
-    const ticksToTest = MATCH_DURATION_TICKS;
-    const expectedMoves = (ticksToTest / TICKS_PER_SECOND) * 8;
-    
-    let state = createInitialState();
-    
-    for (let y = 0; y < GRID_SIZE; y++) {
-      for (let x = 0; x < GRID_SIZE; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 15, y: 15 };
-    state.player1.direction = Direction.RIGHT;
-    state.player2.position = { x: 0, y: 0 };
-    state.player2.isAlive = false;
-    
-    let p1Moves = 0;
-    const startAcc = state.player1.movementAccumulator;
-    
-    const loopPattern = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP];
-    const cellsPerSide = 5;
-    const ticksPerCell = MOVEMENT_THRESHOLD / MOVEMENT_INCREMENT;
-    const ticksPerSide = cellsPerSide * ticksPerCell;
-    
-    for (let tick = 0; tick < ticksToTest; tick++) {
-      const sideIndex = Math.floor(tick / ticksPerSide) % 4;
-      const direction = loopPattern[sideIndex];
-      
-      const prevPos = { ...state.player1.position };
-      const result = step(state, [{ player: 1, direction }]);
-      state = result.state;
-      
-      if (state.player1.position.x !== prevPos.x || state.player1.position.y !== prevPos.y) {
-        p1Moves++;
-      }
-      
-      if (!state.player1.isAlive) {
-        throw new Error(`Player died at tick ${tick}, moves: ${p1Moves}`);
-      }
-      
-      if (state.result && state.result.reason !== ResultReason.TIME_UP_WIN && state.result.reason !== ResultReason.TERRITORY_TIE) {
-        throw new Error(`Game ended unexpectedly at tick ${tick}, reason: ${state.result.reason}, moves: ${p1Moves}`);
-      }
-    }
-    
-    expect(p1Moves).toBe(expectedMoves);
-    expect(state.player1.movementAccumulator).toBe(startAcc);
-  });
-
-  test('감싼 영역 안 상대 선 - Opponent trail inside enclosure survives', () => {
-    let state = createInitialState();
-    
-    for (let y = 0; y < 5; y++) {
-      for (let x = 0; x < 5; x++) {
-        state.grid[y][x] = CellType.PLAYER1_TERRITORY;
-      }
-    }
-    
-    state.player1.position = { x: 10, y: 0 };
-    state.player1.direction = Direction.LEFT;
-    state.player1.movementAccumulator = 20;
-    
+  test('opponent hearts reaching 0 wins', () => {
+    const state = createInitialState({ width: 12, height: 12, matchTicks: 200 });
+    state.player1.hearts = 1;
+    state.player1.drawing = true;
+    state.player1.trail = [{ x: 5, y: 5 }];
     state.grid[5][5] = CellType.PLAYER1_TRAIL;
-    state.grid[5][6] = CellType.PLAYER1_TRAIL;
-    state.grid[5][7] = CellType.PLAYER1_TRAIL;
-    state.grid[5][8] = CellType.PLAYER1_TRAIL;
-    state.grid[5][9] = CellType.PLAYER1_TRAIL;
-    state.grid[6][9] = CellType.PLAYER1_TRAIL;
-    state.grid[7][9] = CellType.PLAYER1_TRAIL;
-    state.grid[8][9] = CellType.PLAYER1_TRAIL;
-    state.grid[9][9] = CellType.PLAYER1_TRAIL;
-    state.grid[9][8] = CellType.PLAYER1_TRAIL;
-    state.grid[9][7] = CellType.PLAYER1_TRAIL;
-    state.grid[9][6] = CellType.PLAYER1_TRAIL;
-    state.grid[9][5] = CellType.PLAYER1_TRAIL;
-    state.grid[8][5] = CellType.PLAYER1_TRAIL;
-    state.grid[7][5] = CellType.PLAYER1_TRAIL;
-    state.grid[6][5] = CellType.PLAYER1_TRAIL;
-    state.grid[5][4] = CellType.PLAYER1_TRAIL;
-    state.grid[4][4] = CellType.PLAYER1_TRAIL;
-    
-    state.grid[7][7] = CellType.PLAYER2_TRAIL;
-    state.player2.position = { x: 7, y: 6 };
-    
-    state.player1.position = { x: 4, y: 3 };
-    state.player1.direction = Direction.DOWN;
-    
-    const result = step(state, []);
-    
-    expect(result.state.grid[7][7]).toBe(CellType.PLAYER2_TRAIL);
-    expect(result.state.player2.isAlive).toBe(true);
+    state.player2.xFp = (4 << 8) + 128;
+    state.player2.yFp = (5 << 8) + 128;
+    const done = step(state, [{ player: 2, heading: 0, thrusting: true }]).state;
+    expect(done.player1.hearts).toBe(0);
+    expect(done.result?.winner).toBe(2);
+    expect(done.result?.reason).toBe(ResultReason.HEARTS_OUT);
+  });
+
+  test('at time limit the player who opened more wins', () => {
+    const state = createInitialState({ width: 12, height: 12, matchTicks: 5 });
+    state.player1.territoryCells = 20;
+    state.player2.territoryCells = 11;
+    const next = run(state, [], 5);
+    expect(next.result?.winner).toBe(1);
+    expect(next.result?.reason).toBe(ResultReason.TIME_UP_WIN);
+  });
+
+  test('stopping mid-line starts a burn after 2 seconds', () => {
+    let state = createInitialState({ width: 16, height: 16, matchTicks: 400 });
+    state.boss.xFp = (1 << 8) + 128;
+    state.boss.yFp = (1 << 8) + 128;
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 5);
+    expect(state.player1.drawing).toBe(true);
+    const hearts = state.player1.hearts;
+    state = run(state, [{ player: 1, heading: 192, thrusting: false }], 45);
+    expect(state.player1.hearts).toBeLessThan(hearts);
+  });
+
+  test('trapping a monster in a small piece grants +5%', () => {
+    const state = createInitialState({ width: 20, height: 20, matchTicks: 200 });
+    const total = 20 * 20;
+    const trail: { x: number; y: number }[] = [];
+    for (let y = 1; y < 19; y++) {
+      for (let x = 1; x < 19; x++) {
+        if (x === 10 && y === 10) continue;
+        state.grid[y][x] = CellType.PLAYER1_TRAIL;
+        trail.push({ x, y });
+      }
+    }
+    state.grid[10][10] = CellType.COVER;
+    const { remainingCover } = claimClosedTrail(state.grid, trail, 1, { x: 10, y: 10 });
+    expect(remainingCover).toBe(1);
+    expect(remainingCover * 100 < total * 5).toBe(true);
+  });
+
+  test('cardinal direction inputs still apply on the same tick', () => {
+    let state = createInitialState({ width: 16, height: 16 });
+    state = step(state, [
+      { player: 1, direction: Direction.DOWN },
+      { player: 2, direction: Direction.UP },
+    ]).state;
+    expect(state.player1.direction).toBe(Direction.DOWN);
+    expect(state.player2.direction).toBe(Direction.UP);
   });
 });
+

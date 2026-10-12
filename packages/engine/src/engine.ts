@@ -1,75 +1,119 @@
 import {
-  Direction,
-  Position,
   CellType,
-  MatchState,
-  PlayerState,
-  PlayerInput,
-  StepResult,
+  Direction,
   GameEvent,
+  MatchState,
+  MonsterState,
+  PlayerInput,
+  PlayerState,
+  Position,
   ResultReason,
-  MatchResult,
-  GRID_SIZE,
-  START_AREA_SIZE,
+  StepResult,
+  GRID_WIDTH,
+  GRID_HEIGHT,
   MATCH_DURATION_TICKS,
-  MOVEMENT_INCREMENT,
-  MOVEMENT_THRESHOLD,
+  STARTING_HEARTS,
+  IDLE_BURN_TICKS,
+  PLAYER_SPEED_FP,
+  WIN_OPEN_NUM,
+  WIN_OPEN_DEN,
+  TRAP_BONUS_NUM,
+  TRAP_BONUS_DEN,
+  FUSE_CELLS_PER_TICK,
+  SMALL_TRAP_NUM,
+  SMALL_TRAP_DEN,
 } from './types.js';
 import {
-  isOppositeDirection,
-  getNextPosition,
-  isOutOfBounds,
-  positionsEqual,
-  isPlayerTerritory,
-  isPlayerTrail,
-  getPlayerTrailType,
-  getPlayerTerritoryType,
-  cloneGrid,
+  cellOf,
+  directionFromHeading,
+  headingFromDirection,
+  stepFixed,
+  toFp,
+  wrapAngle,
+} from './lut.js';
+import { claimClosedTrail, countCells } from './cover.js';
+import {
+  CARDINAL,
+  hashStateCells,
+  inBounds,
+  isCover,
+  isOpened,
+  isTrail,
+  playerOpenType,
+  playerTrailType,
 } from './utils.js';
-import { closeTerritoryForPlayer, countTerritoryCells } from './territory.js';
 
-export function createInitialState(): MatchState {
-  const grid: CellType[][] = Array.from({ length: GRID_SIZE }, () =>
-    Array(GRID_SIZE).fill(CellType.EMPTY)
-  );
+export function createInitialState(options?: {
+  width?: number;
+  height?: number;
+  matchTicks?: number;
+}): MatchState {
+  const w = options?.width ?? GRID_WIDTH;
+  const h = options?.height ?? GRID_HEIGHT;
+  const grid: CellType[][] = Array.from({ length: h }, () => Array(w).fill(CellType.COVER));
 
-  for (let dy = 0; dy < START_AREA_SIZE; dy++) {
-    for (let dx = 0; dx < START_AREA_SIZE; dx++) {
-      grid[dy][dx] = CellType.PLAYER1_TERRITORY;
-    }
+  for (let x = 0; x < w; x++) {
+    grid[0][x] = CellType.SAFE_EDGE;
+    grid[h - 1][x] = CellType.SAFE_EDGE;
+  }
+  for (let y = 0; y < h; y++) {
+    grid[y][0] = CellType.SAFE_EDGE;
+    grid[y][w - 1] = CellType.SAFE_EDGE;
   }
 
-  for (let dy = 0; dy < START_AREA_SIZE; dy++) {
-    for (let dx = 0; dx < START_AREA_SIZE; dx++) {
-      grid[GRID_SIZE - 1 - dy][GRID_SIZE - 1 - dx] = CellType.PLAYER2_TERRITORY;
-    }
-  }
-
-  const player1: PlayerState = {
-    position: { x: 1, y: 1 },
-    direction: Direction.RIGHT,
-    inputBuffer: null,
-    isAlive: true,
-    territoryCells: START_AREA_SIZE * START_AREA_SIZE,
-    movementAccumulator: 0,
-  };
-
-  const player2: PlayerState = {
-    position: { x: GRID_SIZE - 2, y: GRID_SIZE - 2 },
-    direction: Direction.LEFT,
-    inputBuffer: null,
-    isAlive: true,
-    territoryCells: START_AREA_SIZE * START_AREA_SIZE,
-    movementAccumulator: 0,
-  };
+  const p1x = w >> 1;
+  const p1y = h - 1;
+  const p2x = w >> 1;
+  const p2y = 0;
 
   return {
     grid,
-    player1,
-    player2,
+    gridWidth: w,
+    gridHeight: h,
+    player1: makePlayer(p1x, p1y, 192),
+    player2: makePlayer(p2x, p2y, 64),
+    boss: {
+      xFp: toFp(w >> 1),
+      yFp: toFp(h >> 1),
+      heading: 20,
+      edgeDir: 0,
+    },
+    sparx1: {
+      xFp: toFp(0),
+      yFp: toFp(h >> 1),
+      heading: 0,
+      edgeDir: 0,
+    },
+    sparx2: {
+      xFp: toFp(w - 1),
+      yFp: toFp(h >> 1),
+      heading: 128,
+      edgeDir: 2,
+    },
     tick: 0,
     paused: false,
     result: null,
+    matchTicks: options?.matchTicks ?? MATCH_DURATION_TICKS,
+  };
+}
+
+function makePlayer(x: number, y: number, heading: number): PlayerState {
+  return {
+    xFp: toFp(x),
+    yFp: toFp(y),
+    heading,
+    direction: directionFromHeading(heading),
+    thrusting: false,
+    drawing: false,
+    hearts: STARTING_HEARTS,
+    trail: [],
+    idleTicks: 0,
+    fuseIndex: -1,
+    spawnX: x,
+    spawnY: y,
+    isAlive: true,
+    territoryCells: 0,
+    bonusCells: 0,
   };
 }
 
@@ -78,271 +122,390 @@ export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
     return { state, events: [] };
   }
 
-  const newState: MatchState = JSON.parse(JSON.stringify(state));
   const events: GameEvent[] = [];
-
-  for (const input of inputs) {
-    const player = input.player === 1 ? newState.player1 : newState.player2;
-    if (!player.isAlive) continue;
-
-    if (!isOppositeDirection(player.direction, input.direction)) {
-      player.inputBuffer = input.direction;
-    }
-  }
-
-  newState.tick++;
-
-  const movedPlayers = movePhase(newState);
-
-  const collisionResult = collisionPhase(newState, events, movedPlayers);
-  if (collisionResult) {
-    return collisionResult;
-  }
-
-  closePhase(newState, events);
-
-  if (newState.tick >= MATCH_DURATION_TICKS) {
-    return handleTimeUp(newState, events);
-  }
-
-  return { state: newState, events };
-}
-
-function movePhase(state: MatchState): Set<1 | 2> {
-  const movedPlayers = new Set<1 | 2>();
-  
-  const players: Array<{player: PlayerState, num: 1 | 2}> = [
-    {player: state.player1, num: 1},
-    {player: state.player2, num: 2},
-  ];
-  
-  for (const {player, num} of players) {
-    if (!player.isAlive) continue;
-
-    player.movementAccumulator += MOVEMENT_INCREMENT;
-
-    if (player.movementAccumulator >= MOVEMENT_THRESHOLD) {
-      player.movementAccumulator -= MOVEMENT_THRESHOLD;
-      
-      if (player.inputBuffer !== null) {
-        player.direction = player.inputBuffer;
-        player.inputBuffer = null;
-      }
-
-      const nextPos = getNextPosition(player.position, player.direction);
-      player.position = nextPos;
-      movedPlayers.add(num);
-    }
-  }
-  
-  return movedPlayers;
-}
-
-function collisionPhase(state: MatchState, events: GameEvent[], movedPlayers: Set<1 | 2>): StepResult | null {
-  const p1 = state.player1;
-  const p2 = state.player2;
-  
-  const p1Moved = movedPlayers.has(1);
-  const p2Moved = movedPlayers.has(2);
-
-  const p1OutOfBounds = p1Moved && isOutOfBounds(p1.position);
-  const p2OutOfBounds = p2Moved && isOutOfBounds(p2.position);
-
-  if (p1OutOfBounds && p2OutOfBounds) {
-    state.result = {
-      winner: 0,
-      reason: ResultReason.SIMULTANEOUS_COLLISION,
-      tick: state.tick,
-    };
-    p1.isAlive = false;
-    p2.isAlive = false;
-    return { state, events };
-  }
-
-  if (p1OutOfBounds) {
-    state.result = {
-      winner: 2,
-      reason: ResultReason.HIT_WALL,
-      tick: state.tick,
-    };
-    p1.isAlive = false;
-    return { state, events };
-  }
-
-  if (p2OutOfBounds) {
-    state.result = {
-      winner: 1,
-      reason: ResultReason.HIT_WALL,
-      tick: state.tick,
-    };
-    p2.isAlive = false;
-    return { state, events };
-  }
-
-  const p1Cell = p1Moved ? state.grid[p1.position.y][p1.position.x] : null;
-  const p2Cell = p2Moved ? state.grid[p2.position.y][p2.position.x] : null;
-
-  const p1InOwnTerritory = p1Cell !== null && isPlayerTerritory(p1Cell, 1);
-  const p2InOwnTerritory = p2Cell !== null && isPlayerTerritory(p2Cell, 2);
-
-  const p1SteppedOwnTrail = p1Moved && p1Cell !== null && !p1InOwnTerritory && isPlayerTrail(p1Cell, 1);
-  const p2SteppedOwnTrail = p2Moved && p2Cell !== null && !p2InOwnTerritory && isPlayerTrail(p2Cell, 2);
-
-  const p1CutP2Trail = p1Moved && p1Cell !== null && isPlayerTrail(p1Cell, 2);
-  const p2CutP1Trail = p2Moved && p2Cell !== null && isPlayerTrail(p2Cell, 1);
-
-  const headOnCollision = positionsEqual(p1.position, p2.position);
-
-  if (headOnCollision || (p1SteppedOwnTrail && p2SteppedOwnTrail) || 
-      (p1CutP2Trail && p2CutP1Trail) ||
-      (p1SteppedOwnTrail && p2CutP1Trail) ||
-      (p2SteppedOwnTrail && p1CutP2Trail)) {
-    state.result = {
-      winner: 0,
-      reason: ResultReason.SIMULTANEOUS_COLLISION,
-      tick: state.tick,
-    };
-    p1.isAlive = false;
-    p2.isAlive = false;
-    return { state, events };
-  }
-
-  if (p2CutP1Trail) {
-    state.result = {
-      winner: 2,
-      reason: ResultReason.TRAIL_CUT,
-      tick: state.tick,
-    };
-    p1.isAlive = false;
-    return { state, events };
-  }
-
-  if (p1CutP2Trail) {
-    state.result = {
-      winner: 1,
-      reason: ResultReason.TRAIL_CUT,
-      tick: state.tick,
-    };
-    p2.isAlive = false;
-    return { state, events };
-  }
-
-  if (p1SteppedOwnTrail) {
-    state.result = {
-      winner: 2,
-      reason: ResultReason.STEPPED_OWN_TRAIL,
-      tick: state.tick,
-    };
-    p1.isAlive = false;
-    return { state, events };
-  }
-
-  if (p2SteppedOwnTrail) {
-    state.result = {
-      winner: 1,
-      reason: ResultReason.STEPPED_OWN_TRAIL,
-      tick: state.tick,
-    };
-    p2.isAlive = false;
-    return { state, events };
-  }
-
-  return null;
-}
-
-function closePhase(state: MatchState, events: GameEvent[]): void {
-  const p1 = state.player1;
-  const p2 = state.player2;
-
-  if (!p1.isAlive && !p2.isAlive) return;
-
-  const p1Cell = state.grid[p1.position.y][p1.position.x];
-  const p2Cell = state.grid[p2.position.y][p2.position.x];
-
-  const p1InOwnTerritory = isPlayerTerritory(p1Cell, 1);
-  const p2InOwnTerritory = isPlayerTerritory(p2Cell, 2);
-
-  if (p1.isAlive && !p1InOwnTerritory) {
-    state.grid[p1.position.y][p1.position.x] = getPlayerTrailType(1);
-  }
-
-  if (p2.isAlive && !p2InOwnTerritory) {
-    state.grid[p2.position.y][p2.position.x] = getPlayerTrailType(2);
-  }
-
-  if (p1.isAlive && p1InOwnTerritory) {
-    const p1TrailPositions = getTrailPositions(state.grid, 1);
-    if (p1TrailPositions.length > 0) {
-      const p2TrailPositions = getTrailPositions(state.grid, 2);
-      const result = closeTerritoryForPlayer(state.grid, 1, p1.position, p2.position, p2TrailPositions);
-      state.grid = result.grid;
-    }
-  }
-
-  if (p2.isAlive && p2InOwnTerritory) {
-    const p2TrailPositions = getTrailPositions(state.grid, 2);
-    if (p2TrailPositions.length > 0) {
-      const p1TrailPositions = getTrailPositions(state.grid, 1);
-      const result = closeTerritoryForPlayer(state.grid, 2, p2.position, p1.position, p1TrailPositions);
-      state.grid = result.grid;
-    }
-  }
-
-  p1.territoryCells = countTerritoryCells(state.grid, 1);
-  p2.territoryCells = countTerritoryCells(state.grid, 2);
-}
-
-function getTrailPositions(grid: CellType[][], player: 1 | 2): Position[] {
-  const trailType = getPlayerTrailType(player);
-  const positions: Position[] = [];
-  for (let y = 0; y < GRID_SIZE; y++) {
-    for (let x = 0; x < GRID_SIZE; x++) {
-      if (grid[y][x] === trailType) {
-        positions.push({ x, y });
-      }
-    }
-  }
-  return positions;
-}
-
-function handleTimeUp(state: MatchState, events: GameEvent[]): StepResult {
-  const p1Cells = countTerritoryCells(state.grid, 1);
-  const p2Cells = countTerritoryCells(state.grid, 2);
-
-  if (p1Cells > p2Cells) {
-    state.result = {
-      winner: 1,
-      reason: ResultReason.TIME_UP_WIN,
-      tick: state.tick,
-    };
-  } else if (p2Cells > p1Cells) {
-    state.result = {
-      winner: 2,
-      reason: ResultReason.TIME_UP_WIN,
-      tick: state.tick,
-    };
-  } else {
-    state.result = {
-      winner: 0,
-      reason: ResultReason.TERRITORY_TIE,
-      tick: state.tick,
-    };
-  }
-
+  applyInputs(state, inputs);
+  movePlayers(state, events);
+  moveBoss(state, events);
+  moveSparx(state, events);
+  tickFuse(state, events);
+  state.tick++;
+  checkWins(state, events);
   return { state, events };
 }
 
-export function replayInputLog(inputs: PlayerInput[][]): MatchState {
-  let state = createInitialState();
-  
+function applyInputs(state: MatchState, inputs: PlayerInput[]): void {
+  for (const input of inputs) {
+    const player = input.player === 1 ? state.player1 : state.player2;
+    if (!player.isAlive) continue;
+
+    if (input.direction) {
+      player.heading = headingFromDirection(input.direction);
+      player.thrusting = true;
+    }
+    if (typeof input.heading === 'number') {
+      player.heading = wrapAngle(input.heading);
+    }
+    if (typeof input.thrusting === 'boolean') {
+      player.thrusting = input.thrusting;
+    }
+    player.direction = directionFromHeading(player.heading);
+  }
+}
+
+function movePlayers(state: MatchState, events: GameEvent[]): void {
+  for (const num of [1, 2] as const) {
+    const player = num === 1 ? state.player1 : state.player2;
+    if (!player.isAlive) continue;
+
+    if (!player.thrusting) {
+      if (player.drawing) {
+        player.idleTicks++;
+        if (player.idleTicks >= IDLE_BURN_TICKS && player.fuseIndex < 0) {
+          player.fuseIndex = 0;
+          events.push({ type: 'burn', player: num });
+        }
+      }
+      continue;
+    }
+
+    player.idleTicks = 0;
+    const next = stepFixed(player.xFp, player.yFp, player.heading, PLAYER_SPEED_FP);
+    tryMovePlayer(state, num, player, next.xFp, next.yFp, events);
+  }
+}
+
+function tryMovePlayer(
+  state: MatchState,
+  num: 1 | 2,
+  player: PlayerState,
+  xFp: number,
+  yFp: number,
+  events: GameEvent[],
+): void {
+  const w = state.gridWidth;
+  const h = state.gridHeight;
+  let cx = cellOf(xFp);
+  let cy = cellOf(yFp);
+  if (!inBounds(cx, cy, w, h)) {
+    return;
+  }
+
+  const fromX = cellOf(player.xFp);
+  const fromY = cellOf(player.yFp);
+  const cell = state.grid[cy][cx];
+  const foe = num === 1 ? 2 : 1;
+
+  if (isTrail(cell, foe)) {
+    hurt(state, foe, events);
+    player.xFp = xFp;
+    player.yFp = yFp;
+    return;
+  }
+
+  if (isTrail(cell, num)) {
+    const last = player.trail[player.trail.length - 1];
+    if (!last || last.x !== cx || last.y !== cy) {
+      hurt(state, num, events);
+    }
+    return;
+  }
+
+  if (player.drawing) {
+    if (isOpened(cell)) {
+      player.xFp = xFp;
+      player.yFp = yFp;
+      closeTrail(state, num, events);
+      return;
+    }
+    if (isCover(cell)) {
+      player.xFp = xFp;
+      player.yFp = yFp;
+      if (fromX !== cx || fromY !== cy) {
+        state.grid[cy][cx] = playerTrailType(num);
+        player.trail.push({ x: cx, y: cy });
+      }
+    }
+    return;
+  }
+
+  if (isOpened(cell)) {
+    player.xFp = xFp;
+    player.yFp = yFp;
+    player.spawnX = cx;
+    player.spawnY = cy;
+    return;
+  }
+
+  if (isCover(cell) && isOpened(state.grid[fromY][fromX])) {
+    player.drawing = true;
+    player.trail = [];
+    player.fuseIndex = -1;
+    player.idleTicks = 0;
+    player.xFp = xFp;
+    player.yFp = yFp;
+    state.grid[cy][cx] = playerTrailType(num);
+    player.trail.push({ x: cx, y: cy });
+  }
+}
+
+function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
+  const player = num === 1 ? state.player1 : state.player2;
+  if (player.trail.length === 0) {
+    player.drawing = false;
+    return;
+  }
+
+  const bossCell = { x: cellOf(state.boss.xFp), y: cellOf(state.boss.yFp) };
+  const sparks = [
+    { x: cellOf(state.sparx1.xFp), y: cellOf(state.sparx1.yFp) },
+    { x: cellOf(state.sparx2.xFp), y: cellOf(state.sparx2.yFp) },
+  ];
+  const total = state.gridWidth * state.gridHeight;
+  const { claimed, remainingCover } = claimClosedTrail(state.grid, player.trail, num, bossCell);
+
+  let trapped = false;
+  const paint = playerOpenType(num);
+  for (const s of sparks) {
+    if (inBounds(s.x, s.y, state.gridWidth, state.gridHeight) && state.grid[s.y][s.x] === paint) {
+      trapped = true;
+    }
+  }
+  if (remainingCover * SMALL_TRAP_DEN < total * SMALL_TRAP_NUM) {
+    trapped = true;
+  }
+
+  let bonus = 0;
+  if (trapped) {
+    bonus = Math.floor((total * TRAP_BONUS_NUM) / TRAP_BONUS_DEN);
+    player.bonusCells += bonus;
+    events.push({ type: 'trap_bonus', player: num, data: { bonus: true, cells: bonus } });
+  }
+
+  player.territoryCells = countCells(state.grid, paint) + player.bonusCells;
+  player.drawing = false;
+  player.trail = [];
+  player.fuseIndex = -1;
+  player.idleTicks = 0;
+  player.spawnX = cellOf(player.xFp);
+  player.spawnY = cellOf(player.yFp);
+  events.push({ type: 'claim', player: num, data: { cells: claimed } });
+}
+
+function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
+  const player = num === 1 ? state.player1 : state.player2;
+  if (!player.isAlive) return;
+
+  clearTrail(state, num);
+  player.hearts -= 1;
+  player.drawing = false;
+  player.idleTicks = 0;
+  player.fuseIndex = -1;
+  player.trail = [];
+  player.thrusting = false;
+  player.xFp = toFp(player.spawnX);
+  player.yFp = toFp(player.spawnY);
+  events.push({ type: 'heart', player: num });
+
+  if (player.hearts <= 0) {
+    player.isAlive = false;
+    player.hearts = 0;
+  }
+}
+
+function clearTrail(state: MatchState, num: 1 | 2): void {
+  const player = num === 1 ? state.player1 : state.player2;
+  const trailType = playerTrailType(num);
+  for (const p of player.trail) {
+    if (inBounds(p.x, p.y, state.gridWidth, state.gridHeight) && state.grid[p.y][p.x] === trailType) {
+      state.grid[p.y][p.x] = CellType.COVER;
+    }
+  }
+}
+
+function tickFuse(state: MatchState, events: GameEvent[]): void {
+  for (const num of [1, 2] as const) {
+    const player = num === 1 ? state.player1 : state.player2;
+    if (!player.drawing || player.fuseIndex < 0) continue;
+    player.fuseIndex += FUSE_CELLS_PER_TICK;
+    if (player.fuseIndex >= player.trail.length) {
+      hurt(state, num, events);
+    } else {
+      const burned = player.trail.slice(0, player.fuseIndex);
+      for (const p of burned) {
+        if (inBounds(p.x, p.y, state.gridWidth, state.gridHeight) && isTrail(state.grid[p.y][p.x], num)) {
+          state.grid[p.y][p.x] = CellType.COVER;
+        }
+      }
+    }
+  }
+}
+
+function bossSpeed(state: MatchState): number {
+  const total = state.gridWidth * state.gridHeight;
+  const opened = total - countCells(state.grid, CellType.COVER) - countCells(state.grid, CellType.SAFE_EDGE);
+  const base = 64;
+  return base + Math.floor((opened * 192) / total);
+}
+
+function moveBoss(state: MatchState, events: GameEvent[]): void {
+  const speed = bossSpeed(state);
+  let heading = state.boss.heading;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const next = stepFixed(state.boss.xFp, state.boss.yFp, heading, speed);
+    const cx = cellOf(next.xFp);
+    const cy = cellOf(next.yFp);
+    if (inBounds(cx, cy, state.gridWidth, state.gridHeight) && isCover(state.grid[cy][cx])) {
+      state.boss.xFp = next.xFp;
+      state.boss.yFp = next.yFp;
+      state.boss.heading = heading;
+      hitDrawingPlayers(state, cx, cy, events);
+      return;
+    }
+    heading = wrapAngle(heading + 64);
+  }
+}
+
+function moveSparx(state: MatchState, events: GameEvent[]): void {
+  walkSparx(state, state.sparx1, 1);
+  walkSparx(state, state.sparx2, -1);
+  for (const s of [state.sparx1, state.sparx2]) {
+    hitAnyPlayer(state, cellOf(s.xFp), cellOf(s.yFp), events);
+  }
+}
+
+function isEdgeCell(state: MatchState, x: number, y: number): boolean {
+  if (!inBounds(x, y, state.gridWidth, state.gridHeight)) return false;
+  if (!isOpened(state.grid[y][x])) return false;
+  for (const d of CARDINAL) {
+    const nx = x + d.x;
+    const ny = y + d.y;
+    if (inBounds(nx, ny, state.gridWidth, state.gridHeight) && isCover(state.grid[ny][nx])) {
+      return true;
+    }
+  }
+  return (
+    x === 0 ||
+    y === 0 ||
+    x === state.gridWidth - 1 ||
+    y === state.gridHeight - 1
+  );
+}
+
+function walkSparx(state: MatchState, sparx: MonsterState, turnSign: number): void {
+  const x = cellOf(sparx.xFp);
+  const y = cellOf(sparx.yFp);
+  let dir = sparx.edgeDir & 3;
+  for (let i = 0; i < 4; i++) {
+    const tryDir = (dir + turnSign * (i === 0 ? -1 : i === 1 ? 0 : i === 2 ? 1 : 2) + 4) & 3;
+    const nx = x + CARDINAL[tryDir].x;
+    const ny = y + CARDINAL[tryDir].y;
+    if (isEdgeCell(state, nx, ny)) {
+      sparx.xFp = toFp(nx);
+      sparx.yFp = toFp(ny);
+      sparx.edgeDir = tryDir;
+      return;
+    }
+  }
+}
+
+function hitDrawingPlayers(state: MatchState, x: number, y: number, events: GameEvent[]): void {
+  for (const num of [1, 2] as const) {
+    const p = num === 1 ? state.player1 : state.player2;
+    if (p.drawing && cellOf(p.xFp) === x && cellOf(p.yFp) === y) {
+      hurt(state, num, events);
+    }
+  }
+}
+
+function hitAnyPlayer(state: MatchState, x: number, y: number, events: GameEvent[]): void {
+  for (const num of [1, 2] as const) {
+    const p = num === 1 ? state.player1 : state.player2;
+    if (p.isAlive && cellOf(p.xFp) === x && cellOf(p.yFp) === y) {
+      hurt(state, num, events);
+    }
+  }
+}
+
+function openedScore(player: PlayerState): number {
+  return player.territoryCells;
+}
+
+function checkWins(state: MatchState, events: GameEvent[]): void {
+  if (state.result) return;
+  const total = state.gridWidth * state.gridHeight;
+  const p1 = openedScore(state.player1);
+  const p2 = openedScore(state.player2);
+
+  if (!state.player1.isAlive && !state.player2.isAlive) {
+    state.result = { winner: 0, reason: ResultReason.TERRITORY_TIE, tick: state.tick };
+    return;
+  }
+  if (!state.player1.isAlive) {
+    state.result = { winner: 2, reason: ResultReason.HEARTS_OUT, tick: state.tick };
+    events.push({ type: 'win', player: 2 });
+    return;
+  }
+  if (!state.player2.isAlive) {
+    state.result = { winner: 1, reason: ResultReason.HEARTS_OUT, tick: state.tick };
+    events.push({ type: 'win', player: 1 });
+    return;
+  }
+
+  if (p1 * WIN_OPEN_DEN >= total * WIN_OPEN_NUM) {
+    state.result = { winner: 1, reason: ResultReason.FIFTY_PERCENT, tick: state.tick };
+    events.push({ type: 'win', player: 1 });
+    return;
+  }
+  if (p2 * WIN_OPEN_DEN >= total * WIN_OPEN_NUM) {
+    state.result = { winner: 2, reason: ResultReason.FIFTY_PERCENT, tick: state.tick };
+    events.push({ type: 'win', player: 2 });
+    return;
+  }
+
+  if (state.tick >= state.matchTicks) {
+    if (p1 === p2) {
+      state.result = { winner: 0, reason: ResultReason.TERRITORY_TIE, tick: state.tick };
+    } else {
+      state.result = {
+        winner: p1 > p2 ? 1 : 2,
+        reason: ResultReason.TIME_UP_WIN,
+        tick: state.tick,
+      };
+    }
+  }
+}
+
+export function replayInputLog(inputs: PlayerInput[][], options?: { width?: number; height?: number; matchTicks?: number }): MatchState {
+  let state = createInitialState(options);
   for (const tickInputs of inputs) {
     const result = step(state, tickInputs);
     state = result.state;
-    
-    if (state.result !== null) {
-      break;
-    }
+    if (state.result !== null) break;
   }
-  
   return state;
 }
+
+export function fingerprint(state: MatchState): number {
+  return hashStateCells(state.grid, [
+    state.tick,
+    state.player1.xFp,
+    state.player1.yFp,
+    state.player1.heading,
+    state.player1.hearts,
+    state.player1.territoryCells,
+    state.player2.xFp,
+    state.player2.yFp,
+    state.player2.heading,
+    state.player2.hearts,
+    state.player2.territoryCells,
+    state.boss.xFp,
+    state.boss.yFp,
+    state.sparx1.xFp,
+    state.sparx1.yFp,
+    state.sparx2.xFp,
+    state.sparx2.yFp,
+    state.result ? state.result.winner : -1,
+  ]);
+}
+
+export { Direction };
