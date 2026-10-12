@@ -5,7 +5,7 @@ import { describe, expect, test } from 'vitest';
 import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
 import { CellType, Direction, PlayerInput, ResultReason } from './types.js';
 import { claimClosedTrail } from './cover.js';
-import { toFp } from './lut.js';
+import { cellOf, toFp } from './lut.js';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -163,6 +163,26 @@ describe('cover engine (Amy ★)', () => {
     const { remainingCover } = claimClosedTrail(state.grid, trail, 1, { x: 10, y: 10 });
     expect(remainingCover).toBe(1);
     expect(remainingCover * 100 < total * 5).toBe(true);
+  });
+
+  test('sparx stay on the outer board edge, not opened territory boundaries', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    for (let y = 4; y <= 8; y++) {
+      for (let x = 4; x <= 8; x++) {
+        state.grid[y][x] = CellType.PLAYER1_OPEN;
+      }
+    }
+    for (let i = 0; i < 60; i++) {
+      state = step(state, []).state;
+      for (const s of [state.sparx1, state.sparx2]) {
+        const x = cellOf(s.xFp);
+        const y = cellOf(s.yFp);
+        expect(x === 0 || y === 0 || x === 19 || y === 19).toBe(true);
+        expect(x >= 4 && x <= 8 && y >= 4 && y <= 8).toBe(false);
+      }
+    }
   });
 
   test('sparx walking the edge hits an idle player even mid-burst', () => {

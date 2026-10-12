@@ -390,22 +390,10 @@ function moveSparx(state: MatchState, events: GameEvent[]): void {
   }
 }
 
-function isEdgeCell(state: MatchState, x: number, y: number): boolean {
+/** Sparx walk only the outer board rim, never opened-territory boundaries. */
+function isOuterEdge(state: MatchState, x: number, y: number): boolean {
   if (!inBounds(x, y, state.gridWidth, state.gridHeight)) return false;
-  if (!isOpened(state.grid[y][x])) return false;
-  for (const d of CARDINAL) {
-    const nx = x + d.x;
-    const ny = y + d.y;
-    if (inBounds(nx, ny, state.gridWidth, state.gridHeight) && isCover(state.grid[ny][nx])) {
-      return true;
-    }
-  }
-  return (
-    x === 0 ||
-    y === 0 ||
-    x === state.gridWidth - 1 ||
-    y === state.gridHeight - 1
-  );
+  return x === 0 || y === 0 || x === state.gridWidth - 1 || y === state.gridHeight - 1;
 }
 
 function walkSparx(state: MatchState, sparx: MonsterState, turnSign: number): void {
@@ -416,7 +404,7 @@ function walkSparx(state: MatchState, sparx: MonsterState, turnSign: number): vo
     const tryDir = (dir + turnSign * (i === 0 ? -1 : i === 1 ? 0 : i === 2 ? 1 : 2) + 4) & 3;
     const nx = x + CARDINAL[tryDir].x;
     const ny = y + CARDINAL[tryDir].y;
-    if (isEdgeCell(state, nx, ny)) {
+    if (isOuterEdge(state, nx, ny)) {
       sparx.xFp = toFp(nx);
       sparx.yFp = toFp(ny);
       sparx.edgeDir = tryDir;
