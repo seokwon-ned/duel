@@ -242,22 +242,10 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
     .map((intent) => intent.num);
   const skipSever = closers.length > 1;
   const pendingClose: Array<1 | 2> = [];
-
-  if (closers.length === 1) {
-    const closer = closers[0];
-    for (const intent of intents) {
-      if (intent.num === closer) applyIntent(intent, pendingClose);
-    }
-    flushCloses(state, pendingClose, events, false);
-    pendingClose.length = 0;
-    for (const intent of intents) {
-      if (intent.num !== closer) applyIntent(intent, pendingClose);
-    }
-    flushCloses(state, pendingClose, events, false);
-  } else {
-    for (const intent of intents) applyIntent(intent, pendingClose);
-    flushCloses(state, pendingClose, events, skipSever);
-  }
+  // Apply every intent, then flush. Closer-first was observationally the same
+  // after the tick (sever + spawn) and only reordered same-tick writes.
+  for (const intent of intents) applyIntent(intent, pendingClose);
+  flushCloses(state, pendingClose, events, skipSever);
 }
 
 function intentWouldClose(

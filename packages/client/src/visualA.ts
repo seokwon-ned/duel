@@ -333,7 +333,7 @@ export function paintOrb(
   g.fill();
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.34, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
   g.fill();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';

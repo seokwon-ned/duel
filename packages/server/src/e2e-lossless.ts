@@ -3,7 +3,7 @@
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
-import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
+import { testRooms, TurfDuelTestRoom } from './rooms/TurfDuelTestRoom.js';
 import { Direction, GRID_WIDTH, GRID_HEIGHT, createInitialState, flattenGrid } from '@turf-duel/engine';
 
 async function testLosslessSync(): Promise<void> {
@@ -13,7 +13,7 @@ async function testLosslessSync(): Promise<void> {
     transport: new WebSocketTransport({}),
   });
 
-  server.define('turf_duel', TurfDuelRoom);
+  server.define('turf_duel', TurfDuelTestRoom);
   await server.listen(12571);
   console.log('✓ Server started on port 12571');
 
@@ -83,9 +83,16 @@ async function testLosslessSync(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 5000));
     clearInterval(inputInterval);
 
-    console.log('\nProcessing remaining queued messages...');
-    await Promise.all([...pending]);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Freeze authority so live client1 cannot pull ahead of delayed client2
+    // while we drain 300-500ms holds.
+    const auth = testRooms.get(room1.roomId);
+    if (!auth) {
+      throw new Error(`Missing test room ${room1.roomId}`);
+    }
+    auth.stopSimulationAndFlush();
+
+    console.log('\nDraining in-flight delayed messages...');
+    await drainHeldMessages(pending);
 
     // Compare final grids
     console.log('\nComparing final grids...');
@@ -140,6 +147,30 @@ async function testLosslessSync(): Promise<void> {
       new Promise((r) => setTimeout(r, 1500)),
     ]);
   }
+}
+
+/** Wait until every held WS message is applied and no new hold can still be in flight. */
+async function drainHeldMessages(pending: Set<Promise<void>>): Promise<void> {
+  const maxHoldMs = 500;
+  const quietMs = maxHoldMs + 80;
+  const deadline = Date.now() + 8000;
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    if (pending.size > 0) {
+      await Promise.all([...pending]);
+      quietSince = Date.now();
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    if (pending.size > 0) {
+      quietSince = Date.now();
+      continue;
+    }
+    if (Date.now() - quietSince >= quietMs) {
+      return;
+    }
+  }
+  throw new Error('Timed out draining in-flight delayed messages');
 }
 
 function trackClientGrid(room: { onMessage: Function; onStateChange: Function }): Uint8Array {

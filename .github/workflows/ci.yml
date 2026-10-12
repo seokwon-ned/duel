@@ -68,6 +68,9 @@ jobs:
       
       - name: Run reconnection tests
         run: npm run test:reconnection --workspace=packages/server
+
+      - name: Run rematch pairing tests
+        run: npm run test:rematch --workspace=packages/server
       
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

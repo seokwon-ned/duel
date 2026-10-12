@@ -490,7 +490,7 @@ describe('cover engine (Amy ★)', () => {
     expect(state.grid[destY][10]).not.toBe(CellType.PLAYER1_TRAIL);
   });
 
-  test('solo close severs an invincible thrusting foe before their intent', () => {
+  test('solo close severs an invincible thrusting foe (apply-all then flush)', () => {
     let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
     state.player1.hearts = 3;
     state.player2.hearts = 3;

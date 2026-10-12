@@ -35,7 +35,7 @@ const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
-const ORB_CELLS = 40;
+const ORB_CELLS = 15;
 const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -188,6 +188,7 @@ class GameScene extends Phaser.Scene {
   private hitEmitter: BurstEmitter | null = null;
   private winEmitter: BurstEmitter | null = null;
   private room: Room | null = null;
+  private playedOnline = false;
   private matchState: MatchState | null = null;
   private playerNum: 1 | 2 = 1;
   private heading = 192;
@@ -443,23 +444,55 @@ class GameScene extends Phaser.Scene {
     return Boolean(this.room);
   }
 
+  hasPlayedOnline(): boolean {
+    return this.playedOnline;
+  }
+
   leaveRoom() {
     this.room?.leave();
     this.room = null;
   }
 
-  /** After a finished match: tell the opponent, then leave without a forfeit. */
-  requestOnlineRematch() {
-    try {
-      this.room?.send('rematch', {});
-    } catch {
-      /* room already gone */
-    }
-    this.leaveRoom();
+  /**
+   * Stay in the finished room so both rematch votes can share a new room id.
+   * Falls back to joinOrCreate when the opponent never votes (old room is locked).
+   */
+  requestOnlineRematch(): Promise<string | null> {
+    const room = this.room;
+    if (!room) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (roomId: string | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          room.leave();
+        } catch {
+          /* already gone */
+        }
+        this.room = null;
+        resolve(roomId);
+      };
+      const timer = setTimeout(() => finish(null), 8000);
+      room.onMessage('rematch_room', (message: { roomId?: string }) => {
+        finish(typeof message?.roomId === 'string' ? message.roomId : null);
+      });
+      room.onLeave(() => {
+        if (this.room === room) this.room = null;
+        finish(null);
+      });
+      try {
+        room.send('rematch', {});
+      } catch {
+        finish(null);
+      }
+    });
   }
 
   startOnlineMode(room: Room) {
     this.room = room;
+    this.playedOnline = true;
     this.qaMode = false;
     this.qaLose = false;
     this.resultShown = false;
@@ -481,8 +514,7 @@ class GameScene extends Phaser.Scene {
       }
     });
     room.onLeave(() => {
-      if (this.resultShown) return;
-      this.room = null;
+      if (this.room === room) this.room = null;
     });
     room.onMessage('grid', (payload: ArrayLike<number> | ArrayBuffer) => {
       const buf = payload instanceof ArrayBuffer ? new Uint8Array(payload) : payload;
@@ -500,6 +532,7 @@ class GameScene extends Phaser.Scene {
       this.botInterval = null;
     }
     this.room = null;
+    this.playedOnline = false;
     const qa = new URLSearchParams(window.location.search).get('qa');
     this.qaHit = qa === 'hit';
     this.qaLose = qa === 'lose';
@@ -1208,12 +1241,14 @@ document.getElementById('rematchBtn')?.addEventListener('click', async () => {
   hideResultOverlay();
   const scene = game.scene.scenes[0] as GameScene;
   const statusEl = document.getElementById('status');
-  if (scene.isOnline()) {
+  if (scene.isOnline() || scene.hasPlayedOnline()) {
     try {
       const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
-      scene.requestOnlineRematch();
+      const rematchRoomId = await scene.requestOnlineRematch();
       const client = new Client(serverUrl);
-      const room = await client.joinOrCreate('turf_duel');
+      const room = rematchRoomId
+        ? await client.joinById(rematchRoomId)
+        : await client.joinOrCreate('turf_duel');
       if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
       scene.startOnlineMode(room);
     } catch (error) {
