@@ -166,4 +166,6 @@ function trackClientGrid(room: { onMessage: Function; onStateChange: Function })
   return cells;
 }
 
-testLosslessSync();
+testLosslessSync()
+  .then(() => process.exit(0))
+  .catch(() => process.exit(1));

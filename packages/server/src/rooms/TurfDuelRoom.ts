@@ -14,6 +14,7 @@ import {
   wrapAngle,
   flattenGrid,
 } from '@turf-duel/engine';
+import { accumulateCellUpdates, shouldSnapshotCellUpdates } from '../cellUpdates.js';
 
 interface PlayerDisconnectInfo {
   disconnectCount: number;
@@ -35,6 +36,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected bytesSentPerPlayer = new Map<string, number>();
   protected playerMapping = new Map<string, 1 | 2>();
   protected previousGrid: CellType[][] | null = null;
+  protected pendingCellUpdates = new Map<string, { x: number; y: number; type: CellType }>();
   protected matchStarted = false;
   protected readonly maxDisconnects = 2;
   protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
@@ -554,14 +556,16 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       state.result.tick = this.matchState.result.tick;
     }
 
-    state.cellUpdates.length = 0;
     const changedCells = this.getChangedCells();
-    const SNAPSHOT_CELLS = 256;
-    if (changedCells.length > SNAPSHOT_CELLS) {
+    const pending = accumulateCellUpdates(this.pendingCellUpdates, changedCells);
+    if (shouldSnapshotCellUpdates(pending.length)) {
       this.broadcastGridSnapshot();
+      this.pendingCellUpdates.clear();
+      state.cellUpdates.length = 0;
       return;
     }
-    for (const cell of changedCells) {
+    state.cellUpdates.length = 0;
+    for (const cell of pending) {
       const update = new CellUpdate();
       update.x = cell.x;
       update.y = cell.y;
@@ -575,6 +579,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   }
 
   private broadcastGridSnapshot() {
+    this.pendingCellUpdates.clear();
     this.broadcast('grid', flattenGrid(this.matchState.grid));
   }
 
