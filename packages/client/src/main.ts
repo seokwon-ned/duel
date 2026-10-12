@@ -247,7 +247,8 @@ class GameScene extends Phaser.Scene {
 
   startBotMode() {
     this.room = null;
-    this.matchState = createInitialState();
+    const qa = new URLSearchParams(window.location.search).has('qa');
+    this.matchState = createInitialState(qa ? { matchTicks: 80 } : undefined);
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);

@@ -33,7 +33,7 @@ async function swipePad(page: Page) {
 test.describe('Cover spike 390x844', () => {
   test('lobby, match HUD, and results', async ({ page }) => {
     test.setTimeout(90000);
-    await page.goto('/');
+    await page.goto('/?qa=1');
     await page.waitForSelector('#game-container canvas');
     await expect(page.locator('#serverUrl')).toBeVisible();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'lobby.png'), animations: 'disabled' });
