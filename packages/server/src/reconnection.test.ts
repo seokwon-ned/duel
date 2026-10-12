@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
@@ -1187,6 +1190,304 @@ async function testVoidResultOnBothThenDispose(): Promise<ReconnectionTestResult
   }
 }
 
+async function thirdDisconnectToken(
+  client2: Client,
+  room2: { reconnectionToken?: string; leave: (consented?: boolean) => Promise<number> },
+): Promise<string> {
+  await room2.leave(false);
+  await sleep(BRIEF_MS);
+  const r1 = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+  await sleep(150);
+  const token2 = r1.reconnectionToken!;
+  await r1.leave(false);
+  await sleep(BRIEF_MS);
+  const r2 = await manualReconnect<TurfDuelState>(client2, token2);
+  await sleep(150);
+  const lastToken = r2.reconnectionToken!;
+  await r2.leave(false);
+  return lastToken;
+}
+
+/** Fails if TurfDuelRoom.ts post-forfeit allowReconnection window (lines 221-226) is removed. */
+async function testPostForfeitWindowAllowsResultRead(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2 } = await startPair(12610);
+  try {
+    const lastToken = await thirdDisconnectToken(client2, room2);
+    await waitUntil(() => Boolean(room1.state.result), 1000, '3rd-disconnect forfeit');
+
+    let leaver;
+    try {
+      leaver = await manualReconnect<TurfDuelState>(client2, lastToken);
+    } catch (error) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Post-forfeit result window missing (TurfDuelRoom 221-226). Reconnect failed: ${error}`,
+      };
+    }
+
+    await waitUntil(() => Boolean(leaver.state.result), 500, 'leaver sees forfeit');
+    const got = leaver.state.result as { winner: number } | undefined;
+    if (!got || got.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `Leaver must see the forfeit. ${JSON.stringify(got)}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Post-forfeit window lets the leaver read the result' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testPostForfeitReconnectIsResultOnly(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2 } = await startPair(12611);
+  try {
+    const lastToken = await thirdDisconnectToken(client2, room2);
+    await waitUntil(() => Boolean(room1.state.result), 1000, 'forfeit');
+    const tickAtResult = room1.state.tick;
+    const p2Alive = room1.state.player2.isAlive;
+
+    const leaver = await manualReconnect<TurfDuelState>(client2, lastToken);
+    await waitUntil(() => Boolean(leaver.state.result), 500, 'leaver result');
+    await sleep(200);
+
+    if (!leaver.state.paused) {
+      await shutdown(server);
+      return { passed: false, message: 'Forfeit reconnect must not resume the match' };
+    }
+    if (leaver.state.tick !== tickAtResult) {
+      await shutdown(server);
+      return { passed: false, message: `Tick advanced after forfeit reconnect: ${tickAtResult} → ${leaver.state.tick}` };
+    }
+    if (leaver.state.player2.isAlive !== p2Alive) {
+      await shutdown(server);
+      return { passed: false, message: 'Forfeit reconnect must not revive a player' };
+    }
+
+    const winner = (leaver.state.result as { winner: number }).winner;
+    leaver.send('input', { direction: 'UP' });
+    room1.send('input', { direction: 'DOWN' });
+    await sleep(250);
+    if (!leaver.state.paused || leaver.state.tick !== tickAtResult) {
+      await shutdown(server);
+      return { passed: false, message: 'Input after forfeit reconnect must be ignored' };
+    }
+    const after = leaver.state.result as { winner: number } | undefined;
+    if (!after || after.winner !== winner) {
+      await shutdown(server);
+      return { passed: false, message: `Input overwrote result: ${JSON.stringify(after)}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Forfeit reconnect is result-only: no resume, revive, or input' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testCleanupElapsedFromResultDecision(): Promise<ReconnectionTestResult> {
+  const { server, room1, room2, clock } = await startClockPair(12612);
+  try {
+    let leaveCode: number | undefined;
+    room1.onLeave((code) => {
+      leaveCode = code;
+    });
+
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause');
+    clock.advance(30100);
+    await waitUntil(() => Boolean(room1.state.result), 500, 'result decided');
+    const decidedAt = Date.now();
+
+    await waitUntil(() => leaveCode !== undefined, 4000, 'dispose after result');
+    const elapsed = Date.now() - decidedAt;
+    if (elapsed < 2500 || elapsed > 3500) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Cleanup must be ~3s from result decision, got ${elapsed}ms code=${leaveCode}`,
+      };
+    }
+    if (leaveCode !== 4000) {
+      await shutdown(server);
+      return { passed: false, message: `Remaining client should close with 4000, got ${leaveCode}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: `Cleanup ${elapsed}ms after result (code ${leaveCode})` };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testBothClose4000ThenDisposedReconnectFails(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12613);
+  try {
+    let code1: number | undefined;
+    room1.onLeave((code) => {
+      code1 = code;
+    });
+
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause');
+    clock.advance(30100);
+    await waitUntil(() => Boolean(room1.state.result), 500, 'forfeit');
+
+    const p2 = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    let code2: number | undefined;
+    p2.onLeave((code) => {
+      code2 = code;
+    });
+    const tokenAfter = p2.reconnectionToken!;
+
+    await waitUntil(() => code1 !== undefined && code2 !== undefined, 4000, 'both closed');
+    if (code1 !== 4000 || code2 !== 4000) {
+      await shutdown(server);
+      return { passed: false, message: `Both should close 4000, got P1=${code1} P2=${code2}` };
+    }
+
+    try {
+      await client2.reconnect(tokenAfter);
+      await shutdown(server);
+      return { passed: false, message: 'Reconnect after dispose must fail' };
+    } catch {
+      /* expected disposed */
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Both closed 4000; later reconnect is disposed' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testStrongerForgedTokenRejected(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2 } = await startPair(12614);
+  try {
+    const real = room2.reconnectionToken!;
+    const stranger = new Client('ws://localhost:12614');
+    const forgeries = [
+      '',
+      'x',
+      `${real}ff`,
+      real.slice(0, Math.max(1, real.length - 3)),
+      real.replace(/[A-Za-z0-9]/, 'Z'),
+      '0'.repeat(Math.max(8, real.length)),
+    ];
+
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause');
+
+    for (const fake of forgeries) {
+      try {
+        await stranger.reconnect(fake);
+        await shutdown(server);
+        return { passed: false, message: `Forged token was accepted: ${JSON.stringify(fake)}` };
+      } catch {
+        /* expected */
+      }
+    }
+
+    const ok = await manualReconnect<TurfDuelState>(client2, real);
+    if (ok.state.paused === undefined) {
+      await shutdown(server);
+      return { passed: false, message: 'Real token should still reconnect' };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Mutated/empty/garbage tokens rejected; real token still works' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testOverlapExceedUnder50msIsVoid(): Promise<ReconnectionTestResult> {
+  const { server, client1, client2, room1, room2, clock } = await startClockPair(12615);
+  try {
+    const token1 = room1.reconnectionToken!;
+    const token2 = room2.reconnectionToken!;
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'p2 pause');
+    clock.advance(40);
+    await room1.leave(false);
+    await waitUntil(() => (clockRooms.get(room1.roomId)?.state.disconnectedPlayer ?? 0) === 3, 1000, 'both gone');
+    clock.advance(30100);
+    await sleep(80);
+
+    const s1 = await manualReconnect<TurfDuelState>(client1, token1);
+    const s2 = await manualReconnect<TurfDuelState>(client2, token2);
+    await waitUntil(() => Boolean(s1.state.result) && Boolean(s2.state.result), 1000, 'void');
+    const a = s1.state.result as { winner: number } | undefined;
+    const b = s2.state.result as { winner: number } | undefined;
+    if (!a || a.winner !== 0 || !b || b.winner !== 0) {
+      await shutdown(server);
+      return { passed: false, message: `<50ms gap must be void. P1=${JSON.stringify(a)} P2=${JSON.stringify(b)}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Exceed gap <50ms is void' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testOverlapExceedOver50msFirstLoses(): Promise<ReconnectionTestResult> {
+  const { server, client1, room1, room2, clock } = await startClockPair(12616);
+  try {
+    const token1 = room1.reconnectionToken!;
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'p2 pause');
+    clock.advance(60);
+    await room1.leave(false);
+    await waitUntil(() => (clockRooms.get(room1.roomId)?.state.disconnectedPlayer ?? 0) === 3, 1000, 'both gone');
+    // P2 started 60ms earlier: 60+29950=30010 over, P1=29950 under.
+    clock.advance(29950);
+    await sleep(80);
+
+    const s1 = await manualReconnect<TurfDuelState>(client1, token1);
+    await waitUntil(() => Boolean(s1.state.result), 1000, 'first-exceed');
+    const result = s1.state.result as { winner: number } | undefined;
+    if (!result || result.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `>=50ms gap: first to exceed (P2) loses. ${JSON.stringify(result)}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Exceed gap >=50ms: first over loses' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testNode20EngineStrictJob(): Promise<ReconnectionTestResult> {
+  try {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { engines?: { node?: string } };
+    const npmrc = readFileSync(join(root, '.npmrc'), 'utf8');
+    const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    if (pkg.engines?.node !== '>=22') {
+      return { passed: false, message: `engines.node must be >=22, got ${pkg.engines?.node}` };
+    }
+    if (!npmrc.includes('engine-strict=true')) {
+      return { passed: false, message: '.npmrc must set engine-strict=true' };
+    }
+    if (!ci.includes('node20-engine-strict') || !ci.includes('EBADENGINE') || !ci.includes("node-version: '20'")) {
+      return { passed: false, message: 'CI node20-engine-strict job must fail npm ci with EBADENGINE' };
+    }
+    return { passed: true, message: 'Node 20 npm ci is gated by engine-strict CI job' };
+  } catch (error) {
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
 async function runAllTests() {
   console.log('🎮 땅따 Reconnection E2E Tests\n');
 
@@ -1221,6 +1522,14 @@ async function runAllTests() {
     { name: 'Forfeit result reaches both clients and room disposes', fn: testForfeitResultOnBothThenDispose },
     { name: 'Timeout forfeit still readable 2.5s later, before dispose', fn: testTimeoutForfeitReconnectBeforeDispose },
     { name: 'Void result reaches both clients and room disposes', fn: testVoidResultOnBothThenDispose },
+    { name: 'Post-forfeit window lets the leaver read the result', fn: testPostForfeitWindowAllowsResultRead },
+    { name: 'Forfeit reconnect is result-only', fn: testPostForfeitReconnectIsResultOnly },
+    { name: 'Cleanup is ~3s from result decision', fn: testCleanupElapsedFromResultDecision },
+    { name: 'Both close 4000 then disposed reconnect fails', fn: testBothClose4000ThenDisposedReconnectFails },
+    { name: 'Stronger forged token rejection', fn: testStrongerForgedTokenRejected },
+    { name: 'Overlap exceed gap <50ms is void', fn: testOverlapExceedUnder50msIsVoid },
+    { name: 'Overlap exceed gap >=50ms first loses', fn: testOverlapExceedOver50msFirstLoses },
+    { name: 'Node 20 engine-strict CI job is present', fn: testNode20EngineStrictJob },
   ];
 
   let passed = 0;
