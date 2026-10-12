@@ -30,7 +30,47 @@ import {
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
-const AFTERIMAGES = 6;
+const AFTERIMAGES = 8;
+const KK_TEX = 256;
+/** 꾸물이 is ~1/4 of the board width. */
+const KK_CELLS = BOARD_W / 4;
+const ORB_CELLS = 20;
+
+function seedMidMatch(state: MatchState): void {
+  const w = state.gridWidth;
+  const h = state.gridHeight;
+  const want1 = Math.round(w * h * 0.32);
+  const want2 = Math.round(w * h * 0.21);
+  const bx = w >> 1;
+  const by = h >> 1;
+  const nearBoss = (x: number, y: number) => Math.abs(x - bx) + Math.abs(y - by) < 22;
+  let n1 = 0;
+  let n2 = 0;
+  // P2: top-right sky / sun (21%).
+  for (let y = 1; y < h - 1 && n2 < want2; y++) {
+    for (let x = Math.floor(w * 0.5); x < w - 1 && n2 < want2; x++) {
+      if (state.grid[y][x] !== CellType.COVER || nearBoss(x, y)) continue;
+      state.grid[y][x] = CellType.PLAYER2_OPEN;
+      n2++;
+    }
+  }
+  // P1: left slice of the dusk illustration (32%).
+  for (let x = 1; x < w - 1 && n1 < want1; x++) {
+    for (let y = 1; y < h - 1 && n1 < want1; y++) {
+      if (state.grid[y][x] !== CellType.COVER || nearBoss(x, y)) continue;
+      state.grid[y][x] = CellType.PLAYER1_OPEN;
+      n1++;
+    }
+  }
+  state.player1.territoryCells = n1;
+  state.player2.territoryCells = n2;
+  state.player1.xFp = (36 << 8) + 128;
+  state.player1.yFp = (210 << 8) + 128;
+  state.player1.position = { x: 36, y: 210 };
+  state.player2.xFp = (160 << 8) + 128;
+  state.player2.yFp = (48 << 8) + 128;
+  state.player2.position = { x: 160, y: 48 };
+}
 
 interface TurfDebug {
   tick: number;
@@ -135,6 +175,11 @@ class GameScene extends Phaser.Scene {
   private kkTexture: Phaser.Textures.CanvasTexture | null = null;
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
+  private trailGlow: Phaser.GameObjects.Graphics | null = null;
+  private fxTrail1: { x: number; y: number }[] = [];
+  private fxTrail2: { x: number; y: number }[] = [];
+  private afterimages2: Phaser.GameObjects.Image[] = [];
+  private lastP2: { x: number; y: number }[] = [];
   private p1Sprite: Phaser.GameObjects.Image | null = null;
   private p2Sprite: Phaser.GameObjects.Image | null = null;
   private kkumuli: Phaser.GameObjects.Image | null = null;
@@ -186,10 +231,12 @@ class GameScene extends Phaser.Scene {
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
     addGlow(this.boardImage, AH.purple, 3);
 
+    this.trailGlow = this.add.graphics();
+    this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
     this.trailGfx = this.add.graphics();
-    this.addPaintedTexture('orb-me', 28, (g, s) => paintOrb(g, s, A.me));
-    this.addPaintedTexture('orb-foe', 28, (g, s) => paintOrb(g, s, A.foe, true));
-    this.addPaintedTexture('sparx', 22, paintSpark);
+    this.addPaintedTexture('orb-me', 64, (g, s) => paintOrb(g, s, A.me));
+    this.addPaintedTexture('orb-foe', 64, (g, s) => paintOrb(g, s, A.foe, true));
+    this.addPaintedTexture('sparx', 32, paintSpark);
     this.addPaintedTexture('dot-me', 8, (g, s) => paintParticleDot(g, s, A.me));
     this.addPaintedTexture('dot-accent', 8, (g, s) => paintParticleDot(g, s, A.accent));
     this.addPaintedTexture('dot-white', 8, (g, s) => paintParticleDot(g, s, A.text));
@@ -197,23 +244,25 @@ class GameScene extends Phaser.Scene {
     this.addPaintedTexture('dot-heart', 8, (g, s) => paintParticleDot(g, s, A.heart));
 
     this.kkCanvas = document.createElement('canvas');
-    this.kkCanvas.width = 72;
-    this.kkCanvas.height = 72;
-    paintKkumuli(this.kkCanvas.getContext('2d')!, 72, 0, false);
+    this.kkCanvas.width = KK_TEX;
+    this.kkCanvas.height = KK_TEX;
+    paintKkumuli(this.kkCanvas.getContext('2d')!, KK_TEX, 0, false);
     this.kkTexture = this.textures.addCanvas('kkumuli', this.kkCanvas);
 
     this.p1Sprite = this.add.image(0, 0, 'orb-me');
     this.p2Sprite = this.add.image(0, 0, 'orb-foe');
     this.kkumuli = this.add.image(0, 0, 'kkumuli');
     this.sparkSprites = [this.add.image(0, 0, 'sparx'), this.add.image(0, 0, 'sparx')];
-    addGlow(this.p1Sprite, AH.me, 5);
-    addGlow(this.p2Sprite, AH.foe, 5);
-    addGlow(this.kkumuli, 0xdb2777, 6);
-    for (const s of this.sparkSprites) addGlow(s, AH.spark, 4);
+    addGlow(this.p1Sprite, AH.me, 8);
+    addGlow(this.p2Sprite, AH.foe, 8);
+    addGlow(this.kkumuli, 0xdb2777, 10);
+    for (const s of this.sparkSprites) addGlow(s, AH.spark, 5);
 
     for (let i = 0; i < AFTERIMAGES; i++) {
       const ghost = this.add.image(0, 0, 'orb-me').setAlpha(0);
       this.afterimages.push(ghost);
+      const ghost2 = this.add.image(0, 0, 'orb-foe').setAlpha(0);
+      this.afterimages2.push(ghost2);
     }
 
     this.cutEmitter = this.makeBurst('dot-accent');
@@ -230,7 +279,7 @@ class GameScene extends Phaser.Scene {
 
   update(time: number) {
     if (this.kkumuli?.visible && this.kkTexture) {
-      paintKkumuli(this.kkCanvas.getContext('2d')!, 72, time / 1000, this.angry);
+      paintKkumuli(this.kkCanvas.getContext('2d')!, KK_TEX, time / 1000, this.angry);
       this.kkTexture.refresh();
     }
     for (const spark of this.sparkSprites) {
@@ -348,6 +397,7 @@ class GameScene extends Phaser.Scene {
     this.kkumuli?.setVisible(visible);
     for (const spark of this.sparkSprites) spark.setVisible(visible);
     for (const g of this.afterimages) g.setVisible(visible);
+    for (const g of this.afterimages2) g.setVisible(visible);
   }
 
   startOnlineMode(room: Room) {
@@ -378,8 +428,19 @@ class GameScene extends Phaser.Scene {
     this.melt = 0;
     this.melting = false;
     this.matchState = createInitialState(
-      this.qaHit ? { matchTicks: 400 } : this.qaMode ? { matchTicks: 80 } : undefined,
+      this.qaHit ? { matchTicks: 400 } : this.qaMode ? { matchTicks: 120 } : undefined,
     );
+    if (this.qaMode) {
+      seedMidMatch(this.matchState);
+      this.fxTrail1 = [];
+      for (let y = 36; y <= 270; y += 2) {
+        this.fxTrail1.push({ x: 62 + Math.round(Math.sin(y / 18) * 7), y });
+      }
+      this.fxTrail2 = [];
+      for (let x = 108; x <= 188; x += 2) {
+        this.fxTrail2.push({ x, y: 72 + Math.round(Math.sin(x / 16) * 6) });
+      }
+    }
     if (this.qaHit) {
       const x = this.matchState.player1.position.x;
       const y = this.matchState.gridHeight - 1;
@@ -403,7 +464,7 @@ class GameScene extends Phaser.Scene {
       const heading = this.qaHeading();
       const botMove = this.bot!.getNextMove(this.matchState);
       const prevTrail = this.matchState.player1.trail.slice();
-      const autoThrust = this.qaHit || (this.qaMode && !this.qaClaimed);
+      const autoThrust = this.qaHit || this.qaMode;
       const result = step(this.matchState, [
         { player: 1, heading, thrusting: autoThrust ? true : this.thrusting },
         botMove,
@@ -411,6 +472,10 @@ class GameScene extends Phaser.Scene {
       this.matchState = result.state;
       this.p1TrailCopy = this.matchState.player1.trail.length ? this.matchState.player1.trail : prevTrail;
       this.handleEvents(result.events, prevTrail);
+      if (this.qaMode && !this.qaHit && this.matchState.tick === 14 && !this.qaClaimed) {
+        this.qaClaimed = true;
+        this.playCutFx(undefined, 6);
+      }
       this.renderState(this.matchState, result.events);
     }, 50);
   }
@@ -418,11 +483,11 @@ class GameScene extends Phaser.Scene {
   private qaHeading(): number {
     if (!this.qaMode) return this.heading;
     if (this.qaHit) return 64;
-    if (this.qaClaimed) return this.heading;
+    const x = this.matchState?.player1.position.x ?? 36;
+    if (x >= 56) return 128;
+    if (x <= 12) return 0;
     this.qaTick++;
-    if (this.qaTick <= 16) return 192;
-    if (this.qaTick <= 30) return 0;
-    return 64;
+    return (Math.floor(this.qaTick / 14) % 2 === 0) ? 0 : 128;
   }
 
   private handleEvents(events: GameEvent[], prevTrail: { x: number; y: number }[]) {
@@ -623,10 +688,13 @@ class GameScene extends Phaser.Scene {
     const oy = this.boardImage.y;
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
+    this.trailGlow?.clear();
     this.trailGfx.lineStyle(4, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
-    this.strokeGlowLine(trail1, AH.me, AH.core, ox, oy, scale, false);
-    if (trail2) this.strokeGlowLine(trail2, AH.foe, 0xffffff, ox, oy, scale, true);
+    const mine = trail1.length >= 2 ? trail1 : this.fxTrail1;
+    const foe = trail2 && trail2.length >= 2 ? trail2 : this.fxTrail2;
+    this.strokeGlowLine(mine, AH.me, AH.core, ox, oy, scale, false);
+    this.strokeGlowLine(foe, AH.foe, 0xffffff, ox, oy, scale, true);
   }
 
   private strokeGlowLine(
@@ -640,21 +708,19 @@ class GameScene extends Phaser.Scene {
   ) {
     if (!this.trailGfx || trail.length < 2) return;
     const pts = trail.map((p) => ({ x: ox + (p.x + 0.5) * scale, y: oy + (p.y + 0.5) * scale }));
-    const draw = (width: number, color: number, alpha: number) => {
-      this.trailGfx!.lineStyle(width, color, alpha);
-      if (dashed) {
-        this.drawDashed(pts, Math.max(6, scale * 3), Math.max(4, scale * 2));
-        return;
-      }
-      this.drawCurve(pts);
+    const glowGfx = this.trailGlow ?? this.trailGfx;
+    const stroke = (gfx: Phaser.GameObjects.Graphics, width: number, color: number, alpha: number) => {
+      gfx.lineStyle(width, color, alpha);
+      if (dashed) this.drawDashedOn(gfx, pts, Math.max(10, scale * 5), Math.max(6, scale * 3));
+      else this.drawCurveOn(gfx, pts);
     };
-    draw(Math.max(7, scale * 2.4), glow, 0.28);
-    draw(Math.max(4, scale * 1.4), glow, 0.85);
-    draw(Math.max(1.5, scale * 0.55), core, 1);
+    stroke(glowGfx, Math.max(22, scale * 14), glow, 0.22);
+    stroke(glowGfx, Math.max(14, scale * 9), glow, 0.45);
+    stroke(this.trailGfx, Math.max(8, scale * 5), glow, 1);
+    stroke(this.trailGfx, Math.max(3, scale * 1.8), core, 1);
   }
 
-  private drawCurve(pts: { x: number; y: number }[]) {
-    const g = this.trailGfx!;
+  private drawCurveOn(g: Phaser.GameObjects.Graphics, pts: { x: number; y: number }[]) {
     g.beginPath();
     g.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) {
@@ -668,8 +734,7 @@ class GameScene extends Phaser.Scene {
     g.strokePath();
   }
 
-  private drawDashed(pts: { x: number; y: number }[], on: number, off: number) {
-    const g = this.trailGfx!;
+  private drawDashedOn(g: Phaser.GameObjects.Graphics, pts: { x: number; y: number }[], on: number, off: number) {
     let acc = 0;
     let drawing = true;
     g.beginPath();
@@ -726,14 +791,25 @@ class GameScene extends Phaser.Scene {
         img.setAlpha(0);
         return;
       }
-      place(img, src, 5);
-      img.setAlpha(0.35 * (1 - i / AFTERIMAGES));
+      place(img, src, ORB_CELLS * (1 - i * 0.08));
+      img.setAlpha(0.7 * (1 - i / AFTERIMAGES));
     });
-    place(this.p1Sprite, p1, 7);
-    place(this.p2Sprite, p2, 7);
-    place(this.kkumuli, boss, 16);
-    place(this.sparkSprites[0], s1, 6);
-    place(this.sparkSprites[1], s2, 6);
+    this.lastP2.push(p2);
+    if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
+    this.afterimages2.forEach((img, i) => {
+      const src = this.lastP2[this.lastP2.length - 1 - i];
+      if (!src) {
+        img.setAlpha(0);
+        return;
+      }
+      place(img, src, ORB_CELLS * 0.85 * (1 - i * 0.08));
+      img.setAlpha(0.55 * (1 - i / AFTERIMAGES));
+    });
+    place(this.p1Sprite, p1, ORB_CELLS);
+    place(this.p2Sprite, p2, ORB_CELLS);
+    place(this.kkumuli, boss, KK_CELLS);
+    place(this.sparkSprites[0], s1, 10);
+    place(this.sparkSprites[1], s2, 10);
   }
 
   private paintGrid(grid: CellType[][]) {
@@ -771,11 +847,11 @@ class GameScene extends Phaser.Scene {
           const src: [number, number, number] = [img[i], img[i + 1], img[i + 2]];
           let tinted: [number, number, number] = src;
           if (cell === CellType.PLAYER1_OPEN || cell === CellType.PLAYER1_TRAIL) {
-            tinted = mixRgb(src, [255, 122, 26], cell === CellType.PLAYER1_TRAIL ? 0.45 : 0.18);
+            tinted = mixRgb(src, [255, 122, 26], cell === CellType.PLAYER1_TRAIL ? 0.35 : 0.08);
           } else if (cell === CellType.PLAYER2_OPEN || cell === CellType.PLAYER2_TRAIL) {
-            tinted = mixRgb(src, [47, 107, 255], cell === CellType.PLAYER2_TRAIL ? 0.45 : 0.18);
+            tinted = mixRgb(src, [47, 107, 255], cell === CellType.PLAYER2_TRAIL ? 0.35 : 0.08);
           } else if (cell === CellType.SAFE_EDGE) {
-            tinted = mixRgb(src, [250, 204, 21], 0.12);
+            tinted = mixRgb(src, [250, 204, 21], 0.1);
           }
           let edge = false;
           if (openish(cell)) {

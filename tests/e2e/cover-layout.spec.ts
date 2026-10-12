@@ -40,7 +40,15 @@ test.describe('Cover spike 390x844', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'lobby.png'), animations: 'disabled' });
 
     await page.click('#botBtn');
-    await page.waitForFunction(() => Boolean(window.__turfDebug && window.__turfDebug.tick > 5), { timeout: 15000 });
+    await page.waitForFunction(
+      () => {
+        const d = window.__turfDebug;
+        return Boolean(
+          d && d.tick > 8 && d.ownedCells.p1 >= 18000 && d.ownedCells.p2 >= 12000,
+        );
+      },
+      { timeout: 15000 },
+    );
     await expect(page.locator('#settings')).toBeHidden();
     await expect(page.locator('#hud')).toBeVisible();
     await expect(page.locator('#dragPad')).toBeVisible();

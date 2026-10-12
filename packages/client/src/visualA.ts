@@ -242,24 +242,24 @@ export function paintKkumuli(
 
   g.lineCap = 'round';
   g.strokeStyle = tent;
-  g.lineWidth = s * 0.1;
-  const dirs = [-0.52, -0.2, 0.2, 0.52];
+  g.lineWidth = s * 0.11;
+  const dirs = [-0.55, -0.22, 0.22, 0.55];
   for (let i = 0; i < 4; i++) {
-    const sway = Math.sin(time * 3.1 + i * 1.1) * s * 0.1;
+    const sway = Math.sin(time * 3.1 + i * 1.1) * s * 0.14;
     const dx = dirs[i];
-    const x2 = cx + dx * s * 0.42 + sway;
-    const y2 = cy + s * 0.48 + Math.cos(time * 2.4 + i) * s * 0.04;
+    const x2 = cx + dx * s * 0.48 + sway;
+    const y2 = cy + s * 0.52 + Math.cos(time * 2.4 + i) * s * 0.06;
     g.beginPath();
-    g.moveTo(cx + dx * s * 0.08, cy + s * 0.12);
-    g.quadraticCurveTo(cx + dx * s * 0.28 + sway * 0.4, cy + s * 0.3, x2, y2);
+    g.moveTo(cx + dx * s * 0.1, cy + s * 0.14);
+    g.quadraticCurveTo(cx + dx * s * 0.32 + sway * 0.5, cy + s * 0.34, x2, y2);
     g.stroke();
     g.fillStyle = A.sucker;
     g.shadowBlur = 0;
-    for (const t of [0.4, 0.7]) {
-      const sx = cx + dx * s * 0.08 * (1 - t) + x2 * t;
-      const sy = cy + s * 0.12 * (1 - t) + y2 * t;
+    for (const t of [0.35, 0.55, 0.78]) {
+      const sx = cx + dx * s * 0.1 * (1 - t) + x2 * t;
+      const sy = cy + s * 0.14 * (1 - t) + y2 * t;
       g.beginPath();
-      g.arc(sx, sy, s * 0.035, 0, Math.PI * 2);
+      g.arc(sx, sy, s * 0.04, 0, Math.PI * 2);
       g.fill();
     }
     g.shadowBlur = s * 0.28;
@@ -313,10 +313,10 @@ export function paintOrb(
   const cy = s / 2;
   g.save();
   g.shadowColor = color;
-  g.shadowBlur = s * 0.45;
+  g.shadowBlur = s * 0.55;
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.32, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.36, 0, Math.PI * 2);
   g.fill();
   g.restore();
   if (whiteRing) {
