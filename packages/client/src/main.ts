@@ -12,6 +12,7 @@ import {
   MATCH_DURATION_TICKS,
   TICKS_PER_SECOND,
   wrapAngle,
+  inflateGrid,
 } from '@turf-duel/engine';
 import { Bot } from '@turf-duel/bot';
 
@@ -96,6 +97,7 @@ class GameScene extends Phaser.Scene {
   private thrusting = false;
   private bot: Bot | null = null;
   private botInterval: ReturnType<typeof setInterval> | null = null;
+  private localGrid: CellType[][] = createInitialState().grid;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -232,6 +234,13 @@ class GameScene extends Phaser.Scene {
     room.onMessage('player', (message: { num: 1 | 2 }) => {
       this.playerNum = message.num;
     });
+    room.onMessage('grid', (payload: ArrayLike<number> | ArrayBuffer) => {
+      const buf = payload instanceof ArrayBuffer ? new Uint8Array(payload) : payload;
+      const w = (room.state as { gridWidth?: number }).gridWidth || BOARD_W;
+      const h = (room.state as { gridHeight?: number }).gridHeight || BOARD_H;
+      this.localGrid = inflateGrid(buf, w, h);
+      this.paintGrid(this.localGrid);
+    });
     room.onStateChange(() => this.renderFromRoom());
   }
 
@@ -259,15 +268,16 @@ class GameScene extends Phaser.Scene {
   private renderFromRoom() {
     if (!this.room) return;
     const state = this.room.state as any;
-    if (state.grid?.length) {
-      const w = state.gridWidth || BOARD_W;
-      const h = state.gridHeight || BOARD_H;
-      const grid: CellType[][] = [];
-      for (let y = 0; y < h; y++) {
-        grid[y] = [];
-        for (let x = 0; x < w; x++) grid[y][x] = state.grid[y * w + x];
+    const w = state.gridWidth || BOARD_W;
+    if (state.cellUpdates?.length) {
+      for (const u of state.cellUpdates) {
+        if (this.localGrid[u.y]) this.localGrid[u.y][u.x] = u.type;
       }
-      this.paintGrid(grid);
+    } else if (state.grid?.length) {
+      this.localGrid = inflateGrid(state.grid, w, state.gridHeight || BOARD_H);
+    }
+    this.paintGrid(this.localGrid);
+    if (state.player1?.position) {
       this.paintActors(state.player1.position, state.player2.position, state.boss, state.sparx1, state.sparx2);
     }
     const you = this.playerNum === 1 ? state.player1 : state.player2;

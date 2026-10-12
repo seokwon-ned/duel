@@ -4,7 +4,7 @@ import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
-import { Direction, GRID_WIDTH, GRID_HEIGHT } from '@turf-duel/engine';
+import { Direction, GRID_WIDTH, GRID_HEIGHT, createInitialState, flattenGrid } from '@turf-duel/engine';
 
 async function testLosslessSync(): Promise<void> {
   console.log('\n=== P1-3: Lossless Sync Under Artificial Latency ===\n');
@@ -23,6 +23,8 @@ async function testLosslessSync(): Promise<void> {
   try {
     const room1 = await client1.joinOrCreate('turf_duel');
     const room2 = await client2.joinOrCreate('turf_duel');
+    const grid1 = trackClientGrid(room1);
+    const grid2 = trackClientGrid(room2);
 
     console.log('✓ Both clients connected');
 
@@ -96,23 +98,15 @@ async function testLosslessSync(): Promise<void> {
 
     // Compare final grids
     console.log('\nComparing final grids...');
-    
-    const grid1 = room1.state.grid;
-    const grid2 = room2.state.grid;
-    
-    if (!grid1 || !grid2 || grid1.length === 0 || grid2.length === 0) {
-      throw new Error('Grid not available in state');
-    }
 
     console.log(`Grid 1 length: ${grid1.length}`);
     console.log(`Grid 2 length: ${grid2.length}`);
     console.log(`Room 1 tick: ${room1.state.tick}`);
     console.log(`Room 2 tick: ${room2.state.tick}`);
 
-    // Compare grids cell by cell
     let differences = 0;
     const expectedCells = GRID_WIDTH * GRID_HEIGHT;
-    
+
     if (grid1.length !== expectedCells || grid2.length !== expectedCells) {
       throw new Error(`Grid size mismatch: expected ${expectedCells}, got ${grid1.length}, ${grid2.length}`);
     }
@@ -155,6 +149,21 @@ async function testLosslessSync(): Promise<void> {
       new Promise((r) => setTimeout(r, 1500)),
     ]);
   }
+}
+
+function trackClientGrid(room: { onMessage: Function; onStateChange: Function }): Uint8Array {
+  const cells = flattenGrid(createInitialState().grid);
+  room.onMessage('grid', (payload: ArrayLike<number> | ArrayBuffer) => {
+    const buf = payload instanceof ArrayBuffer ? new Uint8Array(payload) : Uint8Array.from(payload as ArrayLike<number>);
+    cells.set(buf.subarray(0, cells.length));
+  });
+  room.onStateChange((state: { cellUpdates?: Array<{ x: number; y: number; type: number }> }) => {
+    for (const u of state.cellUpdates ?? []) {
+      const i = u.y * GRID_WIDTH + u.x;
+      if (i >= 0 && i < cells.length) cells[i] = u.type;
+    }
+  });
+  return cells;
 }
 
 testLosslessSync();

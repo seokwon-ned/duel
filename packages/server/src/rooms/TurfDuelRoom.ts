@@ -9,11 +9,10 @@ import {
   PlayerInput,
   CellType,
   TICKS_PER_SECOND,
-  GRID_WIDTH,
-  GRID_HEIGHT,
   ResultReason,
   cellOf,
   wrapAngle,
+  flattenGrid,
 } from '@turf-duel/engine';
 
 interface PlayerDisconnectInfo {
@@ -48,12 +47,6 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.matchState = createInitialState();
     state.gridWidth = this.matchState.gridWidth;
     state.gridHeight = this.matchState.gridHeight;
-
-    for (let y = 0; y < GRID_HEIGHT; y++) {
-      for (let x = 0; x < GRID_WIDTH; x++) {
-        state.grid.push(this.matchState.grid[y][x]);
-      }
-    }
     
     // Hook broadcast to measure actual bytes sent
     const originalBroadcast = this.broadcast.bind(this);
@@ -107,6 +100,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
     client.send('player', { num: playerNum });
+    this.sendGridSnapshot(client);
 
     // Hook into WebSocket to measure actual bytes sent
     // Colyseus 0.18 exposes the socket as client.ref
@@ -256,6 +250,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
     playerState.connected = true;
     playerState.totalDisconnectedMs = info?.totalDisconnectedMs || 0;
+    this.sendGridSnapshot(client);
 
     // 15.5s + 14.8s = 30.3s must lose on reconnect, not after the next 1s tick
     this.evaluateDisconnectLimits();
@@ -561,16 +556,26 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
     state.cellUpdates.length = 0;
     const changedCells = this.getChangedCells();
-    const width = this.matchState.gridWidth;
+    const SNAPSHOT_CELLS = 256;
+    if (changedCells.length > SNAPSHOT_CELLS) {
+      this.broadcastGridSnapshot();
+      return;
+    }
     for (const cell of changedCells) {
-      const index = cell.y * width + cell.x;
-      state.grid[index] = cell.type;
       const update = new CellUpdate();
       update.x = cell.x;
       update.y = cell.y;
       update.type = cell.type;
       state.cellUpdates.push(update);
     }
+  }
+
+  private sendGridSnapshot(client: Client) {
+    client.send('grid', flattenGrid(this.matchState.grid));
+  }
+
+  private broadcastGridSnapshot() {
+    this.broadcast('grid', flattenGrid(this.matchState.grid));
   }
 
   private syncPlayer(schema: TurfDuelState['player1'], player: PlayerState) {
