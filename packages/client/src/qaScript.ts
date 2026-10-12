@@ -53,24 +53,31 @@ export function p1HitWaypoints(): Waypoint[] {
   ];
 }
 
-export function p2ZigzagWaypoints(): Waypoint[] {
-  const pts: Waypoint[] = [{ x: 100, y: 10 }];
-  for (let i = 0; i < 16; i++) {
-    const y = 10 + i * 6;
-    if (i % 2 === 0) {
-      pts.push({ x: 178, y }, { x: 178, y: y + 6 });
-    } else {
-      pts.push({ x: 118, y }, { x: 118, y: y + 6 });
-    }
-  }
-  return pts;
+
+export function p2SkyWaypoints(): Waypoint[] {
+  return [
+    { x: 100, y: 12 },
+    { x: 158, y: 18 },
+    { x: 176, y: 42 },
+    { x: 150, y: 52 },
+    { x: 172, y: 78 },
+    { x: 176, y: 110 },
+    { x: 154, y: 128 },
+    { x: 170, y: 150 },
+  ];
 }
 
 export class QaPilot {
   private i = 0;
-  constructor(private readonly pts: Waypoint[]) {}
+  constructor(
+    private readonly pts: Waypoint[],
+    private readonly startTick = 0,
+  ) {}
 
-  next(pos: Waypoint): { heading: number; thrusting: boolean } {
+  next(pos: Waypoint, tick = 0): { heading: number; thrusting: boolean } {
+    if (tick < this.startTick) {
+      return { heading: 0, thrusting: false };
+    }
     while (
       this.i < this.pts.length &&
       pos.x === this.pts[this.i].x &&

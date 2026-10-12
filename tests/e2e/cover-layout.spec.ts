@@ -32,7 +32,7 @@ async function swipePad(page: Page) {
 
 test.describe('Cover spike 390x844', () => {
   test('lobby, match HUD, and results', async ({ page }) => {
-    test.setTimeout(120000);
+    test.setTimeout(180000);
     await page.goto('/?qa=1');
     await page.waitForSelector('#game-container canvas');
     await expect(page.locator('#serverUrl')).toBeVisible();
@@ -64,11 +64,13 @@ test.describe('Cover spike 390x844', () => {
     await page.waitForFunction(
       () => {
         const d = window.__turfDebug;
-        return Boolean(d?.cutFx && d.ownedCells.p1 >= 15000);
+        return Boolean(d?.cutFx && d.ownedCells.p1 >= 18000);
       },
       { timeout: 25000 },
     );
-    await expect(page.locator('#cutStack')).toBeVisible();
+    await expect(page.locator('#cutShout')).toBeVisible();
+    await expect(page.locator('#cutPopup')).toBeVisible();
+    await page.waitForTimeout(280);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'bot-match.png') });
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'cut.png') });
 

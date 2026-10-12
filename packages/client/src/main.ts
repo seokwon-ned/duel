@@ -27,7 +27,7 @@ import {
   paintSpark,
   paintParticleDot,
 } from './visualA.js';
-import { QaPilot, p1CaptureWaypoints, p1HitWaypoints, p2ZigzagWaypoints } from './qaScript.js';
+import { QaPilot, p1CaptureWaypoints, p1HitWaypoints, p2SkyWaypoints } from './qaScript.js';
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
@@ -37,7 +37,8 @@ const KK_TEX = 256;
 const KK_CELLS = 50;
 const ORB_CELLS = 28;
 const ORB_TEX = 128;
-const QA_STEPS_PER_PULSE = 3;
+const QA_STEPS_PER_PULSE = 6;
+const QA_STEPS_AFTER_CUT = 16;
 
 interface TurfDebug {
   tick: number;
@@ -404,7 +405,7 @@ class GameScene extends Phaser.Scene {
     this.qaP1 = this.qaMode
       ? new QaPilot(this.qaHit ? p1HitWaypoints() : p1CaptureWaypoints())
       : null;
-    this.qaP2 = this.qaMode ? new QaPilot(p2ZigzagWaypoints()) : null;
+    this.qaP2 = this.qaMode ? new QaPilot(p2SkyWaypoints(), 1100) : null;
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);
@@ -418,15 +419,27 @@ class GameScene extends Phaser.Scene {
       if (this.matchState?.result) this.playWinFx();
       return;
     }
-    const pulses = this.qaMode ? QA_STEPS_PER_PULSE : 1;
+    const pulses = this.qaMode
+      ? this.qaClaimed
+        ? QA_STEPS_AFTER_CUT
+        : QA_STEPS_PER_PULSE
+      : 1;
+    const allEvents: GameEvent[] = [];
+    let prevTrail = this.matchState.player1.trail.slice();
     for (let n = 0; n < pulses; n++) {
       if (!this.matchState || this.matchState.result) break;
-      this.stepBotOnce();
+      const once = this.stepBotOnce();
+      allEvents.push(...once.events);
+      if (once.prevTrail.length) prevTrail = once.prevTrail;
+    }
+    if (this.matchState) {
+      this.handleEvents(allEvents, prevTrail);
+      this.renderState(this.matchState, allEvents);
     }
   }
 
-  private stepBotOnce() {
-    if (!this.matchState) return;
+  private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
+    if (!this.matchState) return { events: [], prevTrail: [] };
     if (this.qaHit && this.matchState.player1.position.y >= this.matchState.gridHeight - 1) {
       const x = this.matchState.player1.position.x;
       const y = this.matchState.gridHeight - 1;
@@ -441,13 +454,14 @@ class GameScene extends Phaser.Scene {
     let heading = this.heading;
     let thrusting = this.thrusting;
     let botMove = this.bot!.getNextMove(this.matchState);
+    const tick = this.matchState.tick;
     if (this.qaP1) {
-      const a = this.qaP1.next(this.matchState.player1.position);
+      const a = this.qaP1.next(this.matchState.player1.position, tick);
       heading = a.heading;
       thrusting = a.thrusting;
     }
     if (this.qaP2) {
-      const b = this.qaP2.next(this.matchState.player2.position);
+      const b = this.qaP2.next(this.matchState.player2.position, tick);
       botMove = { player: 2, heading: b.heading, thrusting: b.thrusting };
     }
     const prevTrail = this.matchState.player1.trail.slice();
@@ -457,20 +471,20 @@ class GameScene extends Phaser.Scene {
     ]);
     this.matchState = result.state;
     this.p1TrailCopy = this.matchState.player1.trail.length ? this.matchState.player1.trail : prevTrail;
-    this.handleEvents(result.events, prevTrail);
-    this.renderState(this.matchState, result.events);
+    return { events: result.events, prevTrail };
   }
 
   private handleEvents(events: GameEvent[], prevTrail: { x: number; y: number }[]) {
     const bonus = events.find((e) => e.type === 'trap_bonus');
+    const notableCut = !this.qaMode || (this.matchState?.player1.territoryCells ?? 0) >= 18000;
     for (const ev of events) {
       if (ev.type === 'trap_bonus') {
-        if (ev.player === 1) this.qaClaimed = true;
-        this.playCutFx(undefined, ev.data?.percent ?? 5);
+        if (ev.player === 1 && notableCut) this.qaClaimed = true;
+        if (notableCut) this.playCutFx(undefined, ev.data?.percent ?? 5);
       }
       if (ev.type === 'claim' && !bonus) {
-        if (ev.player === 1) this.qaClaimed = true;
-        this.playCutFx(ev.data?.cells ?? 0);
+        if (ev.player === 1 && notableCut) this.qaClaimed = true;
+        if (notableCut) this.playCutFx(ev.data?.cells ?? 0);
       }
       if (ev.type === 'heart') this.playHitFx(ev.player === 1 ? prevTrail : []);
       if (ev.type === 'win') this.playWinFx();
