@@ -78,7 +78,16 @@ if (typeof window !== 'undefined') {
 
 function setPlaying(playing: boolean) {
   document.getElementById('app')?.classList.toggle('playing', playing);
-  requestAnimationFrame(() => game.scale.refresh());
+  const kick = () => {
+    game.scale.refresh();
+    const scene = game.scene.scenes[0] as GameScene | undefined;
+    scene?.relayoutMatch();
+  };
+  // First match: HUD/drag flex is not ready in the same frame as Scale.FIT.
+  requestAnimationFrame(() => {
+    kick();
+    requestAnimationFrame(kick);
+  });
 }
 
 function renderHearts(el: HTMLElement | null, n: number, broke: boolean) {
@@ -87,9 +96,8 @@ function renderHearts(el: HTMLElement | null, n: number, broke: boolean) {
   el.innerHTML = [0, 1, 2]
     .map((i) => {
       const on = i < filled;
-      const br = broke && i === filled;
-      const gone = !on && !br && filled === 0;
-      return `<span class="heart${on ? ' on' : ''}${br ? ' break' : ''}${gone ? ' gone' : ''}"></span>`;
+      const br = broke && filled > 0 && i === filled;
+      return `<span class="heart${on ? ' on' : ''}${br ? ' break' : ''}"></span>`;
     })
     .join('');
 }
@@ -115,7 +123,6 @@ function setHud(opts: {
   tick: number;
   youCells: number;
   foeCells: number;
-  result?: string | null;
   brokeYou?: boolean;
   brokeFoe?: boolean;
   foeIsBot?: boolean;
@@ -144,7 +151,6 @@ function setHud(opts: {
     hud.classList.remove('result');
     hud.textContent = '';
   }
-  void opts.result;
 }
 
 type BurstEmitter = { explode: (quantity: number, x: number, y: number) => void };
@@ -341,6 +347,10 @@ class GameScene extends Phaser.Scene {
     this.textures.addCanvas(key, c);
   }
 
+  relayoutMatch() {
+    this.layoutBoard();
+  }
+
   private layoutBoard() {
     const w = this.scale.width;
     const h = this.scale.height;
@@ -438,6 +448,16 @@ class GameScene extends Phaser.Scene {
     this.room = null;
   }
 
+  /** After a finished match: tell the opponent, then leave without a forfeit. */
+  requestOnlineRematch() {
+    try {
+      this.room?.send('rematch', {});
+    } catch {
+      /* room already gone */
+    }
+    this.leaveRoom();
+  }
+
   startOnlineMode(room: Room) {
     this.room = room;
     this.qaMode = false;
@@ -453,6 +473,16 @@ class GameScene extends Phaser.Scene {
     setPlaying(true);
     room.onMessage('player', (message: { num: 1 | 2 }) => {
       this.playerNum = message.num;
+    });
+    room.onMessage('rematch', () => {
+      const sub = document.getElementById('resultSub');
+      if (sub && !sub.textContent?.includes('다시 한 판')) {
+        sub.textContent = `${sub.textContent ? `${sub.textContent} · ` : ''}상대가 다시 한 판을 골랐어요`;
+      }
+    });
+    room.onLeave(() => {
+      if (this.resultShown) return;
+      this.room = null;
     });
     room.onMessage('grid', (payload: ArrayLike<number> | ArrayBuffer) => {
       const buf = payload instanceof ArrayBuffer ? new Uint8Array(payload) : payload;
@@ -492,6 +522,7 @@ class GameScene extends Phaser.Scene {
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);
+    this.relayoutMatch();
     this.renderState(this.matchState, []);
     this.botInterval = setInterval(() => this.pulseBot(), 50);
   }
@@ -775,7 +806,6 @@ class GameScene extends Phaser.Scene {
       tick: state.tick,
       youCells: you.territoryCells,
       foeCells: foe.territoryCells,
-      result,
       brokeYou,
       brokeFoe,
       matchTicks: (state as { matchTicks?: number }).matchTicks,
@@ -816,7 +846,6 @@ class GameScene extends Phaser.Scene {
       tick: state.tick,
       youCells: state.player1.territoryCells,
       foeCells: state.player2.territoryCells,
-      result,
       brokeYou,
       brokeFoe,
       foeIsBot: true,
@@ -1182,7 +1211,7 @@ document.getElementById('rematchBtn')?.addEventListener('click', async () => {
   if (scene.isOnline()) {
     try {
       const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
-      scene.leaveRoom();
+      scene.requestOnlineRematch();
       const client = new Client(serverUrl);
       const room = await client.joinOrCreate('turf_duel');
       if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;

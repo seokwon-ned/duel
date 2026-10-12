@@ -82,6 +82,11 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.onMessage('input', (client, message) => {
       this.handleInput(client, message);
     });
+    this.onMessage('rematch', (client) => {
+      const from = this.playerMapping.get(client.sessionId);
+      if (!from || !this.matchState.result) return;
+      this.broadcast('rematch', { from }, { except: client });
+    });
   }
 
   onJoin(client: Client, options: any) {

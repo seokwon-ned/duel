@@ -40,6 +40,22 @@ test.describe('Cover spike 390x844', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'lobby.png'), animations: 'disabled' });
 
     await page.click('#botBtn');
+    await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
+    await page.waitForFunction(
+      () => {
+        const area = document.getElementById('game-container')?.getBoundingClientRect();
+        const canvas = document.querySelector('#game-container canvas')?.getBoundingClientRect();
+        return Boolean(area && canvas && canvas.height > 40 && canvas.height <= area.height + 2);
+      },
+      { timeout: 4000 },
+    );
+    const first = await page.evaluate(() => {
+      const area = document.getElementById('game-container')!.getBoundingClientRect();
+      const canvas = document.querySelector('#game-container canvas')!.getBoundingClientRect();
+      return { areaH: area.height, canvasH: canvas.height };
+    });
+    expect(first.canvasH).toBeLessThanOrEqual(first.areaH + 2);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'first-match.png') });
     await page.waitForFunction(
       () => {
         const d = window.__turfDebug;
@@ -92,6 +108,9 @@ test.describe('Cover spike 390x844', () => {
     await expect(page.locator('#resultTitle')).toHaveText('패배');
     await expect(page.locator('#rematchBtn')).toBeVisible();
     await expect(page.locator('#heartsYou .heart.on')).toHaveCount(0);
+    await expect(page.locator('#heartsYou .heart')).toHaveCount(3);
+    await expect(page.locator('#heartsYou .heart.gone')).toHaveCount(0);
+    await expect(page.locator('#heartsYou .heart.break')).toHaveCount(0);
     const board = page.locator('#game-container');
     const box = await board.boundingBox();
     expect(box?.width).toBeGreaterThan(330);

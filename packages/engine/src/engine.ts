@@ -225,7 +225,7 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
     pendingClose: Array<1 | 2>,
   ): void => {
     if (!intent.player.isAlive || willHurt.has(intent.num)) return;
-    if (intent.player.lastHurtTick === state.tick) return;
+    if (intent.player.lastHurtTick === state.tick || !intent.player.thrusting) return;
     if (intent.crossedFoe) {
       paintCrossedTrail(state, intent.num, intent.player, intent.xFp, intent.yFp, intent.cx, intent.cy);
     } else if (tryMovePlayer(state, intent.num, intent.player, intent.xFp, intent.yFp, events)) {
@@ -529,8 +529,8 @@ function severOverlappingFoeLine(
   if (isInvincible(foePlayer, state.tick)) {
     clearTrail(state, foe);
     returnToSpawn(foePlayer);
-    // Same-tick intent must not walk them off spawn onto cover.
-    foePlayer.lastHurtTick = state.tick;
+    // Keep the original iframe expiry. returnToSpawn clears thrusting so
+    // this tick's precomputed intent cannot start a new mid-cover line.
     return;
   }
   hurt(state, foe, events);
