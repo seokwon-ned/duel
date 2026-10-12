@@ -30,11 +30,11 @@ import {
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
-const AFTERIMAGES = 10;
+const AFTERIMAGES = 6;
 const KK_TEX = 256;
-/** 꾸물이 is ~1/4 of the board width. */
-const KK_CELLS = BOARD_W / 4;
-const ORB_CELLS = 26;
+/** Sprite includes glow padding; visible body+tentacles land near 1/4 board. */
+const KK_CELLS = 64;
+const ORB_CELLS = 30;
 const ORB_TEX = 128;
 
 function seedMidMatch(state: MatchState): void {
@@ -818,7 +818,7 @@ class GameScene extends Phaser.Scene {
         }
       }
       for (let k = 1; k <= AFTERIMAGES; k++) {
-        const idx = Math.max(0, best - k * 4);
+        const idx = Math.max(0, best - k * 2);
         pts.push(guide[idx]);
       }
     } else {
