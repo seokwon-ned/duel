@@ -5,6 +5,7 @@ import { describe, expect, test } from 'vitest';
 import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
 import { CellType, Direction, PlayerInput, ResultReason } from './types.js';
 import { claimClosedTrail } from './cover.js';
+import { toFp } from './lut.js';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -162,6 +163,23 @@ describe('cover engine (Amy ★)', () => {
     const { remainingCover } = claimClosedTrail(state.grid, trail, 1, { x: 10, y: 10 });
     expect(remainingCover).toBe(1);
     expect(remainingCover * 100 < total * 5).toBe(true);
+  });
+
+  test('sparx walking the edge hits an idle player even mid-burst', () => {
+    let state = createInitialState({ width: 24, height: 24, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(12);
+    state.boss.yFp = toFp(12);
+    state.sparx2.xFp = toFp(23);
+    state.sparx2.yFp = toFp(23);
+    const p2x = state.player2.position.x;
+    state.sparx1.xFp = toFp(p2x - 3);
+    state.sparx1.yFp = toFp(0);
+    state.sparx1.edgeDir = 0;
+    const before = state.player2.hearts;
+    state = step(state, []).state;
+    expect(state.player2.hearts).toBe(before - 1);
   });
 
   test('cardinal direction inputs still apply on the same tick', () => {

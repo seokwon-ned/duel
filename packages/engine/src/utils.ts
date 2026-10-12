@@ -46,6 +46,27 @@ export function isOppositeDirection(current: Direction, input: Direction): boole
   );
 }
 
+export function flattenGrid(grid: CellType[][]): Uint8Array {
+  const h = grid.length;
+  const w = grid[0]?.length ?? 0;
+  const buf = new Uint8Array(w * h);
+  let i = 0;
+  for (let y = 0; y < h; y++) {
+    const row = grid[y];
+    for (let x = 0; x < w; x++) buf[i++] = row[x];
+  }
+  return buf;
+}
+
+export function inflateGrid(buf: ArrayLike<number>, w: number, h: number): CellType[][] {
+  const grid: CellType[][] = Array.from({ length: h }, () => Array<CellType>(w).fill(CellType.COVER));
+  const n = Math.min(buf.length, w * h);
+  for (let i = 0; i < n; i++) {
+    grid[(i / w) | 0][i % w] = buf[i] as CellType;
+  }
+  return grid;
+}
+
 export function hashStateCells(grid: CellType[][], extra: number[]): number {
   let h = 2166136261;
   for (let y = 0; y < grid.length; y++) {

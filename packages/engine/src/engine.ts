@@ -22,6 +22,7 @@ import {
   FUSE_CELLS_PER_TICK,
   SMALL_TRAP_NUM,
   SMALL_TRAP_DEN,
+  SPARX_STEPS,
 } from './types.js';
 import {
   cellOf,
@@ -120,6 +121,7 @@ function makePlayer(x: number, y: number, heading: number): PlayerState {
     isAlive: true,
     territoryCells: 0,
     bonusCells: 0,
+    lastHurtTick: -1,
   };
 }
 
@@ -305,6 +307,8 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
 function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   const player = num === 1 ? state.player1 : state.player2;
   if (!player.isAlive) return;
+  if (player.lastHurtTick === state.tick) return;
+  player.lastHurtTick = state.tick;
 
   clearTrail(state, num);
   player.hearts -= 1;
@@ -378,13 +382,11 @@ function moveBoss(state: MatchState, events: GameEvent[]): void {
 }
 
 function moveSparx(state: MatchState, events: GameEvent[]): void {
-  const steps = 8;
-  for (let i = 0; i < steps; i++) {
+  for (let i = 0; i < SPARX_STEPS; i++) {
     walkSparx(state, state.sparx1, 1);
+    hitAnyPlayer(state, cellOf(state.sparx1.xFp), cellOf(state.sparx1.yFp), events);
     walkSparx(state, state.sparx2, -1);
-  }
-  for (const s of [state.sparx1, state.sparx2]) {
-    hitAnyPlayer(state, cellOf(s.xFp), cellOf(s.yFp), events);
+    hitAnyPlayer(state, cellOf(state.sparx2.xFp), cellOf(state.sparx2.yFp), events);
   }
 }
 
