@@ -92,43 +92,49 @@ export function paintCoverSheet(g: CanvasRenderingContext2D, w: number, h: numbe
   }
 }
 
-/** Bright hills / trees / sky placeholder under the cover. */
+/** Bright hills / trees / sky under the cover. Focal sun + cottage sit in the left-center so a real left claim reveals the picture. */
 export function paintHiddenIllustration(g: CanvasRenderingContext2D, w: number, h: number): void {
-  const sky = g.createLinearGradient(0, 0, 0, h * 0.58);
-  sky.addColorStop(0, '#7DD3FC');
-  sky.addColorStop(0.45, '#BAE6FD');
-  sky.addColorStop(1, '#FDE68A');
+  const sky = g.createLinearGradient(0, 0, 0, h * 0.55);
+  sky.addColorStop(0, '#38BDF8');
+  sky.addColorStop(0.35, '#7DD3FC');
+  sky.addColorStop(0.7, '#FDE68A');
+  sky.addColorStop(1, '#FDBA74');
   g.fillStyle = sky;
   g.fillRect(0, 0, w, h);
 
-  const sunX = w * 0.78;
-  const sunY = h * 0.18;
-  const sun = g.createRadialGradient(sunX, sunY, 2, sunX, sunY, 52);
+  const sunX = w * 0.36;
+  const sunY = h * 0.16;
+  const sun = g.createRadialGradient(sunX, sunY, 2, sunX, sunY, 70);
   sun.addColorStop(0, 'rgba(254,243,199,1)');
-  sun.addColorStop(0.35, 'rgba(250,204,21,0.55)');
+  sun.addColorStop(0.28, 'rgba(250,204,21,0.7)');
   sun.addColorStop(1, 'rgba(253,224,71,0)');
   g.fillStyle = sun;
   g.beginPath();
-  g.arc(sunX, sunY, 52, 0, Math.PI * 2);
+  g.arc(sunX, sunY, 70, 0, Math.PI * 2);
   g.fill();
-  g.fillStyle = '#FEF3C7';
+  g.fillStyle = '#FEF08A';
   g.beginPath();
-  g.arc(sunX, sunY, 12, 0, Math.PI * 2);
+  g.arc(sunX, sunY, 18, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#FFFBEB';
+  g.beginPath();
+  g.arc(sunX, sunY, 11, 0, Math.PI * 2);
   g.fill();
 
-  g.fillStyle = 'rgba(255,255,255,0.85)';
-  drawCloud(g, 22, 40, 24);
-  drawCloud(g, 108, 24, 20);
-  drawCloud(g, 150, 52, 18);
+  g.fillStyle = 'rgba(255,255,255,0.92)';
+  drawCloud(g, w * 0.08, h * 0.11, 28);
+  drawCloud(g, w * 0.22, h * 0.07, 22);
+  drawCloud(g, w * 0.55, h * 0.1, 20);
+  drawCloud(g, w * 0.78, h * 0.16, 24);
 
-  const lakeY = h * 0.7;
-  drawMountain(g, w, lakeY, 0.4, '#3F6212', 16);
-  drawMountain(g, w, lakeY, 0.28, '#4D7C0F', 28);
-  drawMountain(g, w, lakeY, 0.16, '#65A30D', 40);
+  const lakeY = h * 0.68;
+  drawMountain(g, w, lakeY, 0.48, '#365314', 8);
+  drawMountain(g, w, lakeY, 0.34, '#4D7C0F', 22);
+  drawMountain(g, w, lakeY, 0.2, '#65A30D', 36);
 
   const water = g.createLinearGradient(0, lakeY, 0, h);
-  water.addColorStop(0, '#38BDF8');
-  water.addColorStop(0.5, '#0284C7');
+  water.addColorStop(0, '#7DD3FC');
+  water.addColorStop(0.35, '#0EA5E9');
   water.addColorStop(1, '#1D4ED8');
   g.fillStyle = water;
   g.fillRect(0, lakeY, w, h - lakeY);
@@ -137,25 +143,26 @@ export function paintHiddenIllustration(g: CanvasRenderingContext2D, w: number, 
   g.beginPath();
   g.rect(0, lakeY, w, h - lakeY);
   g.clip();
-  g.globalAlpha = 0.35;
+  g.globalAlpha = 0.4;
   g.scale(1, -0.55);
   g.translate(0, -lakeY * 2 - (h - lakeY) * 0.4);
-  drawMountain(g, w, lakeY, 0.16, '#4D7C0F', 40);
+  drawMountain(g, w, lakeY, 0.2, '#4D7C0F', 36);
   g.restore();
 
-  g.strokeStyle = 'rgba(253,224,71,0.55)';
-  g.lineWidth = 1;
+  g.strokeStyle = 'rgba(254,243,199,0.75)';
+  g.lineWidth = 2;
   g.beginPath();
   g.moveTo(0, lakeY);
   g.lineTo(w, lakeY);
   g.stroke();
 
-  drawTree(g, 22, lakeY - 2, 18);
-  drawTree(g, 38, lakeY - 1, 14);
-  drawTree(g, 58, lakeY - 2, 16);
-  drawTree(g, 168, lakeY - 2, 17);
-  drawTree(g, 184, lakeY, 13);
-  drawCottage(g, 86, lakeY - 22);
+  drawTree(g, w * 0.1, lakeY - 2, 28);
+  drawTree(g, w * 0.18, lakeY - 1, 22);
+  drawTree(g, w * 0.28, lakeY - 2, 26);
+  drawTree(g, w * 0.4, lakeY - 1, 20);
+  drawTree(g, w * 0.78, lakeY - 2, 24);
+  drawTree(g, w * 0.88, lakeY, 18);
+  drawCottage(g, w * 0.22, lakeY - 34);
 }
 
 function drawCloud(g: CanvasRenderingContext2D, x: number, y: number, r: number): void {
@@ -204,18 +211,18 @@ function drawTree(g: CanvasRenderingContext2D, x: number, baseY: number, h: numb
 
 function drawCottage(g: CanvasRenderingContext2D, x: number, y: number): void {
   g.fillStyle = '#44403C';
-  g.fillRect(x, y + 8, 22, 14);
+  g.fillRect(x, y + 12, 32, 22);
   g.fillStyle = '#BE185D';
   g.beginPath();
-  g.moveTo(x - 3, y + 9);
-  g.lineTo(x + 11, y);
-  g.lineTo(x + 25, y + 9);
+  g.moveTo(x - 4, y + 14);
+  g.lineTo(x + 16, y);
+  g.lineTo(x + 36, y + 14);
   g.closePath();
   g.fill();
   g.fillStyle = '#FACC15';
-  g.fillRect(x + 9, y + 12, 5, 5);
+  g.fillRect(x + 12, y + 18, 8, 8);
   g.fillStyle = '#A8A29E';
-  g.fillRect(x + 16, y + 4, 3, 7);
+  g.fillRect(x + 24, y + 6, 5, 10);
 }
 
 /** Pink jelly octopus 꾸물이. Tentacles sway with sine; redder when angry. */
@@ -227,33 +234,33 @@ export function paintKkumuli(
 ): void {
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
-  const cy = s * 0.34;
+  const cy = s * 0.32;
   const body = angry ? A.angryBody : A.body;
   const tent = angry ? A.angryTent : A.tentacle;
 
-  const halo = g.createRadialGradient(cx, cy + s * 0.1, s * 0.06, cx, cy + s * 0.1, s * 0.5);
-  halo.addColorStop(0, angry ? 'rgba(255,77,109,0.5)' : 'rgba(240,171,252,0.58)');
-  halo.addColorStop(0.42, angry ? 'rgba(190,24,93,0.28)' : 'rgba(236,72,153,0.3)');
+  const halo = g.createRadialGradient(cx, cy + s * 0.12, s * 0.08, cx, cy + s * 0.12, s * 0.52);
+  halo.addColorStop(0, angry ? 'rgba(255,77,109,0.55)' : 'rgba(240,171,252,0.62)');
+  halo.addColorStop(0.42, angry ? 'rgba(190,24,93,0.3)' : 'rgba(236,72,153,0.32)');
   halo.addColorStop(1, 'rgba(240,171,252,0)');
   g.fillStyle = halo;
   g.beginPath();
-  g.arc(cx, cy + s * 0.1, s * 0.5, 0, Math.PI * 2);
+  g.arc(cx, cy + s * 0.12, s * 0.52, 0, Math.PI * 2);
   g.fill();
 
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  const dirs = [-0.62, -0.22, 0.22, 0.62];
+  const dirs = [-0.7, -0.24, 0.24, 0.7];
   for (let i = 0; i < 4; i++) {
-    const sway = Math.sin(time * 3.1 + i * 1.1) * s * 0.11;
+    const sway = Math.sin(time * 3.1 + i * 1.1) * s * 0.12;
     const dx = dirs[i];
-    const x0 = cx + dx * s * 0.14;
-    const y0 = cy + s * 0.2;
-    const x1 = cx + dx * s * 0.36 + sway * 0.5;
-    const y1 = cy + s * 0.44;
-    const x2 = cx + dx * s * 0.46 + sway;
-    const y2 = cy + s * 0.58 + Math.cos(time * 2.4 + i) * s * 0.05;
+    const x0 = cx + dx * s * 0.16;
+    const y0 = cy + s * 0.22;
+    const x1 = cx + dx * s * 0.4 + sway * 0.5;
+    const y1 = cy + s * 0.5;
+    const x2 = cx + dx * s * 0.5 + sway;
+    const y2 = cy + s * 0.64 + Math.cos(time * 2.4 + i) * s * 0.05;
     g.strokeStyle = tent;
-    g.lineWidth = s * 0.125;
+    g.lineWidth = s * 0.145;
     g.beginPath();
     g.moveTo(x0, y0);
     g.quadraticCurveTo(x1, y1, x2, y2);
@@ -264,44 +271,44 @@ export function paintKkumuli(
       const sx = mt * mt * x0 + 2 * mt * t * x1 + t * t * x2;
       const sy = mt * mt * y0 + 2 * mt * t * y1 + t * t * y2;
       g.beginPath();
-      g.arc(sx, sy, s * 0.038, 0, Math.PI * 2);
+      g.arc(sx, sy, s * 0.044, 0, Math.PI * 2);
       g.fill();
     }
   }
 
   g.fillStyle = body;
   g.beginPath();
-  g.ellipse(cx, cy, s * 0.4, s * 0.34, 0, 0, Math.PI * 2);
+  g.ellipse(cx, cy, s * 0.46, s * 0.38, 0, 0, Math.PI * 2);
   g.fill();
 
   g.fillStyle = A.sucker;
   g.beginPath();
-  g.ellipse(cx - s * 0.12, cy - s * 0.1, s * 0.15, s * 0.1, -0.45, 0, Math.PI * 2);
+  g.ellipse(cx - s * 0.14, cy - s * 0.1, s * 0.17, s * 0.11, -0.45, 0, Math.PI * 2);
   g.fill();
 
   g.fillStyle = '#fff';
   g.beginPath();
-  g.arc(cx + s * 0.05, cy - s * 0.02, s * 0.175, 0, Math.PI * 2);
+  g.arc(cx + s * 0.06, cy - s * 0.02, s * 0.2, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#0F172A';
   g.beginPath();
-  g.arc(cx + s * 0.08, cy - s * 0.01, s * 0.09, 0, Math.PI * 2);
+  g.arc(cx + s * 0.1, cy - s * 0.01, s * 0.1, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#fff';
   g.beginPath();
-  g.arc(cx + s * 0.11, cy - s * 0.04, s * 0.035, 0, Math.PI * 2);
+  g.arc(cx + s * 0.13, cy - s * 0.05, s * 0.04, 0, Math.PI * 2);
   g.fill();
 
   g.strokeStyle = angry ? '#7F1D1D' : '#831843';
-  g.lineWidth = Math.max(2, s * 0.05);
+  g.lineWidth = Math.max(2, s * 0.055);
   g.lineCap = 'round';
   g.beginPath();
-  g.moveTo(cx - s * 0.1, cy - s * 0.2);
-  g.lineTo(cx + s * 0.02, cy - s * 0.15);
+  g.moveTo(cx - s * 0.12, cy - s * 0.22);
+  g.lineTo(cx + s * 0.02, cy - s * 0.16);
   g.stroke();
   g.beginPath();
-  g.moveTo(cx + s * 0.24, cy - s * 0.2);
-  g.lineTo(cx + s * 0.13, cy - s * 0.15);
+  g.moveTo(cx + s * 0.28, cy - s * 0.22);
+  g.lineTo(cx + s * 0.15, cy - s * 0.16);
   g.stroke();
 }
 
@@ -326,18 +333,18 @@ export function paintOrb(
   g.fill();
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.26, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.34, 0, Math.PI * 2);
   g.fill();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';
-    g.lineWidth = Math.max(2, s * 0.07);
+    g.lineWidth = Math.max(2, s * 0.08);
     g.beginPath();
-    g.arc(cx, cy, s * 0.3, 0, Math.PI * 2);
+    g.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
     g.stroke();
   }
   g.fillStyle = '#ffffff';
   g.beginPath();
-  g.arc(cx - s * 0.05, cy - s * 0.05, s * 0.1, 0, Math.PI * 2);
+  g.arc(cx - s * 0.06, cy - s * 0.06, s * 0.13, 0, Math.PI * 2);
   g.fill();
 }
 

@@ -14,6 +14,7 @@ import {
   TICKS_PER_SECOND,
   wrapAngle,
   inflateGrid,
+  toFp,
 } from '@turf-duel/engine';
 import { Bot } from '@turf-duel/bot';
 import {
@@ -31,11 +32,11 @@ import { QaPilot, p1CaptureWaypoints, p1HitWaypoints, p2SkyWaypoints } from './q
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
-const AFTERIMAGES = 6;
+const AFTERIMAGES = 8;
 const KK_TEX = 256;
-/** Visible 꾸물이 lands around 20–25% of board width. */
-const KK_CELLS = 50;
-const ORB_CELLS = 28;
+/** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
+const KK_CELLS = 62;
+const ORB_CELLS = 40;
 const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -405,7 +406,7 @@ class GameScene extends Phaser.Scene {
     this.qaP1 = this.qaMode
       ? new QaPilot(this.qaHit ? p1HitWaypoints() : p1CaptureWaypoints())
       : null;
-    this.qaP2 = this.qaMode ? new QaPilot(p2SkyWaypoints(), 1100) : null;
+    this.qaP2 = this.qaMode ? new QaPilot(p2SkyWaypoints(), 850) : null;
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);
@@ -440,6 +441,11 @@ class GameScene extends Phaser.Scene {
 
   private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
     if (!this.matchState) return { events: [], prevTrail: [] };
+    if (this.qaMode && (this.matchState.player1.territoryCells ?? 0) < 18000) {
+      // Keep 꾸물이 in remaining cover so the scripted left-window cut can finish.
+      this.matchState.boss.xFp = toFp(158);
+      this.matchState.boss.yFp = toFp(132);
+    }
     if (this.qaHit && this.matchState.player1.position.y >= this.matchState.gridHeight - 1) {
       const x = this.matchState.player1.position.x;
       const y = this.matchState.gridHeight - 1;
@@ -701,8 +707,8 @@ class GameScene extends Phaser.Scene {
     const glowGfx = this.trailGlow ?? this.trailGfx;
     const dots: { x: number; y: number }[] = [];
     if (dashed) {
-      const on = Math.max(12, scale * 6);
-      const off = Math.max(8, scale * 4);
+      const on = Math.max(16, scale * 8);
+      const off = Math.max(10, scale * 5);
       let acc = 0;
       let drawing = true;
       dots.push(pts[0]);
@@ -736,10 +742,10 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    stamp(glowGfx, Math.max(11, scale * 7), glow, 0.16);
-    stamp(glowGfx, Math.max(7, scale * 4.6), glow, 0.34);
-    stamp(this.trailGfx, Math.max(5, scale * 3.1), glow, 1);
-    stamp(this.trailGfx, Math.max(2.2, scale * 1.35), core, 1);
+    stamp(glowGfx, Math.max(16, scale * 10), glow, 0.22);
+    stamp(glowGfx, Math.max(12, scale * 7.2), glow, 0.42);
+    stamp(this.trailGfx, Math.max(8, scale * 5.2), glow, 1);
+    stamp(this.trailGfx, Math.max(3.6, scale * 2.4), core, 1);
   }
 
   private paintActors(
@@ -763,13 +769,13 @@ class GameScene extends Phaser.Scene {
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
     const guide1 = this.matchState?.player1.trail ?? this.p1TrailCopy;
     const guide2 = this.matchState?.player2.trail ?? [];
-    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.72, { x: 0, y: -1 });
-    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.9, 0.6, { x: -1, y: 0 });
+    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.85, { x: 0, y: -1 });
+    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.7, { x: -1, y: 0 });
     place(this.p1Sprite, p1, ORB_CELLS);
     place(this.p2Sprite, p2, ORB_CELLS);
     place(this.kkumuli, boss, KK_CELLS);
-    place(this.sparkSprites[0], s1, 14);
-    place(this.sparkSprites[1], s2, 14);
+    place(this.sparkSprites[0], s1, 18);
+    place(this.sparkSprites[1], s2, 18);
   }
 
   private stampAfterimages(

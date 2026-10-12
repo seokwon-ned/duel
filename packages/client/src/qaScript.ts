@@ -14,56 +14,46 @@ export function headingCardinal(from: Waypoint, to: Waypoint): number {
 
 export function p1CaptureWaypoints(): Waypoint[] {
   return [
-    { x: 100, y: 270 },
-    { x: 40, y: 270 },
-    { x: 40, y: 298 },
+    // First closed cut: left-center window so sun / hills / water / cottage show (~26%).
+    { x: 100, y: 268 },
+    { x: 18, y: 268 },
+    { x: 18, y: 72 },
+    { x: 88, y: 72 },
+    { x: 88, y: 298 },
     { x: 100, y: 298 },
-    { x: 100, y: 200 },
-    { x: 16, y: 200 },
-    { x: 16, y: 298 },
-    { x: 40, y: 298 },
-    { x: 100, y: 55 },
-    { x: 14, y: 55 },
-    { x: 14, y: 200 },
-    { x: 16, y: 200 },
-    { x: 100, y: 200 },
-    { x: 142, y: 200 },
-    { x: 148, y: 248 },
-    { x: 140, y: 255 },
-    { x: 100, y: 255 },
+    // Second live line (match screenshot: claimed landscape + thick neon + orb).
+    { x: 100, y: 250 },
+    { x: 100, y: 188 },
+    { x: 148, y: 188 },
+    { x: 148, y: 250 },
+    { x: 100, y: 250 },
+    { x: 100, y: 298 },
   ];
 }
 
 export function p1HitWaypoints(): Waypoint[] {
   return [
-    { x: 100, y: 270 },
-    { x: 40, y: 270 },
-    { x: 40, y: 298 },
+    { x: 100, y: 268 },
+    { x: 18, y: 268 },
+    { x: 18, y: 72 },
+    { x: 88, y: 72 },
+    { x: 88, y: 298 },
     { x: 100, y: 298 },
-    { x: 100, y: 200 },
-    { x: 16, y: 200 },
-    { x: 16, y: 298 },
-    { x: 40, y: 298 },
-    { x: 100, y: 55 },
-    { x: 14, y: 55 },
-    { x: 14, y: 200 },
-    { x: 16, y: 200 },
+    { x: 100, y: 250 },
     { x: 100, y: 298 },
     { x: 100, y: 299 },
   ];
 }
 
-
 export function p2SkyWaypoints(): Waypoint[] {
   return [
     { x: 100, y: 12 },
-    { x: 158, y: 18 },
-    { x: 176, y: 42 },
-    { x: 150, y: 52 },
-    { x: 172, y: 78 },
-    { x: 176, y: 110 },
-    { x: 154, y: 128 },
-    { x: 170, y: 150 },
+    { x: 168, y: 18 },
+    { x: 184, y: 48 },
+    { x: 160, y: 70 },
+    { x: 182, y: 110 },
+    { x: 168, y: 148 },
+    { x: 186, y: 188 },
   ];
 }
 
