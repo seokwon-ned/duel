@@ -35,8 +35,6 @@ async function measureBandwidth(): Promise<void> {
 
   const c1 = new Client(`ws://localhost:${PORT}`);
   const c2 = new Client(`ws://localhost:${PORT}`);
-  const room1 = await c1.joinOrCreate('turf_duel');
-  const room2 = await c2.joinOrCreate('turf_duel');
 
   let total1 = 0;
   let total2 = 0;
@@ -45,15 +43,23 @@ async function measureBandwidth(): Promise<void> {
   let bucket1 = 0;
   let bucket2 = 0;
 
-  const hooked =
-    hookBytes(room1 as any, (n) => {
-      total1 += n;
-      bucket1 += n;
-    }) &&
-    hookBytes(room2 as any, (n) => {
-      total2 += n;
-      bucket2 += n;
-    });
+  const room1 = await c1.joinOrCreate('turf_duel');
+  room1.onMessage('player', () => undefined);
+  room1.onMessage('grid', () => undefined);
+  const hook1 = hookBytes(room1 as any, (n) => {
+    total1 += n;
+    bucket1 += n;
+  });
+
+  const room2 = await c2.joinOrCreate('turf_duel');
+  room2.onMessage('player', () => undefined);
+  room2.onMessage('grid', () => undefined);
+  const hook2 = hookBytes(room2 as any, (n) => {
+    total2 += n;
+    bucket2 += n;
+  });
+
+  const hooked = hook1 && hook2;
 
   if (!hooked) {
     throw new Error('Could not hook WebSocket frames');
