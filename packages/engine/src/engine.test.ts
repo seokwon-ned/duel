@@ -321,6 +321,56 @@ describe('cover engine (Amy ★)', () => {
     expect(remainingCover * 100 < total * 5).toBe(true);
   });
 
+  test('closing a cut that traps the boss emits trap_bonus with +N%', () => {
+    let state = createInitialState({ width: 24, height: 24, matchTicks: 2000 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(12);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(23);
+    state.sparx2.yFp = toFp(0);
+    state.player1.xFp = toFp(2);
+    state.player1.yFp = toFp(23);
+    state.player1.position = { x: 2, y: 23 };
+    let bonus: { type: string; data?: { percent?: number; cells?: number } } | undefined;
+    for (let i = 0; i < 50; i++) {
+      const result = step(state, [{ player: 1, heading: 192, thrusting: true }]);
+      state = result.state;
+      bonus = result.events.find((e) => e.type === 'trap_bonus') ?? bonus;
+      if (!state.player1.drawing && i > 3) break;
+    }
+    expect(bonus).toBeDefined();
+    expect(bonus?.data?.percent).toBe(5);
+    expect(bonus?.data?.cells).toBe(Math.floor((24 * 24 * 5) / 100));
+    expect(state.player1.bonusCells).toBeGreaterThan(0);
+  });
+
+  test('boxing a Sparx against the wall emits trap_bonus', () => {
+    let state = createInitialState({ width: 24, height: 24, matchTicks: 500 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.grid[22][10] = CellType.PLAYER1_TRAIL;
+    state.player1.drawing = true;
+    state.player1.trail = [{ x: 10, y: 22 }];
+    state.player1.xFp = toFp(10);
+    state.player1.yFp = (22 << 8) + 200;
+    state.player1.position = { x: 10, y: 22 };
+    state.sparx2.xFp = toFp(10);
+    state.sparx2.yFp = toFp(23);
+    const result = step(state, [{ player: 1, heading: 64, thrusting: true }]);
+    const bonus = result.events.find((e) => e.type === 'trap_bonus');
+    expect(result.events.some((e) => e.type === 'claim')).toBe(true);
+    expect(bonus).toBeDefined();
+    expect(bonus?.data?.percent).toBe(5);
+    expect(result.state.player1.bonusCells).toBeGreaterThan(0);
+  });
+
   test('claim seeds from boss neighbors so a line cell does not swallow the board', () => {
     const state = createInitialState({ width: 12, height: 12, matchTicks: 200 });
     const trail: { x: number; y: number }[] = [];

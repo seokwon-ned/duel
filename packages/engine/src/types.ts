@@ -88,7 +88,7 @@ export interface PlayerInput {
 export interface GameEvent {
   type: 'heart' | 'claim' | 'trap_bonus' | 'burn' | 'win';
   player?: 1 | 2;
-  data?: { cells?: number; bonus?: boolean };
+  data?: { cells?: number; bonus?: boolean; percent?: number };
 }
 
 export interface StepResult {

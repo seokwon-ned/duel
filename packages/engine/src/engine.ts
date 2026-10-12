@@ -380,7 +380,12 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   if (trapped) {
     bonus = Math.floor((total * TRAP_BONUS_NUM) / TRAP_BONUS_DEN);
     player.bonusCells += bonus;
-    events.push({ type: 'trap_bonus', player: num, data: { bonus: true, cells: bonus } });
+    const percent = Math.round((bonus * 100) / total);
+    events.push({
+      type: 'trap_bonus',
+      player: num,
+      data: { bonus: true, cells: bonus, percent },
+    });
   }
 
   player.territoryCells = countCells(state.grid, paint) + player.bonusCells;
@@ -532,17 +537,19 @@ function hitAnyPlayer(state: MatchState, x: number, y: number, events: GameEvent
 function sparkCaptured(state: MatchState, s: Position, paint: CellType): boolean {
   if (!inBounds(s.x, s.y, state.gridWidth, state.gridHeight)) return false;
   if (state.grid[s.y][s.x] === paint) return true;
-  let sawCover = false;
-  let sawPaint = false;
+  if (!isOuterEdge(state, s.x, s.y)) return false;
+  // Boxed against the wall: every inward (non-rim) neighbor is claimed.
+  let interior = 0;
+  let painted = 0;
   for (const d of CARDINAL) {
     const nx = s.x + d.x;
     const ny = s.y + d.y;
     if (!inBounds(nx, ny, state.gridWidth, state.gridHeight)) continue;
-    const c = state.grid[ny][nx];
-    if (isCover(c)) sawCover = true;
-    if (c === paint) sawPaint = true;
+    if (isOuterEdge(state, nx, ny)) continue;
+    interior++;
+    if (state.grid[ny][nx] === paint) painted++;
   }
-  return sawPaint && !sawCover;
+  return interior > 0 && painted === interior;
 }
 
 function openedScore(player: PlayerState): number {
