@@ -442,11 +442,13 @@ class GameScene extends Phaser.Scene {
   private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
     if (!this.matchState) return { events: [], prevTrail: [] };
     const claimed = this.matchState.player1.territoryCells ?? 0;
-    if (this.qaMode && claimed < 18000) {
-      // Keep 꾸물이 in remaining cover so the left-window cut can finish, and
-      // so the mid-match shot shows the full ~1/4-width body (not cropped).
+    if (this.qaMode && !this.matchState.result) {
+      // Hold 꾸물이 in remaining cover so mid-match / cut shots show the
+      // full ~1/4-width body instead of clipping the right edge.
       this.matchState.boss.xFp = toFp(124);
       this.matchState.boss.yFp = toFp(118);
+    }
+    if (this.qaMode && claimed < 18000) {
       this.matchState.sparx1.xFp = toFp(0);
       this.matchState.sparx1.yFp = toFp(0);
       this.matchState.sparx1.edgeDir = 0;
