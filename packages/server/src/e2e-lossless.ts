@@ -4,7 +4,7 @@ import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
-import { Direction, GRID_SIZE } from '@turf-duel/engine';
+import { Direction, GRID_WIDTH, GRID_HEIGHT, createInitialState, flattenGrid } from '@turf-duel/engine';
 
 async function testLosslessSync(): Promise<void> {
   console.log('\n=== P1-3: Lossless Sync Under Artificial Latency ===\n');
@@ -23,6 +23,8 @@ async function testLosslessSync(): Promise<void> {
   try {
     const room1 = await client1.joinOrCreate('turf_duel');
     const room2 = await client2.joinOrCreate('turf_duel');
+    const grid1 = trackClientGrid(room1);
+    const grid2 = trackClientGrid(room2);
 
     console.log('✓ Both clients connected');
 
@@ -39,38 +41,30 @@ async function testLosslessSync(): Promise<void> {
 
     console.log('✓ WebSocket hooked for delayed processing');
 
-    // Message queue for delayed processing
-    interface QueuedMessage {
-      data: any;
-      timestamp: number;
-    }
-    const messageQueue: QueuedMessage[] = [];
-    
-    // Save original onmessage
+    // WebSocket/TCP is ordered. Hold 30% of messages 300-500ms, but never
+    // deliver a later patch before an earlier one.
     const originalOnMessage = ws2.onmessage;
+    let lastDeliverAt = 0;
+    const pending = new Set<Promise<void>>();
 
-    // Replace with our interceptor
     ws2.onmessage = (event: any) => {
-      // Randomly delay (300-500ms hold, then deliver)
-      if (Math.random() < 0.3) { // 30% chance to delay
-        messageQueue.push({ data: event.data, timestamp: Date.now() });
-        
-        // Process after delay
+      const hold = Math.random() < 0.3 ? 300 + Math.random() * 200 : 0;
+      const at = Math.max(Date.now() + hold, lastDeliverAt + 1);
+      lastDeliverAt = at;
+      const wait = Math.max(0, at - Date.now());
+      const p = new Promise<void>((resolve) => {
         setTimeout(() => {
-          const toProcess = messageQueue.shift();
-          if (toProcess && originalOnMessage) {
-            originalOnMessage.call(ws2, { data: toProcess.data } as any);
+          if (originalOnMessage) {
+            originalOnMessage.call(ws2, { data: event.data } as any);
           }
-        }, 300 + Math.random() * 200); // 300-500ms
-      } else {
-        // Deliver immediately
-        if (originalOnMessage) {
-          originalOnMessage.call(ws2, event);
-        }
-      }
+          resolve();
+        }, wait);
+      });
+      pending.add(p);
+      void p.finally(() => pending.delete(p));
     };
 
-    console.log('✓ Latency simulation active (30% messages delayed 300-500ms)');
+    console.log('✓ Latency simulation active (30% FIFO holds 300-500ms, no reorder)');
 
     // Send inputs for a short match
     console.log('\nRunning 5-second match with latency...');
@@ -90,29 +84,20 @@ async function testLosslessSync(): Promise<void> {
     clearInterval(inputInterval);
 
     console.log('\nProcessing remaining queued messages...');
-    
-    // Wait for all delayed messages to arrive
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await Promise.all([...pending]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Compare final grids
     console.log('\nComparing final grids...');
-    
-    const grid1 = room1.state.grid;
-    const grid2 = room2.state.grid;
-    
-    if (!grid1 || !grid2 || grid1.length === 0 || grid2.length === 0) {
-      throw new Error('Grid not available in state');
-    }
 
     console.log(`Grid 1 length: ${grid1.length}`);
     console.log(`Grid 2 length: ${grid2.length}`);
     console.log(`Room 1 tick: ${room1.state.tick}`);
     console.log(`Room 2 tick: ${room2.state.tick}`);
 
-    // Compare grids cell by cell
     let differences = 0;
-    const expectedCells = GRID_SIZE * GRID_SIZE;
-    
+    const expectedCells = GRID_WIDTH * GRID_HEIGHT;
+
     if (grid1.length !== expectedCells || grid2.length !== expectedCells) {
       throw new Error(`Grid size mismatch: expected ${expectedCells}, got ${grid1.length}, ${grid2.length}`);
     }
@@ -151,10 +136,27 @@ async function testLosslessSync(): Promise<void> {
     throw error;
   } finally {
     await Promise.race([
-      server.gracefullyShutdown().catch(() => undefined),
+      server.gracefullyShutdown(false).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
   }
 }
 
-testLosslessSync();
+function trackClientGrid(room: { onMessage: Function; onStateChange: Function }): Uint8Array {
+  const cells = flattenGrid(createInitialState().grid);
+  room.onMessage('grid', (payload: ArrayLike<number> | ArrayBuffer) => {
+    const buf = payload instanceof ArrayBuffer ? new Uint8Array(payload) : Uint8Array.from(payload as ArrayLike<number>);
+    cells.set(buf.subarray(0, cells.length));
+  });
+  room.onStateChange((state: { cellUpdates?: Array<{ x: number; y: number; type: number }> }) => {
+    for (const u of state.cellUpdates ?? []) {
+      const i = u.y * GRID_WIDTH + u.x;
+      if (i >= 0 && i < cells.length) cells[i] = u.type;
+    }
+  });
+  return cells;
+}
+
+testLosslessSync()
+  .then(() => process.exit(0))
+  .catch(() => process.exit(1));

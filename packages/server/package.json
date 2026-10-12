@@ -7,6 +7,7 @@
     "start": "tsx src/index.ts",
     "start:prod": "node dist/index.js",
     "bandwidth": "tsx src/bandwidth.ts",
+    "test": "vitest run",
     "test:e2e": "tsx src/e2e-bandwidth.ts",
     "test:crash": "tsx src/e2e-crash.ts",
     "test:lossless": "tsx src/e2e-lossless.ts",

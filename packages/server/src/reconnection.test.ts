@@ -359,8 +359,8 @@ async function testReconnectingPlayerKeepsSameNumber(): Promise<ReconnectionTest
       y: room1.state.player2.position.y,
     };
 
-    // Same seat: still the far-corner player, not swapped onto P1's spawn.
-    const stillPlayer2 = p2FinalPos.x >= 20 && p2FinalPos.y >= 20;
+    // Same seat: P2 still on the top edge, not swapped onto P1's bottom spawn.
+    const stillPlayer2 = p2FinalPos.y <= 2 && p2WhilePaused.y <= 2;
     const stayedNearPause = Math.abs(p2FinalPos.x - p2WhilePaused.x) + Math.abs(p2FinalPos.y - p2WhilePaused.y) <= 1;
     if (!stillPlayer2 || !stayedNearPause) {
       await shutdown(server);
@@ -714,7 +714,7 @@ async function testRoomDisposesAfterNormalEnd(): Promise<ReconnectionTestResult>
     });
 
     room1.send('input', { direction: 'UP' });
-    await waitUntil(() => Boolean(room1.state.result), 3000, 'normal wall-hit end');
+    await waitUntil(() => Boolean(room1.state.result), 30000, 'normal engine end');
 
     const result = room1.state.result as { winner: number; reason: string } | undefined;
     if (!result || result.reason === '연결 끊김' || result.reason === '양쪽 연결 끊김 (무효)') {
@@ -1230,7 +1230,7 @@ async function runAllTests() {
     process.stdout.write(`Testing: ${test.name}... `);
     const result = await Promise.race([
       test.fn(),
-      sleep(25000).then(() => ({ passed: false, message: 'Timed out after 25s' })),
+      sleep(40000).then(() => ({ passed: false, message: 'Timed out after 40s' })),
     ]);
     if (result.passed) {
       console.log('✓ PASS');

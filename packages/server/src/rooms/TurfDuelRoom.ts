@@ -5,12 +5,16 @@ import {
   step,
   Direction,
   MatchState,
+  PlayerState,
   PlayerInput,
   CellType,
   TICKS_PER_SECOND,
-  GRID_SIZE,
   ResultReason,
+  cellOf,
+  wrapAngle,
+  flattenGrid,
 } from '@turf-duel/engine';
+import { accumulateCellUpdates, shouldSnapshotCellUpdates } from '../cellUpdates.js';
 
 interface PlayerDisconnectInfo {
   disconnectCount: number;
@@ -32,6 +36,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected bytesSentPerPlayer = new Map<string, number>();
   protected playerMapping = new Map<string, 1 | 2>();
   protected previousGrid: CellType[][] | null = null;
+  protected pendingCellUpdates = new Map<string, { x: number; y: number; type: CellType }>();
   protected matchStarted = false;
   protected readonly maxDisconnects = 2;
   protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
@@ -42,13 +47,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     const state = new TurfDuelState();
     this.setState(state);
     this.matchState = createInitialState();
-    
-    // Initialize grid in schema
-    for (let y = 0; y < GRID_SIZE; y++) {
-      for (let x = 0; x < GRID_SIZE; x++) {
-        state.grid.push(this.matchState.grid[y][x]);
-      }
-    }
+    state.gridWidth = this.matchState.gridWidth;
+    state.gridHeight = this.matchState.gridHeight;
     
     // Hook broadcast to measure actual bytes sent
     const originalBroadcast = this.broadcast.bind(this);
@@ -102,6 +102,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
     client.send('player', { num: playerNum });
+    this.sendGridSnapshot(client);
 
     // Hook into WebSocket to measure actual bytes sent
     // Colyseus 0.18 exposes the socket as client.ref
@@ -251,6 +252,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
     playerState.connected = true;
     playerState.totalDisconnectedMs = info?.totalDisconnectedMs || 0;
+    this.sendGridSnapshot(client);
 
     // 15.5s + 14.8s = 30.3s must lose on reconnect, not after the next 1s tick
     this.evaluateDisconnectLimits();
@@ -500,39 +502,49 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       return;
     }
 
-    // Validate message structure
-    if (!message || typeof message !== 'object' || typeof message.direction !== 'string') {
+    if (!message || typeof message !== 'object') {
       console.warn(`Invalid input from ${client.sessionId}: malformed message`);
       return;
     }
 
-    // Validate direction against whitelist
+    const input: PlayerInput = { player: playerNum };
     const validDirections = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
-    if (!validDirections.includes(message.direction)) {
-      console.warn(`Invalid input from ${client.sessionId}: unknown direction '${message.direction}'`);
+
+    if (typeof message.direction === 'string') {
+      if (!validDirections.includes(message.direction)) {
+        console.warn(`Invalid input from ${client.sessionId}: unknown direction '${message.direction}'`);
+        return;
+      }
+      input.direction = message.direction as Direction;
+    }
+
+    if (typeof message.heading === 'number' && Number.isFinite(message.heading)) {
+      input.heading = wrapAngle(message.heading | 0);
+    }
+
+    if (typeof message.thrusting === 'boolean') {
+      input.thrusting = message.thrusting;
+    }
+
+    if (input.direction === undefined && input.heading === undefined) {
+      console.warn(`Invalid input from ${client.sessionId}: missing heading/direction`);
       return;
     }
 
-    this.inputQueue.push({
-      player: playerNum,
-      direction: message.direction as Direction,
-    });
+    this.inputQueue.push(input);
   }
 
   protected syncState() {
     const state = this.state;
     
-    state.player1.position.x = this.matchState.player1.position.x;
-    state.player1.position.y = this.matchState.player1.position.y;
-    state.player1.direction = this.matchState.player1.direction;
-    state.player1.isAlive = this.matchState.player1.isAlive;
-    state.player1.territoryCells = this.matchState.player1.territoryCells;
-
-    state.player2.position.x = this.matchState.player2.position.x;
-    state.player2.position.y = this.matchState.player2.position.y;
-    state.player2.direction = this.matchState.player2.direction;
-    state.player2.isAlive = this.matchState.player2.isAlive;
-    state.player2.territoryCells = this.matchState.player2.territoryCells;
+    this.syncPlayer(state.player1, this.matchState.player1);
+    this.syncPlayer(state.player2, this.matchState.player2);
+    state.boss.x = cellOf(this.matchState.boss.xFp);
+    state.boss.y = cellOf(this.matchState.boss.yFp);
+    state.sparx1.x = cellOf(this.matchState.sparx1.xFp);
+    state.sparx1.y = cellOf(this.matchState.sparx1.yFp);
+    state.sparx2.x = cellOf(this.matchState.sparx2.xFp);
+    state.sparx2.y = cellOf(this.matchState.sparx2.yFp);
 
     state.tick = this.matchState.tick;
     state.paused = this.matchState.paused;
@@ -544,24 +556,57 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       state.result.tick = this.matchState.result.tick;
     }
 
-    // Sync full grid for lossless state
-    for (let y = 0; y < GRID_SIZE; y++) {
-      for (let x = 0; x < GRID_SIZE; x++) {
-        const index = y * GRID_SIZE + x;
-        state.grid[index] = this.matchState.grid[y][x];
-      }
-    }
-
-    // Keep cellUpdates for backward compatibility and debugging
-    state.cellUpdates.length = 0;
     const changedCells = this.getChangedCells();
-    for (const cell of changedCells) {
+    accumulateCellUpdates(this.pendingCellUpdates, changedCells);
+    if (shouldSnapshotCellUpdates(this.pendingCellUpdates.size)) {
+      this.broadcastGridSnapshot();
+      this.pendingCellUpdates.clear();
+      state.cellUpdates.length = 0;
+    }
+  }
+
+  /**
+   * Copy pending cell writes into the outgoing schema only when Colyseus is
+   * about to encode a patch. Clearing in syncState (per tick) drops the first
+   * tick when one patch covers two 50ms ticks.
+   */
+  onBeforePatch() {
+    const pending = [...this.pendingCellUpdates.values()];
+    if (shouldSnapshotCellUpdates(pending.length)) {
+      this.broadcastGridSnapshot();
+      this.pendingCellUpdates.clear();
+      this.state.cellUpdates.length = 0;
+      return;
+    }
+    this.state.cellUpdates.length = 0;
+    for (const cell of pending) {
       const update = new CellUpdate();
       update.x = cell.x;
       update.y = cell.y;
       update.type = cell.type;
-      state.cellUpdates.push(update);
+      this.state.cellUpdates.push(update);
     }
+    this.pendingCellUpdates.clear();
+  }
+
+  private sendGridSnapshot(client: Client) {
+    client.send('grid', flattenGrid(this.matchState.grid));
+  }
+
+  private broadcastGridSnapshot() {
+    this.pendingCellUpdates.clear();
+    this.broadcast('grid', flattenGrid(this.matchState.grid));
+  }
+
+  private syncPlayer(schema: TurfDuelState['player1'], player: PlayerState) {
+    schema.position.x = cellOf(player.xFp);
+    schema.position.y = cellOf(player.yFp);
+    schema.direction = player.direction;
+    schema.heading = player.heading;
+    schema.isAlive = player.isAlive;
+    schema.territoryCells = player.territoryCells;
+    schema.hearts = player.hearts;
+    schema.drawing = player.drawing;
   }
 
   private getChangedCells(): Array<{ x: number; y: number; type: CellType }> {

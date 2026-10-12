@@ -204,7 +204,7 @@ async function runCrashTests(): Promise<void> {
     console.log('\n✅ ALL CRASH RESISTANCE TESTS PASSED\n');
     
     await Promise.race([
-      server.gracefullyShutdown().catch(() => undefined),
+      server.gracefullyShutdown(false).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
     process.exit(0);
@@ -212,7 +212,7 @@ async function runCrashTests(): Promise<void> {
     console.error('\n❌ CRASH RESISTANCE TESTS FAILED\n');
     console.error(error);
     await Promise.race([
-      server.gracefullyShutdown().catch(() => undefined),
+      server.gracefullyShutdown(false).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
     process.exit(1);

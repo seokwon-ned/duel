@@ -102,10 +102,12 @@ async function testFaultIsolation(): Promise<void> {
     delete process.env.TURF_DUEL_TEST_INJECT_FAULT;
     delete (global as any).FAULT_ROOM_ID;
     await Promise.race([
-      server.gracefullyShutdown().catch(() => undefined),
+      server.gracefullyShutdown(false).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
   }
 }
 
-testFaultIsolation();
+testFaultIsolation()
+  .then(() => process.exit(0))
+  .catch(() => process.exit(1));

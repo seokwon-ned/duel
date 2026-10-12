@@ -36,6 +36,16 @@ export class TurfDuelTestRoom extends TurfDuelRoom {
     return this.matchState;
   }
 
+  /** Freeze ticks and emit one last patch so clients are not one tick behind. */
+  stopSimulationAndFlush(): void {
+    if (this.gameLoop) {
+      clearInterval(this.gameLoop);
+      this.gameLoop = null;
+    }
+    this.matchState.paused = true;
+    this.broadcastPatch();
+  }
+
   protected override onBeforeTick(): void {
     if (
       process.env.TURF_DUEL_TEST_INJECT_FAULT === 'true' &&

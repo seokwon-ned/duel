@@ -8,10 +8,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@turf-duel/engine": "^1.1.0",
-    "@turf-duel/bot": "^1.1.0",
     "@colyseus/sdk": "^0.18.5",
-    "phaser": "^3.70.0"
+    "@turf-duel/bot": "^1.1.0",
+    "@turf-duel/engine": "^1.1.0",
+    "phaser": "^4.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
