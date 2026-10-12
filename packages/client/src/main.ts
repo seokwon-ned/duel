@@ -190,19 +190,18 @@ class GameScene extends Phaser.Scene {
     };
     pad.addEventListener('pointerdown', (e) => {
       last = { x: e.clientX, y: e.clientY };
+      this.thrusting = true;
       pad.setPointerCapture(e.pointerId);
+      this.sendInput();
     });
     pad.addEventListener('pointermove', (e) => {
       if (!last) return;
       const dx = e.clientX - last.x;
       const dy = e.clientY - last.y;
-      last = { x: e.clientX, y: e.clientY };
-      if (dx * dx + dy * dy < 16) {
-        this.thrusting = false;
-        this.sendInput();
-        return;
+      if (dx * dx + dy * dy >= 4) {
+        this.heading = headingFrom(dx, dy);
+        last = { x: e.clientX, y: e.clientY };
       }
-      this.heading = headingFrom(dx, dy);
       this.thrusting = true;
       this.sendInput();
     });

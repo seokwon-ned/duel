@@ -354,6 +354,32 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player2.hearts).toBe(before - 1);
   });
 
+  test('both players at 0 hearts is 양쪽 하트 소진', () => {
+    const state = createInitialState({ width: 10, height: 10, matchTicks: 40 });
+    state.player1.hearts = 0;
+    state.player1.isAlive = false;
+    state.player2.hearts = 0;
+    state.player2.isAlive = false;
+    const next = step(state, []).state;
+    expect(next.result?.winner).toBe(0);
+    expect(next.result?.reason).toBe(ResultReason.BOTH_HEARTS_OUT);
+  });
+
+  test('when both are over 50% the larger area wins', () => {
+    const state = createInitialState({ width: 10, height: 10, matchTicks: 40 });
+    state.player1.territoryCells = 60;
+    state.player2.territoryCells = 70;
+    const next = step(state, []).state;
+    expect(next.result?.winner).toBe(2);
+    expect(next.result?.reason).toBe(ResultReason.FIFTY_PERCENT);
+  });
+
+  test('null inputs do not throw', () => {
+    const state = createInitialState({ width: 12, height: 12 });
+    expect(() => step(state, null as unknown as PlayerInput[])).not.toThrow();
+    expect(() => step(state, [undefined as unknown as PlayerInput]).state.tick).not.toBeUndefined();
+  });
+
   test('cardinal direction inputs still apply on the same tick', () => {
     let state = createInitialState({ width: 16, height: 16 });
     state = step(state, [

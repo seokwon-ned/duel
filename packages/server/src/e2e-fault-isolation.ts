@@ -108,4 +108,6 @@ async function testFaultIsolation(): Promise<void> {
   }
 }
 
-testFaultIsolation();
+testFaultIsolation()
+  .then(() => process.exit(0))
+  .catch(() => process.exit(1));

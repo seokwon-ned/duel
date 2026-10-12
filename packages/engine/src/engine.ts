@@ -128,13 +128,13 @@ function makePlayer(x: number, y: number, heading: number): PlayerState {
   };
 }
 
-export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
+export function step(state: MatchState, inputs: PlayerInput[] | null | undefined): StepResult {
   if (state.result !== null || state.paused) {
     return { state, events: [] };
   }
 
   const events: GameEvent[] = [];
-  applyInputs(state, inputs);
+  applyInputs(state, inputs ?? []);
   movePlayers(state, events);
   moveBoss(state, events);
   moveSparx(state, events);
@@ -146,8 +146,9 @@ export function step(state: MatchState, inputs: PlayerInput[]): StepResult {
 
 function applyInputs(state: MatchState, inputs: PlayerInput[]): void {
   for (const input of inputs) {
+    if (!input || typeof input !== 'object') continue;
     const player = input.player === 1 ? state.player1 : state.player2;
-    if (!player.isAlive) continue;
+    if (!player?.isAlive) continue;
 
     if (input.direction) {
       player.heading = headingFromDirection(input.direction);
@@ -368,9 +369,7 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   const paint = playerOpenType(num);
   let trapped = false;
   for (const s of sparks) {
-    if (inBounds(s.x, s.y, state.gridWidth, state.gridHeight) && state.grid[s.y][s.x] === paint) {
-      trapped = true;
-    }
+    if (sparkCaptured(state, s, paint)) trapped = true;
   }
   // Remaining cover 0 means the boss region vanished (do not award +5%).
   if (remainingCover > 0 && remainingCover * SMALL_TRAP_DEN < total * SMALL_TRAP_NUM) {
@@ -527,6 +526,22 @@ function hitAnyPlayer(state: MatchState, x: number, y: number, events: GameEvent
   }
 }
 
+function sparkCaptured(state: MatchState, s: Position, paint: CellType): boolean {
+  if (!inBounds(s.x, s.y, state.gridWidth, state.gridHeight)) return false;
+  if (state.grid[s.y][s.x] === paint) return true;
+  let sawCover = false;
+  let sawPaint = false;
+  for (const d of CARDINAL) {
+    const nx = s.x + d.x;
+    const ny = s.y + d.y;
+    if (!inBounds(nx, ny, state.gridWidth, state.gridHeight)) continue;
+    const c = state.grid[ny][nx];
+    if (isCover(c)) sawCover = true;
+    if (c === paint) sawPaint = true;
+  }
+  return sawPaint && !sawCover;
+}
+
 function openedScore(player: PlayerState): number {
   return player.territoryCells;
 }
@@ -538,7 +553,7 @@ function checkWins(state: MatchState, events: GameEvent[]): void {
   const p2 = openedScore(state.player2);
 
   if (!state.player1.isAlive && !state.player2.isAlive) {
-    state.result = { winner: 0, reason: ResultReason.TERRITORY_TIE, tick: state.tick };
+    state.result = { winner: 0, reason: ResultReason.BOTH_HEARTS_OUT, tick: state.tick };
     return;
   }
   if (!state.player1.isAlive) {
@@ -552,12 +567,24 @@ function checkWins(state: MatchState, events: GameEvent[]): void {
     return;
   }
 
-  if (p1 * WIN_OPEN_DEN >= total * WIN_OPEN_NUM) {
+  const p1Fifty = p1 * WIN_OPEN_DEN >= total * WIN_OPEN_NUM;
+  const p2Fifty = p2 * WIN_OPEN_DEN >= total * WIN_OPEN_NUM;
+  if (p1Fifty && p2Fifty) {
+    if (p1 === p2) {
+      state.result = { winner: 0, reason: ResultReason.TERRITORY_TIE, tick: state.tick };
+    } else {
+      const winner: 1 | 2 = p1 > p2 ? 1 : 2;
+      state.result = { winner, reason: ResultReason.FIFTY_PERCENT, tick: state.tick };
+      events.push({ type: 'win', player: winner });
+    }
+    return;
+  }
+  if (p1Fifty) {
     state.result = { winner: 1, reason: ResultReason.FIFTY_PERCENT, tick: state.tick };
     events.push({ type: 'win', player: 1 });
     return;
   }
-  if (p2 * WIN_OPEN_DEN >= total * WIN_OPEN_NUM) {
+  if (p2Fifty) {
     state.result = { winner: 2, reason: ResultReason.FIFTY_PERCENT, tick: state.tick };
     events.push({ type: 'win', player: 2 });
     return;

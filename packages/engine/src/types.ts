@@ -49,6 +49,7 @@ export interface MonsterState {
 export enum ResultReason {
   FIFTY_PERCENT = '50% 선점',
   HEARTS_OUT = '하트 소진',
+  BOTH_HEARTS_OUT = '양쪽 하트 소진',
   TIME_UP_WIN = '시간 종료 승리',
   TERRITORY_TIE = '땅 동률',
   DISCONNECTED = '연결 끊김',
