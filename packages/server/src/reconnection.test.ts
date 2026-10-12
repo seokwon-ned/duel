@@ -1109,6 +1109,38 @@ async function testForfeitResultOnBothThenDispose(): Promise<ReconnectionTestRes
   }
 }
 
+async function testTimeoutForfeitReconnectBeforeDispose(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2 } = await startPair(12601);
+  try {
+    const token = room2.reconnectionToken!;
+    await room2.leave(false);
+    await waitUntil(() => Boolean(room1.state.result), LIMIT_MS + 1000, 'timeout forfeit');
+    const remaining = room1.state.result as { winner: number; reason: string } | undefined;
+    if (!remaining || remaining.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `Remaining client missing forfeit. ${JSON.stringify(remaining)}` };
+    }
+
+    await sleep(2500);
+    const leaver = await manualReconnect<TurfDuelState>(client2, token);
+    await waitUntil(() => Boolean(leaver.state.result), 500, 'leaver result 2.5s after forfeit');
+    const got = leaver.state.result as { winner: number; reason: string } | undefined;
+    if (!got || got.winner !== remaining.winner || got.reason !== remaining.reason) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Leaver must still read the forfeit 2.5s later. remaining=${JSON.stringify(remaining)} leaver=${JSON.stringify(got)}`,
+      };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Timeout forfeit still readable 2.5s later, before dispose' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
 async function testVoidResultOnBothThenDispose(): Promise<ReconnectionTestResult> {
   const { server, client1, client2, room1, room2, clock } = await startClockPair(12600);
   try {
@@ -1187,6 +1219,7 @@ async function runAllTests() {
     { name: 'Forged, expired, and reused tokens are rejected', fn: testForgedExpiredReusedTokensRejected },
     { name: 'Failed reconnect does not consume count or time', fn: testFailedReconnectDoesNotConsumeLimits },
     { name: 'Forfeit result reaches both clients and room disposes', fn: testForfeitResultOnBothThenDispose },
+    { name: 'Timeout forfeit still readable 2.5s later, before dispose', fn: testTimeoutForfeitReconnectBeforeDispose },
     { name: 'Void result reaches both clients and room disposes', fn: testVoidResultOnBothThenDispose },
   ];
 

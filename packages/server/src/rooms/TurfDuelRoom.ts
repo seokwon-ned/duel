@@ -405,7 +405,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
   protected reconnectionWindowSeconds(totalDisconnectedMs: number): number {
     const remainingMs = Math.max(0, this.maxDisconnectMs - totalDisconnectedMs);
-    return Math.max(2, Math.ceil(remainingMs / 1000) + 2);
+    // Keep the token alive through remaining budget + 3s dispose so a timeout
+    // forfeit still lets the leaver reconnect and read the result.
+    return Math.max(5, Math.ceil(remainingMs / 1000) + 5);
   }
 
   /** Test-room hook. Production is a no-op. */
