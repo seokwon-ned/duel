@@ -16,16 +16,18 @@
     #settings button { padding:8px 16px; margin:5px 5px 5px 0; background:#FF7A1A; color:#fff; border:none; border-radius:4px; font-weight:bold; }
     #hud { display:none; flex:0 0 10%; flex-direction:column; justify-content:center; gap:4px; position:relative; }
     #hearts { display:flex; justify-content:space-between; font-size:16px; padding:0 4px; }
-    #timer { text-align:center; font-variant-numeric:tabular-nums; font-size:18px; font-weight:700; }
-    #barWrap { position:relative; height:10px; background:#1e293b; border-radius:6px; overflow:hidden; }
+    #heartsYou { color:#FF7A1A; text-shadow:0 0 8px #FF7A1A; }
+    #heartsFoe { color:#2F6BFF; text-shadow:0 0 8px #2F6BFF; }
+    #timer { text-align:center; font-variant-numeric:tabular-nums; font-size:18px; font-weight:700; color:#E2E8F0; text-shadow:0 0 10px #22D3EE; }
+    #barWrap { position:relative; height:10px; background:#1e293b; border-radius:6px; overflow:hidden; box-shadow:0 0 8px rgba(34,211,238,.35); }
     #barP1 { position:absolute; left:0; top:0; bottom:0; background:#FF7A1A; width:0; }
     #barP2 { position:absolute; right:0; top:0; bottom:0; background:#2F6BFF; width:0; }
-    #barMid { position:absolute; left:50%; top:-2px; bottom:-2px; width:2px; background:#FFD166; }
+    #barMid { position:absolute; left:50%; top:-2px; bottom:-2px; width:2px; background:#22D3EE; box-shadow:0 0 6px #22D3EE; }
     #matchHud { text-align:center; font-size:14px; min-height:1.2em; }
-    #matchHud.result { color:#FFD166; font-weight:700; font-size:16px; }
+    #matchHud.result { color:#E879F9; font-weight:700; font-size:16px; text-shadow:0 0 8px #C026D3; }
     #debugToggle { display:none; position:absolute; right:0; top:0; border:none; background:transparent; color:#64748b; }
     #game-container { flex:1 1 auto; min-height:0; position:relative; }
-    #dragPad { display:none; flex:0 0 25%; margin-top:6px; border:1px dashed #334155; border-radius:12px; color:#64748b; align-items:center; justify-content:center; font-size:13px; user-select:none; }
+    #dragPad { display:none; flex:0 0 25%; margin-top:6px; border:1px dashed #22D3EE; border-radius:12px; color:#67e8f9; align-items:center; justify-content:center; font-size:13px; user-select:none; box-shadow:inset 0 0 18px rgba(34,211,238,.12); }
     #app.playing { padding:4px 4px 0; }
     #app.playing #settings { display:none; }
     #app.playing #hud, #app.playing #dragPad { display:flex; }

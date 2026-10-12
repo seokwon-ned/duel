@@ -15,6 +15,15 @@ import {
   inflateGrid,
 } from '@turf-duel/engine';
 import { Bot } from '@turf-duel/bot';
+import {
+  NEON,
+  NEON_HEX,
+  mixRgb,
+  paintCutter,
+  paintHiddenIllustration,
+  paintKkumuli,
+  paintSpark,
+} from './neonArcade.js';
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
@@ -89,7 +98,10 @@ class GameScene extends Phaser.Scene {
   private texture: Phaser.Textures.CanvasTexture | null = null;
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
-  private actors: Phaser.GameObjects.Arc[] = [];
+  private p1Sprite: Phaser.GameObjects.Image | null = null;
+  private p2Sprite: Phaser.GameObjects.Image | null = null;
+  private kkumuli: Phaser.GameObjects.Image | null = null;
+  private sparkSprites: Phaser.GameObjects.Image[] = [];
   private room: Room | null = null;
   private matchState: MatchState | null = null;
   private playerNum: 1 | 2 = 1;
@@ -104,20 +116,24 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    this.art = this.makePlaceholderArt();
+    this.art = document.createElement('canvas');
+    this.art.width = BOARD_W;
+    this.art.height = BOARD_H;
+    paintHiddenIllustration(this.art.getContext('2d')!, BOARD_W, BOARD_H);
     this.canvas = document.createElement('canvas');
     this.canvas.width = BOARD_W;
     this.canvas.height = BOARD_H;
     this.texture = this.textures.addCanvas('cover-board', this.canvas);
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
     this.trailGfx = this.add.graphics();
-    this.actors = [
-      this.add.circle(0, 0, 3, 0xFF7A1A),
-      this.add.circle(0, 0, 3, 0x2F6BFF),
-      this.add.circle(0, 0, 4, 0x22c55e),
-      this.add.circle(0, 0, 2, 0xfacc15),
-      this.add.circle(0, 0, 2, 0xfacc15),
-    ];
+    this.addPaintedTexture('cutter-me', 24, (g, s) => paintCutter(g, s, NEON.me));
+    this.addPaintedTexture('cutter-foe', 24, (g, s) => paintCutter(g, s, NEON.foe));
+    this.addPaintedTexture('kkumuli', 64, paintKkumuli);
+    this.addPaintedTexture('sparx', 20, paintSpark);
+    this.p1Sprite = this.add.image(0, 0, 'cutter-me');
+    this.p2Sprite = this.add.image(0, 0, 'cutter-foe');
+    this.kkumuli = this.add.image(0, 0, 'kkumuli');
+    this.sparkSprites = [this.add.image(0, 0, 'sparx'), this.add.image(0, 0, 'sparx')];
     this.paintGrid(createInitialState().grid);
     this.layoutBoard();
     this.scale.on('resize', () => this.layoutBoard());
@@ -125,36 +141,12 @@ class GameScene extends Phaser.Scene {
     this.attachDragPad();
   }
 
-  private makePlaceholderArt(): HTMLCanvasElement {
+  private addPaintedTexture(key: string, size: number, paint: (g: CanvasRenderingContext2D, s: number) => void) {
     const c = document.createElement('canvas');
-    c.width = BOARD_W;
-    c.height = BOARD_H;
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#1b3a4b';
-    g.fillRect(0, 0, BOARD_W, BOARD_H);
-    g.fillStyle = '#f4d35e';
-    g.beginPath();
-    g.arc(40, 40, 18, 0, Math.PI * 2);
-    g.fill();
-    g.fillStyle = '#3d5a3d';
-    g.beginPath();
-    g.moveTo(0, BOARD_H);
-    g.lineTo(70, 160);
-    g.lineTo(140, BOARD_H);
-    g.fill();
-    g.fillStyle = '#2f4858';
-    g.beginPath();
-    g.moveTo(80, BOARD_H);
-    g.lineTo(160, 120);
-    g.lineTo(BOARD_W, BOARD_H);
-    g.fill();
-    g.fillStyle = '#e07a5f';
-    g.fillRect(150, 210, 18, 40);
-    g.fillStyle = '#81b29a';
-    g.beginPath();
-    g.arc(159, 200, 16, 0, Math.PI * 2);
-    g.fill();
-    return c;
+    c.width = size;
+    c.height = size;
+    paint(c.getContext('2d')!, size);
+    this.textures.addCanvas(key, c);
   }
 
   private layoutBoard() {
@@ -164,6 +156,7 @@ class GameScene extends Phaser.Scene {
     if (this.boardImage) {
       this.boardImage.setScale(scale).setPosition((w - BOARD_W * scale) / 2, 0);
     }
+    this.redrawOverlay(this.matchState?.player1.trail ?? [], this.matchState?.player2.trail ?? []);
   }
 
   private attachKeyboard() {
@@ -280,6 +273,7 @@ class GameScene extends Phaser.Scene {
     if (state.player1?.position) {
       this.paintActors(state.player1.position, state.player2.position, state.boss, state.sparx1, state.sparx2);
     }
+    this.redrawOverlay([], []);
     const you = this.playerNum === 1 ? state.player1 : state.player2;
     const foe = this.playerNum === 1 ? state.player2 : state.player1;
     const result = state.result ? `${state.result.winner === 0 ? 'Draw' : `Player ${state.result.winner} wins`} - ${state.result.reason}` : null;
@@ -306,7 +300,7 @@ class GameScene extends Phaser.Scene {
       x: state.sparx2.xFp >> 8,
       y: state.sparx2.yFp >> 8,
     });
-    this.drawTrailCurve(state.player1.trail, 0xFF9A4A);
+    this.redrawOverlay(state.player1.trail, state.player2.trail);
     const result = state.result
       ? `${state.result.winner === 0 ? 'Draw' : `Player ${state.result.winner} wins`} - ${state.result.reason}`
       : null;
@@ -321,13 +315,38 @@ class GameScene extends Phaser.Scene {
     this.bumpDebug(state.tick, state.player1.territoryCells, state.player2.territoryCells, result);
   }
 
-  private drawTrailCurve(trail: { x: number; y: number }[], color: number) {
+  private redrawOverlay(
+    trail1: { x: number; y: number }[],
+    trail2?: { x: number; y: number }[],
+  ) {
     if (!this.trailGfx || !this.boardImage) return;
     this.trailGfx.clear();
-    if (trail.length < 2) return;
     const scale = this.boardImage.scaleX;
     const ox = this.boardImage.x;
     const oy = this.boardImage.y;
+    const bw = BOARD_W * scale;
+    const bh = BOARD_H * scale;
+    this.trailGfx.lineStyle(3, NEON_HEX.cyan, 0.55);
+    this.trailGfx.strokeRect(ox + 0.5, oy + 0.5, bw - 1, bh - 1);
+    this.strokeTrail(trail1, NEON_HEX.me, ox, oy, scale);
+    if (trail2) this.strokeTrail(trail2, NEON_HEX.foe, ox, oy, scale);
+  }
+
+  private strokeTrail(
+    trail: { x: number; y: number }[],
+    color: number,
+    ox: number,
+    oy: number,
+    scale: number,
+  ) {
+    if (!this.trailGfx || trail.length < 2) return;
+    this.trailGfx.lineStyle(5, color, 0.28);
+    this.trailGfx.beginPath();
+    this.trailGfx.moveTo(ox + (trail[0].x + 0.5) * scale, oy + (trail[0].y + 0.5) * scale);
+    for (let i = 1; i < trail.length; i++) {
+      this.trailGfx.lineTo(ox + (trail[i].x + 0.5) * scale, oy + (trail[i].y + 0.5) * scale);
+    }
+    this.trailGfx.strokePath();
     this.trailGfx.lineStyle(2, color, 1);
     this.trailGfx.beginPath();
     this.trailGfx.moveTo(ox + (trail[0].x + 0.5) * scale, oy + (trail[0].y + 0.5) * scale);
@@ -342,15 +361,16 @@ class GameScene extends Phaser.Scene {
     const scale = this.boardImage.scaleX;
     const ox = this.boardImage.x;
     const oy = this.boardImage.y;
-    const place = (arc: Phaser.GameObjects.Arc, p: { x: number; y: number }) => {
-      arc.setPosition(ox + (p.x + 0.5) * scale, oy + (p.y + 0.5) * scale);
-      arc.setRadius(Math.max(2, scale));
+    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number) => {
+      if (!sprite) return;
+      sprite.setPosition(ox + (p.x + 0.5) * scale, oy + (p.y + 0.5) * scale);
+      sprite.setDisplaySize(Math.max(8, size * scale), Math.max(8, size * scale));
     };
-    place(this.actors[0], p1);
-    place(this.actors[1], p2);
-    place(this.actors[2], boss);
-    place(this.actors[3], s1);
-    place(this.actors[4], s2);
+    place(this.p1Sprite, p1, 6);
+    place(this.p2Sprite, p2, 6);
+    place(this.kkumuli, boss, 14);
+    place(this.sparkSprites[0], s1, 5);
+    place(this.sparkSprites[1], s2, 5);
   }
 
   private paintGrid(grid: CellType[][]) {
@@ -368,15 +388,14 @@ class GameScene extends Phaser.Scene {
         if (cell === CellType.COVER) {
           out.data[i] = 15; out.data[i + 1] = 23; out.data[i + 2] = 42; out.data[i + 3] = 255;
         } else if (cell === CellType.SAFE_EDGE) {
-          out.data[i] = 30; out.data[i + 1] = 41; out.data[i + 2] = 59; out.data[i + 3] = 255;
+          out.data[i] = 14; out.data[i + 1] = 116; out.data[i + 2] = 144; out.data[i + 3] = 255;
         } else {
-          let r = img[i], g = img[i + 1], b = img[i + 2];
-          if (cell === CellType.PLAYER1_OPEN || cell === CellType.PLAYER1_TRAIL) {
-            r = Math.min(255, r + 80); g = Math.min(255, g + 20);
-          } else if (cell === CellType.PLAYER2_OPEN || cell === CellType.PLAYER2_TRAIL) {
-            b = Math.min(255, b + 90);
-          }
-          out.data[i] = r; out.data[i + 1] = g; out.data[i + 2] = b; out.data[i + 3] = 255;
+          const src: [number, number, number] = [img[i], img[i + 1], img[i + 2]];
+          const tinted =
+            cell === CellType.PLAYER1_OPEN || cell === CellType.PLAYER1_TRAIL
+              ? mixRgb(src, [255, 122, 26], cell === CellType.PLAYER1_TRAIL ? 0.85 : 0.55)
+              : mixRgb(src, [47, 107, 255], cell === CellType.PLAYER2_TRAIL ? 0.85 : 0.55);
+          out.data[i] = tinted[0]; out.data[i + 1] = tinted[1]; out.data[i + 2] = tinted[2]; out.data[i + 3] = 255;
         }
       }
     }
