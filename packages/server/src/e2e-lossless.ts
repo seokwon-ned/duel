@@ -142,15 +142,18 @@ async function testLosslessSync(): Promise<void> {
       console.log('✓ Tick sync acceptable');
     }
 
-    await room1.leave();
-    await room2.leave();
+    await Promise.race([room1.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
+    await Promise.race([room2.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
 
     console.log('\n✅ P1-3 PASSED: Lossless sync under latency\n');
   } catch (error) {
     console.error('\n❌ P1-3 FAILED:', error);
     throw error;
   } finally {
-    await server.gracefullyShutdown();
+    await Promise.race([
+      server.gracefullyShutdown().catch(() => undefined),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
   }
 }
 

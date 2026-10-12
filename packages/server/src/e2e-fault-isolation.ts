@@ -3,7 +3,7 @@
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
-import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
+import { TurfDuelTestRoom } from './rooms/TurfDuelTestRoom.js';
 
 async function testFaultIsolation(): Promise<void> {
   console.log('\n=== Fault Isolation: Room Error Doesn\'t Crash Other Rooms ===\n');
@@ -15,7 +15,7 @@ async function testFaultIsolation(): Promise<void> {
     transport: new WebSocketTransport({}),
   });
 
-  server.define('turf_duel', TurfDuelRoom);
+  server.define('turf_duel', TurfDuelTestRoom);
   await server.listen(12572);
   console.log('✓ Server started on port 12572');
   console.log('✓ Fault injection enabled (TEST_INJECT_FAULT=true)');
@@ -82,18 +82,16 @@ async function testFaultIsolation(): Promise<void> {
     
     console.log(`✓ New room created: ${room3a.roomId}`);
 
-    await room2a.leave();
-    await room2b.leave();
-    await room3a.leave();
-    await room3b.leave();
+    const leaveSoon = (room: { leave: () => Promise<number> }) =>
+      Promise.race([room.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
+    await leaveSoon(room2a);
+    await leaveSoon(room2b);
+    await leaveSoon(room3a);
+    await leaveSoon(room3b);
 
     if (!room1Closed) {
-      try {
-        await room1a.leave();
-        await room1b.leave();
-      } catch (e) {
-        // Expected if room already disposed
-      }
+      await leaveSoon(room1a);
+      await leaveSoon(room1b);
     }
 
     console.log('\n✅ Fault Isolation PASSED: Room error isolated, other rooms unaffected\n');
@@ -103,7 +101,10 @@ async function testFaultIsolation(): Promise<void> {
   } finally {
     delete process.env.TURF_DUEL_TEST_INJECT_FAULT;
     delete (global as any).FAULT_ROOM_ID;
-    await server.gracefullyShutdown();
+    await Promise.race([
+      server.gracefullyShutdown().catch(() => undefined),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
   }
 }
 
