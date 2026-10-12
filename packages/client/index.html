@@ -83,6 +83,9 @@
       box-sizing: border-box; background: #0F172A;
       border: 3px solid currentColor;
       box-shadow: 0 0 12px currentColor;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Black Han Sans', sans-serif; font-size: 15px;
+      color: #F8FAFC; line-height: 1;
     }
     .avatar.me { color: var(--me); }
     .avatar.foe { color: var(--foe); }
@@ -275,7 +278,7 @@
       <div id="hudPanel">
         <div id="hudTop">
           <div class="fighter me">
-            <div class="avatar me" aria-hidden="true"></div>
+            <div class="avatar me" aria-hidden="true">나</div>
             <div class="meta">
               <div class="name" id="nameYou">나</div>
               <div class="hearts" id="heartsYou"></div>
@@ -283,7 +286,7 @@
           </div>
           <div id="timerBox"><span id="timer" class="nums">2:30</span></div>
           <div class="fighter foe">
-            <div class="avatar foe" aria-hidden="true"></div>
+            <div class="avatar foe" id="avatarFoe" aria-hidden="true">상</div>
             <div class="meta">
               <div class="name" id="nameFoe">상대</div>
               <div class="hearts" id="heartsFoe"></div>

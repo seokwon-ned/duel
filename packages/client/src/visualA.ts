@@ -19,8 +19,8 @@ export const A = {
   body: '#DB2777',
   tentacle: '#BE185D',
   sucker: '#FBCFE8',
-  angryBody: '#9F1239',
-  angryTent: '#881337',
+  angryBody: '#E11D48',
+  angryTent: '#BE123C',
 } as const;
 
 export const AH = {
@@ -92,55 +92,44 @@ export function paintCoverSheet(g: CanvasRenderingContext2D, w: number, h: numbe
   }
 }
 
-/** Dusk landscape placeholder under the cover. */
+/** Bright hills / trees / sky placeholder under the cover. */
 export function paintHiddenIllustration(g: CanvasRenderingContext2D, w: number, h: number): void {
-  const sky = g.createLinearGradient(0, 0, 0, h * 0.62);
-  sky.addColorStop(0, '#1E3A8A');
-  sky.addColorStop(0.55, '#7C3AED');
-  sky.addColorStop(1, '#FDBA74');
+  const sky = g.createLinearGradient(0, 0, 0, h * 0.58);
+  sky.addColorStop(0, '#7DD3FC');
+  sky.addColorStop(0.45, '#BAE6FD');
+  sky.addColorStop(1, '#FDE68A');
   g.fillStyle = sky;
   g.fillRect(0, 0, w, h);
 
-  g.fillStyle = 'rgba(248,250,252,0.9)';
-  const starSeed = [13, 44, 28, 71, 90, 120, 155, 178, 22, 61, 88, 140, 168, 50, 102];
-  for (let i = 0; i < starSeed.length; i++) {
-    const x = starSeed[i];
-    const y = 8 + ((i * 37) % Math.floor(h * 0.32));
-    const r = i % 4 === 0 ? 1.4 : 0.7;
-    g.beginPath();
-    g.arc(x, y, r, 0, Math.PI * 2);
-    g.fill();
-  }
-
   const sunX = w * 0.78;
-  const sunY = h * 0.22;
-  const sun = g.createRadialGradient(sunX, sunY, 2, sunX, sunY, 48);
-  sun.addColorStop(0, 'rgba(254,243,199,0.95)');
-  sun.addColorStop(0.35, 'rgba(253,186,116,0.55)');
-  sun.addColorStop(1, 'rgba(253,186,116,0)');
+  const sunY = h * 0.18;
+  const sun = g.createRadialGradient(sunX, sunY, 2, sunX, sunY, 52);
+  sun.addColorStop(0, 'rgba(254,243,199,1)');
+  sun.addColorStop(0.35, 'rgba(250,204,21,0.55)');
+  sun.addColorStop(1, 'rgba(253,224,71,0)');
   g.fillStyle = sun;
   g.beginPath();
-  g.arc(sunX, sunY, 48, 0, Math.PI * 2);
+  g.arc(sunX, sunY, 52, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#FEF3C7';
   g.beginPath();
-  g.arc(sunX, sunY, 10, 0, Math.PI * 2);
+  g.arc(sunX, sunY, 12, 0, Math.PI * 2);
   g.fill();
 
-  g.fillStyle = 'rgba(248,250,252,0.22)';
-  drawCloud(g, 28, 36, 22);
-  drawCloud(g, 118, 22, 18);
-  drawCloud(g, 160, 48, 16);
+  g.fillStyle = 'rgba(255,255,255,0.85)';
+  drawCloud(g, 22, 40, 24);
+  drawCloud(g, 108, 24, 20);
+  drawCloud(g, 150, 52, 18);
 
-  const lakeY = h * 0.72;
-  drawMountain(g, w, lakeY, 0.42, '#2E1065', 18);
-  drawMountain(g, w, lakeY, 0.28, '#5B21B6', 28);
-  drawMountain(g, w, lakeY, 0.16, '#7C3AED', 40);
+  const lakeY = h * 0.7;
+  drawMountain(g, w, lakeY, 0.4, '#3F6212', 16);
+  drawMountain(g, w, lakeY, 0.28, '#4D7C0F', 28);
+  drawMountain(g, w, lakeY, 0.16, '#65A30D', 40);
 
   const water = g.createLinearGradient(0, lakeY, 0, h);
-  water.addColorStop(0, '#1E3A8A');
-  water.addColorStop(0.45, '#312E81');
-  water.addColorStop(1, '#1E1B4B');
+  water.addColorStop(0, '#38BDF8');
+  water.addColorStop(0.5, '#0284C7');
+  water.addColorStop(1, '#1D4ED8');
   g.fillStyle = water;
   g.fillRect(0, lakeY, w, h - lakeY);
 
@@ -151,20 +140,21 @@ export function paintHiddenIllustration(g: CanvasRenderingContext2D, w: number, 
   g.globalAlpha = 0.35;
   g.scale(1, -0.55);
   g.translate(0, -lakeY * 2 - (h - lakeY) * 0.4);
-  drawMountain(g, w, lakeY, 0.16, '#7C3AED', 40);
+  drawMountain(g, w, lakeY, 0.16, '#4D7C0F', 40);
   g.restore();
 
-  g.strokeStyle = 'rgba(253,186,116,0.35)';
+  g.strokeStyle = 'rgba(253,224,71,0.55)';
   g.lineWidth = 1;
   g.beginPath();
   g.moveTo(0, lakeY);
   g.lineTo(w, lakeY);
   g.stroke();
 
-  drawTree(g, 22, lakeY - 2, 16);
-  drawTree(g, 38, lakeY - 1, 12);
-  drawTree(g, 168, lakeY - 2, 15);
-  drawTree(g, 184, lakeY, 11);
+  drawTree(g, 22, lakeY - 2, 18);
+  drawTree(g, 38, lakeY - 1, 14);
+  drawTree(g, 58, lakeY - 2, 16);
+  drawTree(g, 168, lakeY - 2, 17);
+  drawTree(g, 184, lakeY, 13);
   drawCottage(g, 86, lakeY - 22);
 }
 
@@ -201,9 +191,9 @@ function hPeak(baseY: number, peakT: number, scale: number): number {
 }
 
 function drawTree(g: CanvasRenderingContext2D, x: number, baseY: number, h: number): void {
-  g.fillStyle = '#1E1B4B';
+  g.fillStyle = '#78350F';
   g.fillRect(x - 1, baseY - h * 0.25, 2, h * 0.25);
-  g.fillStyle = '#4C1D95';
+  g.fillStyle = '#15803D';
   g.beginPath();
   g.moveTo(x, baseY - h);
   g.lineTo(x + h * 0.38, baseY - h * 0.2);

@@ -27,52 +27,17 @@ import {
   paintSpark,
   paintParticleDot,
 } from './visualA.js';
+import { QaPilot, p1CaptureWaypoints, p1HitWaypoints, p2ZigzagWaypoints } from './qaScript.js';
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
 const AFTERIMAGES = 6;
 const KK_TEX = 256;
-/** Sprite includes glow padding; visible body+tentacles land near 1/4 board. */
-const KK_CELLS = 64;
-const ORB_CELLS = 30;
+/** Visible 꾸물이 lands around 20–25% of board width. */
+const KK_CELLS = 50;
+const ORB_CELLS = 28;
 const ORB_TEX = 128;
-
-function seedMidMatch(state: MatchState): void {
-  const w = state.gridWidth;
-  const h = state.gridHeight;
-  const want1 = Math.round(w * h * 0.32);
-  const want2 = Math.round(w * h * 0.21);
-  const bx = w >> 1;
-  const by = h >> 1;
-  const nearBoss = (x: number, y: number) => Math.abs(x - bx) + Math.abs(y - by) < 22;
-  let n1 = 0;
-  let n2 = 0;
-  // P2: top-right sky / sun (21%).
-  for (let y = 1; y < h - 1 && n2 < want2; y++) {
-    for (let x = Math.floor(w * 0.5); x < w - 1 && n2 < want2; x++) {
-      if (state.grid[y][x] !== CellType.COVER || nearBoss(x, y)) continue;
-      state.grid[y][x] = CellType.PLAYER2_OPEN;
-      n2++;
-    }
-  }
-  // P1: left slice of the dusk illustration (32%).
-  for (let x = 1; x < w - 1 && n1 < want1; x++) {
-    for (let y = 1; y < h - 1 && n1 < want1; y++) {
-      if (state.grid[y][x] !== CellType.COVER || nearBoss(x, y)) continue;
-      state.grid[y][x] = CellType.PLAYER1_OPEN;
-      n1++;
-    }
-  }
-  state.player1.territoryCells = n1;
-  state.player2.territoryCells = n2;
-  // Park orbs on the neon FX trails inside claimed art.
-  state.player1.xFp = (62 << 8) + 128;
-  state.player1.yFp = (236 << 8) + 128;
-  state.player1.position = { x: 62, y: 236 };
-  state.player2.xFp = (176 << 8) + 128;
-  state.player2.yFp = (72 << 8) + 128;
-  state.player2.position = { x: 176, y: 72 };
-}
+const QA_STEPS_PER_PULSE = 3;
 
 interface TurfDebug {
   tick: number;
@@ -82,6 +47,8 @@ interface TurfDebug {
   result: string | null;
   cutFx: boolean;
   hitFx: boolean;
+  drawing: { p1: boolean; p2: boolean };
+  trails: { p1: number; p2: number };
 }
 
 declare global {
@@ -99,6 +66,8 @@ if (typeof window !== 'undefined') {
     result: null,
     cutFx: false,
     hitFx: false,
+    drawing: { p1: false, p2: false },
+    trails: { p1: 0, p2: 0 },
   };
 }
 
@@ -178,9 +147,9 @@ class GameScene extends Phaser.Scene {
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
   private trailGlow: Phaser.GameObjects.Graphics | null = null;
-  private fxTrail1: { x: number; y: number }[] = [];
-  private fxTrail2: { x: number; y: number }[] = [];
   private afterimages2: Phaser.GameObjects.Image[] = [];
+  private qaP1: QaPilot | null = null;
+  private qaP2: QaPilot | null = null;
   private lastP2: { x: number; y: number }[] = [];
   private p1Sprite: Phaser.GameObjects.Image | null = null;
   private p2Sprite: Phaser.GameObjects.Image | null = null;
@@ -200,7 +169,6 @@ class GameScene extends Phaser.Scene {
   private localGrid: CellType[][] = createInitialState().grid;
   private qaMode = false;
   private qaHit = false;
-  private qaTick = 0;
   private qaClaimed = false;
   private melt = 0;
   private melting = false;
@@ -429,74 +397,68 @@ class GameScene extends Phaser.Scene {
     const qa = new URLSearchParams(window.location.search).get('qa');
     this.qaHit = qa === 'hit';
     this.qaMode = qa === '1' || qa === 'cut' || this.qaHit;
-    this.qaTick = 0;
     this.qaClaimed = false;
     this.melt = 0;
     this.melting = false;
-    this.matchState = createInitialState(
-      this.qaHit ? { matchTicks: 400 } : this.qaMode ? { matchTicks: 120 } : undefined,
-    );
-    if (this.qaMode) {
-      seedMidMatch(this.matchState);
-      this.fxTrail1 = [];
-      for (let y = 36; y <= 270; y += 2) {
-        this.fxTrail1.push({ x: 62 + Math.round(Math.sin(y / 18) * 7), y });
-      }
-      this.fxTrail2 = [];
-      for (let x = 108; x <= 188; x += 2) {
-        this.fxTrail2.push({ x, y: 72 + Math.round(Math.sin(x / 16) * 6) });
-      }
-    }
-    if (this.qaHit) {
-      const x = this.matchState.player1.position.x;
-      const y = this.matchState.gridHeight - 1;
-      this.matchState.player1.xFp = (x << 8) + 128;
-      this.matchState.player1.yFp = (y << 8) + 128;
-      this.matchState.player1.position = { x, y };
-      this.matchState.sparx2.xFp = ((x - 3) << 8) + 128;
-      this.matchState.sparx2.yFp = (y << 8) + 128;
-      this.matchState.sparx2.edgeDir = 0;
-    }
+    this.matchState = createInitialState();
+    this.qaP1 = this.qaMode
+      ? new QaPilot(this.qaHit ? p1HitWaypoints() : p1CaptureWaypoints())
+      : null;
+    this.qaP2 = this.qaMode ? new QaPilot(p2ZigzagWaypoints()) : null;
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);
     this.renderState(this.matchState, []);
-    this.botInterval = setInterval(() => {
-      if (!this.matchState || this.matchState.result) {
-        if (this.botInterval) clearInterval(this.botInterval);
-        if (this.matchState?.result) this.playWinFx();
-        return;
-      }
-      const heading = this.qaHeading();
-      const botMove =
-        this.qaMode && !this.qaHit
-          ? { player: 2 as const, heading: 128, thrusting: false }
-          : this.bot!.getNextMove(this.matchState);
-      const prevTrail = this.matchState.player1.trail.slice();
-      const autoThrust = this.qaHit || this.qaMode;
-      const result = step(this.matchState, [
-        { player: 1, heading, thrusting: autoThrust ? true : this.thrusting },
-        botMove,
-      ]);
-      this.matchState = result.state;
-      this.p1TrailCopy = this.matchState.player1.trail.length ? this.matchState.player1.trail : prevTrail;
-      this.handleEvents(result.events, prevTrail);
-      if (this.qaMode && !this.qaHit && this.matchState.tick >= 40 && !this.qaClaimed) {
-        this.qaClaimed = true;
-        this.playCutFx(undefined, 6);
-      }
-      this.renderState(this.matchState, result.events);
-    }, 50);
+    this.botInterval = setInterval(() => this.pulseBot(), 50);
   }
 
-  private qaHeading(): number {
-    if (!this.qaMode) return this.heading;
-    if (this.qaHit) return 64;
-    const y = this.matchState?.player1.position.y ?? 236;
-    if (y >= 250) return 192;
-    if (y <= 80) return 64;
-    this.qaTick++;
-    return Math.floor(this.qaTick / 18) % 2 === 0 ? 192 : 64;
+  private pulseBot() {
+    if (!this.matchState || this.matchState.result) {
+      if (this.botInterval) clearInterval(this.botInterval);
+      if (this.matchState?.result) this.playWinFx();
+      return;
+    }
+    const pulses = this.qaMode ? QA_STEPS_PER_PULSE : 1;
+    for (let n = 0; n < pulses; n++) {
+      if (!this.matchState || this.matchState.result) break;
+      this.stepBotOnce();
+    }
+  }
+
+  private stepBotOnce() {
+    if (!this.matchState) return;
+    if (this.qaHit && this.matchState.player1.position.y >= this.matchState.gridHeight - 1) {
+      const x = this.matchState.player1.position.x;
+      const y = this.matchState.gridHeight - 1;
+      const sx = this.matchState.sparx2.xFp >> 8;
+      const sy = this.matchState.sparx2.yFp >> 8;
+      if (Math.abs(sx - x) > 6 || sy !== y) {
+        this.matchState.sparx2.xFp = ((x - 4) << 8) + 128;
+        this.matchState.sparx2.yFp = (y << 8) + 128;
+        this.matchState.sparx2.edgeDir = 0;
+      }
+    }
+    let heading = this.heading;
+    let thrusting = this.thrusting;
+    let botMove = this.bot!.getNextMove(this.matchState);
+    if (this.qaP1) {
+      const a = this.qaP1.next(this.matchState.player1.position);
+      heading = a.heading;
+      thrusting = a.thrusting;
+    }
+    if (this.qaP2) {
+      const b = this.qaP2.next(this.matchState.player2.position);
+      botMove = { player: 2, heading: b.heading, thrusting: b.thrusting };
+    }
+    const prevTrail = this.matchState.player1.trail.slice();
+    const result = step(this.matchState, [
+      { player: 1, heading, thrusting },
+      botMove,
+    ]);
+    this.matchState = result.state;
+    this.p1TrailCopy = this.matchState.player1.trail.length ? this.matchState.player1.trail : prevTrail;
+    this.handleEvents(result.events, prevTrail);
+    this.renderState(this.matchState, result.events);
   }
 
   private handleEvents(events: GameEvent[], prevTrail: { x: number; y: number }[]) {
@@ -659,9 +621,14 @@ class GameScene extends Phaser.Scene {
       x: state.sparx2.xFp >> 8,
       y: state.sparx2.yFp >> 8,
     });
-    const drawing = state.player1.drawing || state.player2.drawing;
     const open = (state.player1.territoryCells + state.player2.territoryCells) / TOTAL_CELLS;
-    this.angry = drawing || open > 0.12;
+    const bx = state.boss.xFp >> 8;
+    const by = state.boss.yFp >> 8;
+    const nearBoss = (p: { x: number; y: number }) => Math.abs(p.x - bx) + Math.abs(p.y - by) < 70;
+    this.angry =
+      open > 0.2 ||
+      (state.player1.drawing && nearBoss(state.player1.position)) ||
+      (state.player2.drawing && nearBoss(state.player2.position));
     this.redrawOverlay(state.player1.trail, state.player2.trail);
     const result = state.result
       ? `${state.result.winner === 0 ? '무승부' : `플레이어 ${state.result.winner} 승`} · ${state.result.reason}`
@@ -700,8 +667,8 @@ class GameScene extends Phaser.Scene {
     this.trailGlow?.clear();
     this.trailGfx.lineStyle(4, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
-    const mine = trail1.length >= 2 ? trail1 : this.fxTrail1;
-    const foe = trail2 && trail2.length >= 2 ? trail2 : this.fxTrail2;
+    const mine = trail1;
+    const foe = trail2 ?? [];
     this.strokeGlowLine(mine, AH.me, AH.core, ox, oy, scale, false);
     this.strokeGlowLine(foe, AH.foe, 0xffffff, ox, oy, scale, true);
   }
@@ -780,14 +747,8 @@ class GameScene extends Phaser.Scene {
     if (this.lastP1.length > AFTERIMAGES) this.lastP1.shift();
     this.lastP2.push(p2);
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
-    const guide1 =
-      !this.qaHit && this.fxTrail1.length >= 2
-        ? this.fxTrail1
-        : this.matchState?.player1.trail ?? this.p1TrailCopy;
-    const guide2 =
-      !this.qaHit && this.fxTrail2.length >= 2
-        ? this.fxTrail2
-        : this.matchState?.player2.trail ?? [];
+    const guide1 = this.matchState?.player1.trail ?? this.p1TrailCopy;
+    const guide2 = this.matchState?.player2.trail ?? [];
     this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.72, { x: 0, y: -1 });
     this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.9, 0.6, { x: -1, y: 0 });
     place(this.p1Sprite, p1, ORB_CELLS);
@@ -918,6 +879,14 @@ class GameScene extends Phaser.Scene {
     window.__turfDebug.ownedCells = { p1, p2 };
     window.__turfDebug.renderedFrames++;
     window.__turfDebug.result = result;
+    window.__turfDebug.drawing = {
+      p1: Boolean(this.matchState?.player1.drawing),
+      p2: Boolean(this.matchState?.player2.drawing),
+    };
+    window.__turfDebug.trails = {
+      p1: this.matchState?.player1.trail.length ?? this.p1TrailCopy.length,
+      p2: this.matchState?.player2.trail.length ?? 0,
+    };
   }
 }
 

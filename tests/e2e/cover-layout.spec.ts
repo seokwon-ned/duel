@@ -44,10 +44,14 @@ test.describe('Cover spike 390x844', () => {
       () => {
         const d = window.__turfDebug;
         return Boolean(
-          d && d.tick > 8 && d.ownedCells.p1 >= 18000 && d.ownedCells.p2 >= 12000,
+          d &&
+            d.ownedCells.p1 >= 15000 &&
+            d.drawing.p1 &&
+            d.trails.p1 >= 20 &&
+            d.trails.p2 >= 20,
         );
       },
-      { timeout: 15000 },
+      { timeout: 45000 },
     );
     await expect(page.locator('#settings')).toBeHidden();
     await expect(page.locator('#hud')).toBeVisible();
@@ -57,7 +61,13 @@ test.describe('Cover spike 390x844', () => {
     await swipePad(page);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'match.png') });
 
-    await page.waitForFunction(() => Boolean(window.__turfDebug?.cutFx), { timeout: 20000 });
+    await page.waitForFunction(
+      () => {
+        const d = window.__turfDebug;
+        return Boolean(d?.cutFx && d.ownedCells.p1 >= 15000);
+      },
+      { timeout: 25000 },
+    );
     await expect(page.locator('#cutStack')).toBeVisible();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'bot-match.png') });
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'cut.png') });
@@ -69,11 +79,11 @@ test.describe('Cover spike 390x844', () => {
   });
 
   test('hit flashes the screen edge and breaks a heart', async ({ page }) => {
-    test.setTimeout(60000);
+    test.setTimeout(90000);
     await page.goto('/?qa=hit');
     await page.waitForSelector('#game-container canvas');
     await page.click('#botBtn');
-    await page.waitForFunction(() => Boolean(window.__turfDebug?.hitFx), { timeout: 25000 });
+    await page.waitForFunction(() => Boolean(window.__turfDebug?.hitFx), { timeout: 50000 });
     await expect(page.locator('#hitFlash')).toBeVisible();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'hit.png') });
   });
