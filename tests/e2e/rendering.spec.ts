@@ -47,8 +47,15 @@ test.describe('P0-2: Client Rendering (1v1 Two-Tab)', () => {
 
       console.log('✓ Both clients connected to server');
 
-      // Wait for game to progress (5 more seconds = 100+ ticks at 20 TPS)
-      await page1.waitForTimeout(5000);
+      // Wait until the server clock is actually advancing (slack for CI)
+      await page1.waitForFunction(
+        () => Boolean(window.__turfDebug && window.__turfDebug.tick > 10),
+        { timeout: 15000 },
+      );
+      await page2.waitForFunction(
+        () => Boolean(window.__turfDebug && window.__turfDebug.tick > 10),
+        { timeout: 15000 },
+      );
 
       // Get final debug info
       const finalDebug1 = await page1.evaluate(() => window.__turfDebug);

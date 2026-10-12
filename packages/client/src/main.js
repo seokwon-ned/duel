@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { Client } from '@colyseus/sdk';
-import { createInitialState, step, Direction, CellType, GRID_SIZE, } from '@turf-duel/engine';
+import { createInitialState, step, Direction, CellType, GRID_SIZE, ClientPredictor, schemaToMatchState, } from '@turf-duel/engine';
 import { Bot } from '@turf-duel/bot';
 const CELL_SIZE = 15;
 const COLORS = {
@@ -27,9 +27,8 @@ class GameScene extends Phaser.Scene {
     bot = null;
     botInterval = null;
     infoText = null;
-    // Client-side prediction
-    predictedState = null;
-    pendingInputs = [];
+    // Client-side prediction (shared deterministic module)
+    predictor = null;
     lastServerTick = 0;
     constructor() {
         super({ key: 'GameScene' });
@@ -72,25 +71,12 @@ class GameScene extends Phaser.Scene {
             }
             if (newDirection) {
                 this.currentDirection = newDirection;
-                if (this.room && this.matchState) {
-                    // Client-side prediction: apply input immediately
-                    const currentTick = this.matchState.tick;
-                    this.pendingInputs.push({ direction: newDirection, tick: currentTick });
-                    // Predict next state
-                    if (!this.predictedState) {
-                        this.predictedState = JSON.parse(JSON.stringify(this.matchState));
-                    }
-                    const result = step(this.predictedState, [{
-                            player: this.playerNum,
-                            direction: newDirection,
-                        }]);
-                    this.predictedState = result.state;
-                    // Render predicted state
-                    this.renderState(this.predictedState);
-                    // Send to server with clientTick
+                if (this.room && this.predictor?.predicted) {
+                    const { clientTick } = this.predictor.applyInput(newDirection);
+                    this.renderState(this.predictor.predicted);
                     this.room.send('input', {
                         direction: newDirection,
-                        clientTick: currentTick,
+                        clientTick,
                     });
                 }
             }
@@ -99,79 +85,44 @@ class GameScene extends Phaser.Scene {
     startOnlineMode(room) {
         this.isOnlineMode = true;
         this.room = room;
+        this.predictor = new ClientPredictor(this.playerNum);
+        room.onMessage('player', (message) => {
+            this.playerNum = message.num;
+            this.predictor = new ClientPredictor(this.playerNum);
+            if (room.state) {
+                this.predictor.reconcile(schemaToMatchState(room.state));
+            }
+        });
         room.onStateChange.once((state) => {
-            // Initial state received, render full board
             this.renderFromSchema(state);
-            // Initialize matchState for prediction
-            this.matchState = this.convertSchemaToMatchState(state);
-            this.lastServerTick = this.matchState.tick;
+            const serverState = schemaToMatchState(state);
+            this.matchState = serverState;
+            this.lastServerTick = serverState.tick;
+            this.predictor?.reconcile(serverState);
+            this.updateDebug(serverState);
         });
         room.onStateChange((state) => {
-            // Server reconciliation
-            const serverState = this.convertSchemaToMatchState(state);
-            const serverTick = serverState.tick;
-            // Remove acknowledged inputs
-            this.pendingInputs = this.pendingInputs.filter(input => input.tick > serverTick);
-            // Reconcile: start from server state and re-apply pending inputs
-            if (this.pendingInputs.length > 0) {
-                this.predictedState = JSON.parse(JSON.stringify(serverState));
-                for (const input of this.pendingInputs) {
-                    const result = step(this.predictedState, [{
-                            player: this.playerNum,
-                            direction: input.direction,
-                        }]);
-                    this.predictedState = result.state;
-                }
-                // Render reconciled predicted state
-                this.renderState(this.predictedState);
-            }
-            else {
-                // No pending inputs, use server state directly
-                this.predictedState = null;
-                this.renderState(serverState);
-            }
+            const serverState = schemaToMatchState(state);
+            this.predictor?.reconcile(serverState);
+            const toRender = this.predictor?.predicted ?? serverState;
+            this.renderState(toRender);
             this.matchState = serverState;
-            this.lastServerTick = serverTick;
+            this.lastServerTick = serverState.tick;
+            this.updateDebug(serverState);
         });
         room.onMessage('*', (type, message) => {
             console.log('Message from server:', type, message);
         });
     }
-    convertSchemaToMatchState(state) {
-        // Convert Colyseus schema to engine MatchState
-        const grid = [];
-        for (let y = 0; y < GRID_SIZE; y++) {
-            grid[y] = [];
-            for (let x = 0; x < GRID_SIZE; x++) {
-                grid[y][x] = state.grid[y * GRID_SIZE + x];
-            }
+    updateDebug(state) {
+        if (typeof window !== 'undefined' && window.__turfDebug) {
+            window.__turfDebug.tick = state.tick;
+            window.__turfDebug.ownedCells = {
+                p1: state.player1.territoryCells,
+                p2: state.player2.territoryCells,
+            };
+            window.__turfDebug.renderedFrames++;
         }
-        return {
-            grid,
-            player1: {
-                position: { x: state.player1.position.x, y: state.player1.position.y },
-                direction: state.player1.direction,
-                inputBuffer: null,
-                isAlive: state.player1.isAlive,
-                territoryCells: state.player1.territoryCells,
-                movementAccumulator: 0,
-            },
-            player2: {
-                position: { x: state.player2.position.x, y: state.player2.position.y },
-                direction: state.player2.direction,
-                inputBuffer: null,
-                isAlive: state.player2.isAlive,
-                territoryCells: state.player2.territoryCells,
-                movementAccumulator: 0,
-            },
-            tick: state.tick,
-            paused: state.paused,
-            result: state.result ? {
-                winner: state.result.winner,
-                reason: state.result.reason,
-                tick: state.result.tick,
-            } : null,
-        };
     }
     startBotMode() {
         this.isOnlineMode = false;
@@ -263,11 +214,17 @@ class GameScene extends Phaser.Scene {
         }
         this.cells[state.player1.position.y][state.player1.position.x].setStrokeStyle(2, 0xFFFFFF);
         this.cells[state.player2.position.y][state.player2.position.x].setStrokeStyle(2, 0xFFFFFF);
+        if (!this.isOnlineMode) {
+            this.updateDebug(state);
+        }
         if (this.infoText) {
-            const p1Percent = Math.round((state.player1.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
-            const p2Percent = Math.round((state.player2.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
+            const you = this.playerNum === 1 ? state.player1 : state.player2;
+            const foe = this.playerNum === 1 ? state.player2 : state.player1;
+            const youPercent = Math.round((you.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
+            const foePercent = Math.round((foe.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
             const seconds = Math.floor((3000 - state.tick) / 20);
-            this.infoText.setText(`You: ${p1Percent}% | Time: ${seconds}s | Bot: ${p2Percent}%`);
+            const foeLabel = this.isOnlineMode ? `P${this.playerNum === 1 ? 2 : 1}` : 'Bot';
+            this.infoText.setText(`You: ${youPercent}% | Time: ${seconds}s | ${foeLabel}: ${foePercent}%`);
         }
     }
     getCellColor(cellType) {

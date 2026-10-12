@@ -200,12 +200,12 @@ async function runE2ETest(): Promise<void> {
       
       room1.onStateChange(checkResult);
       
-      // Fallback timeout after 151s
+      // Fallback timeout after 165s (150s match + slack)
       setTimeout(() => {
         clearInterval(inputInterval);
         clearInterval(bandwidthInterval);
         resolve();
-      }, 151000);
+      }, 165000);
     });
 
     // Flush last second

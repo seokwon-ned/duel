@@ -150,7 +150,8 @@ class GameScene extends Phaser.Scene {
       this.renderState(toRender);
       this.matchState = serverState;
       this.lastServerTick = serverState.tick;
-      this.updateDebug(toRender);
+      // Debug hook follows the server clock so Playwright sees real ticks
+      this.updateDebug(serverState);
     });
 
     room.onMessage('*', (type, message) => {
@@ -276,15 +277,19 @@ class GameScene extends Phaser.Scene {
 
     this.cells[state.player1.position.y][state.player1.position.x].setStrokeStyle(2, 0xFFFFFF);
     this.cells[state.player2.position.y][state.player2.position.x].setStrokeStyle(2, 0xFFFFFF);
-    this.updateDebug(state);
+    if (!this.isOnlineMode) {
+      this.updateDebug(state);
+    }
 
     if (this.infoText) {
-      const p1Percent = Math.round((state.player1.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
-      const p2Percent = Math.round((state.player2.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
+      const you = this.playerNum === 1 ? state.player1 : state.player2;
+      const foe = this.playerNum === 1 ? state.player2 : state.player1;
+      const youPercent = Math.round((you.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
+      const foePercent = Math.round((foe.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);
       const seconds = Math.floor((3000 - state.tick) / 20);
-      
+      const foeLabel = this.isOnlineMode ? `P${this.playerNum === 1 ? 2 : 1}` : 'Bot';
       this.infoText.setText(
-        `You: ${p1Percent}% | Time: ${seconds}s | Bot: ${p2Percent}%`
+        `You: ${youPercent}% | Time: ${seconds}s | ${foeLabel}: ${foePercent}%`
       );
     }
   }

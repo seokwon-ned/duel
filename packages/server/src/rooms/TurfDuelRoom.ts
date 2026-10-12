@@ -24,6 +24,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected lastBandwidthReset = Date.now();
   protected disconnectInfo = new Map<string, PlayerDisconnectInfo>();
   protected countdownInterval: NodeJS.Timeout | null = null;
+  protected forfeitCleanupTimer: NodeJS.Timeout | null = null;
   protected tickIntervals: number[] = [];
   protected lastTickTime: number = 0;
   protected matchState!: MatchState;
@@ -34,6 +35,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected stateHistory: MatchState[] = []; // For rollback (keep last 10 ticks)
   protected readonly LAG_WINDOW_TICKS = 6; // ~300ms at 20Hz
   protected readonly HISTORY_SIZE = 16;
+  protected readonly maxDisconnects = 2;
+  protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
 
   maxClients = 2;
 
@@ -104,7 +107,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
     // Hook into WebSocket to measure actual bytes sent
     // Colyseus 0.18 exposes the socket as client.ref
-    const ws = (client as any).ref || (client as any).raw || (client as any)._connection || (client as any).connection;
+    const ws = (client as any).ref || (client as any)._connection || (client as any).connection;
     
     if (ws && ws.send) {
       const originalWsSend = ws.send.bind(ws);
@@ -156,60 +159,46 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     
     console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
 
-    // Consented leave (leave(true) / server dispose): skip reconnection window.
-    // Client-triggered leave(false) and unexpected drops still count.
+    // 4001 = server dispose. 4000 = voluntary client leave and MUST count.
+    // 1000 = consented leave(true), used by test teardown only.
     if (code === 1000 || code === 4001) {
       return;
     }
-    
+
     const info = this.disconnectInfo.get(client.sessionId);
     if (!info) return;
 
-    // Track disconnect
     info.disconnectCount++;
     info.currentDisconnectStartTime = Date.now();
-    
+
     const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
     playerState.connected = false;
     playerState.disconnectCount = info.disconnectCount;
-    
-    console.log(`Player ${playerNum} disconnect #${info.disconnectCount}, total time: ${info.totalDisconnectedMs}ms`);
-    
-    // Check if player exceeded disconnect limits
-    if (info.disconnectCount > 2) {
-      console.log(`Player ${playerNum} exceeded 2 disconnects, loses match`);
-      this.handleDisconnectLoss(playerNum);
-      return;
-    }
-    
-    if (info.totalDisconnectedMs > 30000) {
-      console.log(`Player ${playerNum} exceeded 30s total disconnect time, loses match`);
-      this.handleDisconnectLoss(playerNum);
-      return;
-    }
-    
-    // Pause game and start countdown
+
+    console.log(`Player ${playerNum} disconnect #${info.disconnectCount} (code ${code}), total time: ${info.totalDisconnectedMs}ms`);
+
     this.matchState.paused = true;
     this.updatePauseState();
+    this.evaluateDisconnectLimits();
+    if (this.matchState.result) {
+      return;
+    }
+
     this.startDisconnectCountdown();
-    
-    // Allow reconnection for 30 seconds
+
+    const remainingMs = Math.max(0, this.maxDisconnectMs - info.totalDisconnectedMs);
+    // +2s so a client can still reconnect after a forfeit to read the result
+    const windowSec = Math.max(2, Math.ceil(remainingMs / 1000) + 2);
     try {
-      await this.allowReconnection(client, 30);
+      await this.allowReconnection(client, windowSec);
       console.log(`Player ${playerNum} reconnection window closed`);
-      
-      // Check if they exceeded time limit during disconnect
-      if (info.currentDisconnectStartTime !== null) {
-        const disconnectDuration = Date.now() - info.currentDisconnectStartTime;
-        info.totalDisconnectedMs += disconnectDuration;
-        
-        if (info.totalDisconnectedMs > 30000) {
-          console.log(`Player ${playerNum} exceeded 30s total disconnect time, loses match`);
-          this.handleDisconnectLoss(playerNum);
-        }
-      }
     } catch (e) {
       console.log(`Player ${playerNum} reconnection failed:`, e);
+    }
+    // If they never came back, keep the running timer so ms-accurate
+    // countdown can still forfeit (do not zero it on a failed window).
+    if (info.currentDisconnectStartTime !== null) {
+      this.evaluateDisconnectLimits();
     }
   }
   
@@ -220,19 +209,35 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     console.log(`Player ${playerNum} reconnected: ${client.sessionId}`);
     
     const info = this.disconnectInfo.get(client.sessionId);
-    if (info && info.currentDisconnectStartTime !== null) {
-      const disconnectDuration = Date.now() - info.currentDisconnectStartTime;
-      info.totalDisconnectedMs += disconnectDuration;
-      info.currentDisconnectStartTime = null;
-      
-      console.log(`Player ${playerNum} was disconnected for ${disconnectDuration}ms (total: ${info.totalDisconnectedMs}ms)`);
-    }
-    
+    this.accrueDisconnectTime(client.sessionId);
+
     const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
     playerState.connected = true;
     playerState.totalDisconnectedMs = info?.totalDisconnectedMs || 0;
-    
+
+    // 15.5s + 14.8s = 30.3s must lose on reconnect, not after the next 1s tick
+    this.evaluateDisconnectLimits();
+    if (this.matchState.result) {
+      return;
+    }
+
     this.updatePauseState();
+  }
+
+  private accrueDisconnectTime(sessionId: string): void {
+    const info = this.disconnectInfo.get(sessionId);
+    if (!info || info.currentDisconnectStartTime === null) return;
+    info.totalDisconnectedMs += Date.now() - info.currentDisconnectStartTime;
+    info.currentDisconnectStartTime = null;
+  }
+
+  private playerDisconnectTotalMs(sessionId: string): number {
+    const info = this.disconnectInfo.get(sessionId);
+    if (!info) return 0;
+    const running = info.currentDisconnectStartTime !== null
+      ? Date.now() - info.currentDisconnectStartTime
+      : 0;
+    return info.totalDisconnectedMs + running;
   }
 
   onDispose() {
@@ -242,7 +247,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
     }
-    
+    if (this.forfeitCleanupTimer) {
+      clearTimeout(this.forfeitCleanupTimer);
+    }
+
     // Log bandwidth when room is disposed (match ended or players left)
     if (this.matchState && this.matchState.tick > 0) {
       this.logBandwidth();
@@ -252,7 +260,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   private updatePauseState() {
     const p1Connected = this.state.player1.connected;
     const p2Connected = this.state.player2.connected;
-    
+
+    // Overlapping disconnect is a pause, not a void.
     if (!p1Connected && !p2Connected) {
       this.state.disconnectedPlayer = 3;
       this.matchState.paused = true;
@@ -271,7 +280,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
         this.countdownInterval = null;
       }
     }
-    
+
     this.syncState();
   }
   
@@ -279,54 +288,74 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
     }
-    
+
+    // Tick-rate checks so 15.5+14.8=30.3s is not rounded away
     this.countdownInterval = setInterval(() => {
+      let worstRemaining = Number.POSITIVE_INFINITY;
       for (const [sessionId, info] of this.disconnectInfo) {
-        if (info.currentDisconnectStartTime !== null) {
-          const elapsed = Date.now() - info.currentDisconnectStartTime;
-          const remaining = Math.max(0, 30000 - (info.totalDisconnectedMs + elapsed));
-          this.state.disconnectCountdownSeconds = Math.ceil(remaining / 1000);
-          
-          if (info.totalDisconnectedMs + elapsed > 30000) {
-            const playerNum = this.playerMapping.get(sessionId);
-            if (playerNum) {
-              console.log(`Player ${playerNum} exceeded 30s total disconnect time during countdown`);
-              this.handleDisconnectLoss(playerNum);
-            }
-            return;
-          }
-        }
+        if (info.currentDisconnectStartTime === null) continue;
+        const remaining = Math.max(0, this.maxDisconnectMs - this.playerDisconnectTotalMs(sessionId));
+        worstRemaining = Math.min(worstRemaining, remaining);
       }
-      
-      this.syncState();
-    }, 1000);
+      if (Number.isFinite(worstRemaining)) {
+        this.state.disconnectCountdownSeconds = Math.ceil(worstRemaining / 1000);
+      }
+
+      this.evaluateDisconnectLimits();
+      if (!this.matchState.result) {
+        this.syncState();
+      }
+    }, 50);
   }
-  
-  private handleDisconnectLoss(loserNum: 1 | 2) {
-    const p1Disconnected = !this.state.player1.connected;
-    const p2Disconnected = !this.state.player2.connected;
-    
-    if (p1Disconnected && p2Disconnected) {
-      console.log('Both players disconnected, match void');
-      this.matchState.result = {
-        winner: 0,
-        reason: ResultReason.BOTH_DISCONNECTED,
-        tick: this.matchState.tick,
-      };
-    } else {
-      this.matchState.result = {
-        winner: loserNum === 1 ? 2 : 1,
-        reason: ResultReason.DISCONNECTED,
-        tick: this.matchState.tick,
-      };
+
+  /** First player over the limit loses. Both over on the same check => void. */
+  private evaluateDisconnectLimits(): void {
+    if (this.matchState.result) return;
+
+    const exceeded: Array<1 | 2> = [];
+    for (const [sessionId, info] of this.disconnectInfo) {
+      const playerNum = this.playerMapping.get(sessionId);
+      if (!playerNum) continue;
+      const totalMs = this.playerDisconnectTotalMs(sessionId);
+      if (info.disconnectCount > this.maxDisconnects || totalMs > this.maxDisconnectMs) {
+        exceeded.push(playerNum);
+      }
     }
-    
+
+    const unique = [...new Set(exceeded)];
+    if (unique.length === 2) {
+      this.finalizeForfeit(0, ResultReason.BOTH_DISCONNECTED);
+    } else if (unique.length === 1) {
+      this.finalizeForfeit(unique[0] === 1 ? 2 : 1, ResultReason.DISCONNECTED);
+    }
+  }
+
+  private finalizeForfeit(winner: 0 | 1 | 2, reason: ResultReason): void {
+    if (this.matchState.result) {
+      return;
+    }
+    this.matchState.result = {
+      winner,
+      reason,
+      tick: this.matchState.tick,
+    };
+    this.matchState.paused = true;
     this.syncState();
-    
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
     }
+    if (this.gameLoop) {
+      clearInterval(this.gameLoop);
+      this.gameLoop = null;
+    }
+    if (this.forfeitCleanupTimer) {
+      clearTimeout(this.forfeitCleanupTimer);
+    }
+    // Keep the room long enough for remaining/reconnecting clients to see the result
+    this.forfeitCleanupTimer = setTimeout(() => {
+      this.disconnect().catch((err) => console.error('Failed to dispose forfeited room:', err));
+    }, 3000);
   }
 
   /** Test-room hook. Production is a no-op. */
@@ -438,6 +467,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     const playerNum = this.playerMapping.get(client.sessionId);
     if (!playerNum) return;
 
+    if (this.matchState.result !== null || this.matchState.paused) {
+      return;
+    }
+
     // Validate message structure
     if (!message || typeof message !== 'object' || typeof message.direction !== 'string') {
       console.warn(`Invalid input from ${client.sessionId}: malformed message`);
@@ -481,6 +514,11 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   }
   
   private handleRollback(input: PlayerInput, targetTick: number) {
+    // Room-level flags (paused / disconnect / result) are never rewritten by rollback
+    if (this.matchState.result !== null || this.matchState.paused) {
+      return;
+    }
+
     const historyEntry =
       this.stateHistory.find((s) => s.tick === targetTick) ??
       (this.matchState.tick === targetTick ? this.matchState : undefined);
@@ -502,13 +540,19 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       input.direction,
     );
 
+    const paused = this.matchState.paused;
+    const existingResult = this.matchState.result;
     const ticksToResimulate = this.matchState.tick - targetTick;
     let currentState = restoredState;
+    currentState.paused = false;
+    currentState.result = null;
     currentState = step(currentState, [input]).state;
     for (let i = 1; i < ticksToResimulate; i++) {
       currentState = step(currentState, []).state;
     }
 
+    currentState.paused = paused;
+    currentState.result = existingResult;
     this.matchState = currentState;
     this.syncState();
   }

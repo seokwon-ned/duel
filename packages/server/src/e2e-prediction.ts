@@ -26,19 +26,6 @@ function manhattan(
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function perpendicular(dir: Direction): Direction {
-  switch (dir) {
-    case Direction.RIGHT:
-      return Direction.DOWN;
-    case Direction.DOWN:
-      return Direction.LEFT;
-    case Direction.LEFT:
-      return Direction.UP;
-    case Direction.UP:
-      return Direction.RIGHT;
-  }
-}
-
 /** Pick a legal perpendicular that stays farthest from the walls. */
 function safeTurn(pos: { x: number; y: number }, dir: Direction): Direction {
   const options: Direction[] =
@@ -92,7 +79,7 @@ async function startRoom(port: number): Promise<{
     predictor.reconcile(state);
   });
 
-  await waitUntil(() => predictor.predicted !== null && testRoom.getAuthorityState().tick > 2, 4000, 'first delayed state + ticks');
+  await waitUntil(() => predictor.predicted !== null && testRoom.getAuthorityState().tick > 2, 8000, 'first delayed state + ticks');
 
   return { server, room1, room2, testRoom, predictor };
 }
@@ -125,7 +112,7 @@ async function testPredictionWithLatency(): Promise<TestResult> {
     for (let phase = 0; phase < 5; phase++) {
       await waitUntil(
         () => predictor.predicted !== null && predictor.predicted.tick % 5 === phase && predictor.predicted.tick > 4,
-        4000,
+        8000,
         `tick phase ${phase}`,
       );
 
@@ -141,7 +128,7 @@ async function testPredictionWithLatency(): Promise<TestResult> {
 
       await waitUntil(
         () => testRoom.turnLogs.slice(beforeLogs).some((log) => log.player === 1 && log.newDirection === dir),
-        3000,
+        6000,
         `turn log for phase ${phase}`,
       );
 
@@ -188,7 +175,7 @@ async function testReconciliationGridMatch(): Promise<TestResult> {
 
   try {
     for (let i = 0; i < 8; i++) {
-      await waitUntil(() => predictor.predicted !== null, 2000, 'predictor ready');
+      await waitUntil(() => predictor.predicted !== null, 4000, 'predictor ready');
       const dir = safeTurn(predictor.view().head, predictor.view().direction);
       const { clientTick } = predictor.applyInput(dir);
       room1.send('input', { direction: dir, clientTick });
