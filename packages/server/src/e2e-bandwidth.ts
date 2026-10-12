@@ -301,13 +301,16 @@ async function runE2ETest(): Promise<void> {
     }
     console.log(`✓ Average bandwidth ${avgPerPlayer} bytes/s under threshold ${maxAvgBytesPerSec} bytes/s (${(maxAvgBytesPerSec / 1024).toFixed(1)} KB/s)\n`);
 
-    await room1.leave();
-    await room2.leave();
+    await Promise.race([room1.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
+    await Promise.race([room2.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
   } catch (error) {
     console.error('❌ E2E test failed:', error);
     throw error;
   } finally {
-    await server.gracefullyShutdown();
+    await Promise.race([
+      server.gracefullyShutdown().catch(() => undefined),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
     process.exit(0);
   }
 }

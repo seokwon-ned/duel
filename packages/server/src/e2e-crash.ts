@@ -5,6 +5,10 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
 
+function leaveSoon(room: { leave: () => Promise<void> }): Promise<unknown> {
+  return Promise.race([room.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
+}
+
 async function runCrashTests(): Promise<void> {
   console.log('🎮 E2E Crash Resistance Tests\n');
   console.log('Testing that invalid inputs and errors don\'t crash the server\n');
@@ -81,8 +85,8 @@ async function runCrashTests(): Promise<void> {
     
     console.log('✓ Valid inputs still processed');
     
-    await room1.leave();
-    await room2.leave();
+    await leaveSoon(room1);
+    await leaveSoon(room2);
     
     console.log('\n✅ Test 1 PASSED: Invalid inputs do not crash server\n');
 
@@ -134,10 +138,10 @@ async function runCrashTests(): Promise<void> {
     
     console.log(`✓ Room 2 unaffected: ${room2InitialTick} → ${room2FinalTick} (+${room2FinalTick - room2InitialTick})`);
     
-    await room1a.leave();
-    await room1b.leave();
-    await room2a.leave();
-    await room2b.leave();
+    await leaveSoon(room1a);
+    await leaveSoon(room1b);
+    await leaveSoon(room2a);
+    await leaveSoon(room2b);
     
     console.log('\n✅ Test 2 PASSED: One room\'s errors don\'t affect other rooms\n');
 
@@ -187,10 +191,10 @@ async function runCrashTests(): Promise<void> {
     console.log('✓ Server still responsive: new room created successfully');
     console.log(`  New room: ${room4a.roomId}`);
     
-    await room3a.leave();
-    await room3b.leave();
-    await room4a.leave();
-    await room4b.leave();
+    await leaveSoon(room3a);
+    await leaveSoon(room3b);
+    await leaveSoon(room4a);
+    await leaveSoon(room4b);
     
     console.log('\n✅ Test 3 PASSED: Process stays alive under extreme inputs\n');
 
@@ -199,12 +203,18 @@ async function runCrashTests(): Promise<void> {
     // ============================================================================
     console.log('\n✅ ALL CRASH RESISTANCE TESTS PASSED\n');
     
-    await server.gracefullyShutdown();
+    await Promise.race([
+      server.gracefullyShutdown().catch(() => undefined),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
     process.exit(0);
   } catch (error) {
     console.error('\n❌ CRASH RESISTANCE TESTS FAILED\n');
     console.error(error);
-    await server.gracefullyShutdown();
+    await Promise.race([
+      server.gracefullyShutdown().catch(() => undefined),
+      new Promise((r) => setTimeout(r, 1500)),
+    ]);
     process.exit(1);
   }
 }
