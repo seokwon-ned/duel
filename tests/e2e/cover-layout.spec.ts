@@ -36,6 +36,7 @@ test.describe('Cover spike 390x844', () => {
     await page.goto('/?qa=1');
     await page.waitForSelector('#game-container canvas');
     await expect(page.locator('#serverUrl')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready).catch(() => undefined);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'lobby.png'), animations: 'disabled' });
 
     await page.click('#botBtn');
@@ -45,7 +46,9 @@ test.describe('Cover spike 390x844', () => {
     await expect(page.locator('#dragPad')).toBeVisible();
     await expect(page.locator('#timer')).toBeVisible();
     await swipePad(page);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'bot-match.png'), animations: 'disabled' });
+    await page.waitForFunction(() => Boolean(window.__turfDebug?.cutFx), { timeout: 20000 });
+    await expect(page.locator('#cutStack')).toBeVisible();
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'bot-match.png') });
 
     await page.waitForFunction(() => Boolean(window.__turfDebug?.result), { timeout: 60000 });
     await expect(page.locator('#matchHud')).toBeVisible();

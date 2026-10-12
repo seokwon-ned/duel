@@ -8,61 +8,312 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#0F172A">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Bungee&family=Jua&display=swap" rel="stylesheet">
   <style>
-    html, body { margin:0; padding:0; width:100%; height:100%; background:#0F172A; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; overflow:hidden; touch-action:none; overscroll-behavior:none; }
-    #app { display:flex; flex-direction:column; width:100%; height:100%; box-sizing:border-box; padding:8px; padding-bottom:max(8px, env(safe-area-inset-bottom, 0px)); position:relative; overflow:hidden; }
-    #settings { flex:0 0 auto; padding:12px; background:rgba(255,255,255,.1); border-radius:8px; margin-bottom:8px; }
-    #settings input { padding:8px; margin:5px 0; border-radius:4px; border:1px solid #ccc; max-width:100%; width:min(100%,260px); box-sizing:border-box; }
-    #settings button { padding:8px 16px; margin:5px 5px 5px 0; background:#FF7A1A; color:#fff; border:none; border-radius:4px; font-weight:bold; }
-    #hud { display:none; flex:0 0 auto; min-height:10%; flex-direction:column; justify-content:center; gap:4px; position:relative; padding-top:env(safe-area-inset-top, 0px); }
-    #hearts { display:flex; justify-content:space-between; font-size:16px; padding:0 28px 0 4px; }
-    #heartsYou { color:#FF7A1A; text-shadow:0 0 8px #FF7A1A; }
-    #heartsFoe { color:#2F6BFF; text-shadow:0 0 8px #2F6BFF; }
-    #timer { text-align:center; font-variant-numeric:tabular-nums; font-size:18px; font-weight:700; color:#E2E8F0; text-shadow:0 0 10px #22D3EE; }
-    #barWrap { position:relative; height:10px; background:#1e293b; border-radius:6px; overflow:hidden; box-shadow:0 0 8px rgba(34,211,238,.35); }
-    #barP1 { position:absolute; left:0; top:0; bottom:0; background:#FF7A1A; width:0; }
-    #barP2 { position:absolute; right:0; top:0; bottom:0; background:#2F6BFF; width:0; }
-    #barMid { position:absolute; left:50%; top:-2px; bottom:-2px; width:2px; background:#22D3EE; box-shadow:0 0 6px #22D3EE; }
-    #matchHud { text-align:center; font-size:14px; min-height:1.2em; }
-    #matchHud.result { color:#E879F9; font-weight:700; font-size:16px; text-shadow:0 0 8px #C026D3; }
-    #debugToggle { display:none; position:absolute; right:2px; top:2px; width:24px; height:24px; border:none; background:transparent; color:#64748b; z-index:2; }
-    #game-container { flex:1 1 auto; min-height:0; position:relative; overflow:hidden; }
-    #dragPad { display:none; flex:0 0 25%; min-height:0; max-height:25%; margin-top:6px; margin-bottom:env(safe-area-inset-bottom, 0px); border:1px dashed #22D3EE; border-radius:12px; color:#67e8f9; align-items:center; justify-content:center; font-size:13px; user-select:none; box-shadow:inset 0 0 18px rgba(34,211,238,.12); overflow:hidden; }
-    #app.playing { padding:4px 4px 0; padding-top:max(4px, env(safe-area-inset-top, 0px)); }
-    #app.playing #settings { display:none; }
-    #app.playing #hud, #app.playing #dragPad { display:flex; }
-    #app.playing #debugToggle { display:block; }
-    #app.playing #game-container { flex:0 0 65%; }
-    #app.playing.debug #settings { display:block; position:absolute; left:8px; right:8px; top:12%; z-index:20; background:rgba(15,23,42,.94); }
-    #info { font-size:14px; color:#aaa; }
+    :root {
+      --bg: #0F172A;
+      --bg-top: #111C3A;
+      --bg-bot: #0A0F20;
+      --me: #FF7A1A;
+      --foe: #2F6BFF;
+      --accent: #FACC15;
+      --spark: #F0ABFC;
+      --text: #F8FAFC;
+      --heart: #FF4D6D;
+      --heart-empty: #334155;
+      --panel: #1E293B;
+      --muted: #94A3B8;
+      --cover: #6D28D9;
+    }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      color: var(--text);
+      font-family: Jua, 'Apple SD Gothic Neo', sans-serif;
+      overflow: hidden; touch-action: none; overscroll-behavior: none;
+      background: linear-gradient(180deg, var(--bg-top), var(--bg-bot));
+    }
+    #app {
+      display: flex; flex-direction: column; width: 100%; height: 100%;
+      box-sizing: border-box; padding: 10px;
+      padding-bottom: max(10px, env(safe-area-inset-bottom, 0px));
+      position: relative; overflow: hidden;
+    }
+    h1, h2, .shout { font-family: 'Black Han Sans', sans-serif; }
+    .nums { font-family: Bungee, sans-serif; }
+
+    #settings {
+      flex: 0 0 auto; padding: 18px 16px 14px;
+      background: var(--panel); border-radius: 40px;
+      margin-bottom: 10px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.35), 0 0 24px rgba(109,40,217,.25);
+    }
+    #settings h2 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0.02em; display: flex; align-items: center; gap: 10px; }
+    #settings p { margin: 6px 0; color: var(--muted); }
+    #settings input {
+      padding: 8px 12px; margin: 6px 0; border-radius: 14px;
+      border: 1px solid #334155; background: #0F172A; color: var(--text);
+      max-width: 100%; width: min(100%, 260px); box-sizing: border-box; font-family: Jua, sans-serif;
+    }
+    #settings button {
+      padding: 10px 18px; margin: 6px 8px 6px 0; border: none; border-radius: 18px;
+      font-family: 'Black Han Sans', sans-serif; font-size: 16px; cursor: pointer;
+    }
+    #connectBtn { background: var(--foe); color: #fff; box-shadow: 0 0 14px rgba(47,107,255,.45); }
+    #botBtn { background: var(--me); color: #fff; box-shadow: 0 0 14px rgba(255,122,26,.5); }
+
+    #hud {
+      display: none; flex: 0 0 auto; min-height: 10%;
+      flex-direction: column; justify-content: center; gap: 0;
+      position: relative; padding-top: env(safe-area-inset-top, 0px);
+    }
+    #hudPanel {
+      background: var(--panel); border-radius: 40px; padding: 10px 12px 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.35), 0 0 18px rgba(109,40,217,.2);
+    }
+    #hudTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .fighter { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .fighter.foe { flex-direction: row-reverse; }
+    .avatar {
+      width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto;
+      box-shadow: 0 0 12px currentColor;
+    }
+    .avatar.me { background: radial-gradient(circle at 35% 30%, #FFE0C2, var(--me)); color: var(--me); }
+    .avatar.foe { background: radial-gradient(circle at 35% 30%, #DBEAFE, var(--foe)); color: var(--foe); }
+    .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .fighter .name { font-size: 13px; color: var(--text); line-height: 1.1; }
+    .hearts { display: flex; gap: 2px; }
+    .heart {
+      width: 12px; height: 11px; display: inline-block;
+      background: var(--heart-empty);
+      clip-path: path('M6 10.2L5.15 9.45C2.4 6.95 0.6 5.3 0.6 3.3 0.6 1.65 1.85 0.4 3.5 0.4c.95 0 1.85.45 2.5 1.15C6.65.85 7.55.4 8.5.4 10.15.4 11.4 1.65 11.4 3.3c0 2-1.8 3.65-4.55 6.15L6 10.2z');
+      filter: drop-shadow(0 0 3px transparent);
+    }
+    .heart.on { background: var(--heart); filter: drop-shadow(0 0 4px var(--heart)); }
+    .heart.break { animation: heartBreak .45s ease-out forwards; }
+    @keyframes heartBreak {
+      0% { transform: scale(1); opacity: 1; }
+      40% { transform: scale(1.35) rotate(-12deg); }
+      100% { transform: scale(0.2) rotate(25deg); opacity: 0; }
+    }
+    #timerBox {
+      border: 2px solid var(--accent); border-radius: 16px;
+      padding: 4px 12px 2px; min-width: 76px; text-align: center;
+      box-shadow: 0 0 14px rgba(250,204,21,.55);
+      background: #0F172A;
+    }
+    #timer {
+      font-family: Bungee, sans-serif; font-size: 22px; color: var(--accent);
+      line-height: 1.15; letter-spacing: 0.02em;
+    }
+    #barBlock { position: relative; margin-top: 8px; }
+    #barWrap {
+      position: relative; height: 18px; background: #0B1220; border-radius: 10px;
+      overflow: hidden; box-shadow: 0 0 10px rgba(240,171,252,.28);
+    }
+    #barP1, #barP2 { position: absolute; top: 0; bottom: 0; }
+    #barP1 {
+      left: 0; width: 0;
+      background: linear-gradient(90deg, #EA580C, var(--me));
+      box-shadow: 0 0 10px var(--me);
+    }
+    #barP2 {
+      right: 0; width: 0;
+      background: linear-gradient(270deg, #1D4ED8, var(--foe));
+      box-shadow: 0 0 10px var(--foe);
+    }
+    #barHighlight {
+      position: absolute; left: 0; right: 0; top: 0; height: 42%;
+      background: linear-gradient(180deg, rgba(255,255,255,.38), transparent);
+      pointer-events: none;
+    }
+    #barMid {
+      position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px;
+      background: var(--accent); box-shadow: 0 0 6px var(--accent); transform: translateX(-50%);
+    }
+    #barPctYou, #barPctFoe {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      font-family: Bungee, sans-serif; font-size: 9px; color: #fff; z-index: 2;
+      text-shadow: 0 1px 2px #0f172a;
+    }
+    #barPctYou { left: 8px; }
+    #barPctFoe { right: 8px; }
+    #goalMark {
+      position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; pointer-events: none;
+    }
+    #goalTri {
+      width: 0; height: 0;
+      border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-top: 7px solid var(--accent); filter: drop-shadow(0 0 4px var(--accent));
+    }
+    #goalLabel {
+      font-size: 10px; color: var(--accent); margin-top: 1px; white-space: nowrap;
+    }
+    #matchHud { text-align: center; font-size: 13px; min-height: 1.1em; margin-top: 14px; color: var(--muted); }
+    #matchHud.result {
+      color: var(--accent); font-family: 'Black Han Sans', sans-serif;
+      font-size: 18px; text-shadow: 0 0 10px rgba(250,204,21,.6);
+    }
+    #debugToggle {
+      display: none; position: absolute; right: 8px; top: 8px;
+      width: 24px; height: 24px; border: none; background: transparent;
+      color: #64748b; z-index: 2; font-size: 14px;
+    }
+
+    #game-container {
+      flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden;
+      border-radius: 36px;
+      box-shadow: 0 16px 36px rgba(0,0,0,.45), 0 0 28px rgba(109,40,217,.55);
+    }
+    #game-container canvas { border-radius: 36px; }
+
+    #dragPad {
+      display: none; flex: 0 0 25%; min-height: 0; max-height: 25%;
+      margin-top: 8px; margin-bottom: env(safe-area-inset-bottom, 0px);
+      border-radius: 28px; color: var(--muted);
+      align-items: center; justify-content: center; flex-direction: column; gap: 4px;
+      font-size: 14px; user-select: none; overflow: hidden; position: relative;
+      background-color: var(--panel);
+      background-image: radial-gradient(rgba(148,163,184,.35) 1px, transparent 1px);
+      background-size: 14px 14px;
+      box-shadow: inset 0 0 24px rgba(15,23,42,.35);
+    }
+    #dragPad svg.arc {
+      width: min(70%, 220px); height: 54px; overflow: visible;
+      filter: drop-shadow(0 0 8px var(--me));
+    }
+    #dragPad .finger {
+      position: absolute; width: 22px; height: 22px; border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #fff, var(--me));
+      box-shadow: 0 0 12px var(--me);
+      offset-path: path('M 20 48 Q 100 8 180 48');
+      offset-rotate: 0deg;
+      animation: dragFinger 1.8s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes dragFinger {
+      0% { offset-distance: 0%; opacity: 1; }
+      70% { offset-distance: 100%; opacity: 1; }
+      100% { offset-distance: 100%; opacity: 0; }
+    }
+    #dragPad .hint { margin: 0; color: var(--muted); font-size: 14px; z-index: 1; }
+
+    #fxRoot { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
+    #app.playing #fxRoot { z-index: 40; }
+    #hitFlash {
+      position: absolute; inset: 0; opacity: 0;
+      box-shadow: inset 0 0 70px 18px rgba(255,77,109,.95);
+      transition: opacity .08s linear;
+    }
+    #hitFlash.on { opacity: 1; }
+    #cutStack {
+      position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%) scale(.6);
+      text-align: center; opacity: 0; pointer-events: none;
+    }
+    #cutStack.show {
+      opacity: 1; transform: translate(-50%, -50%) scale(1);
+    }
+    #cutStack.show.pop { animation: cutPop .85s ease-out forwards; }
+    @keyframes cutPop {
+      0% { opacity: 0; transform: translate(-50%, -40%) scale(.5); }
+      25% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+      70% { opacity: 1; transform: translate(-50%, -54%) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -62%) scale(1); }
+    }
+    #cutShout {
+      font-family: 'Black Han Sans', sans-serif; font-size: 44px; color: var(--text);
+      text-shadow: 0 0 14px var(--accent), 3px 3px 0 #0f172a, -2px -2px 0 #0f172a;
+      line-height: 1;
+    }
+    #cutPopup {
+      font-family: Bungee, sans-serif; font-size: 34px; color: var(--accent);
+      text-shadow: 0 0 18px var(--accent), 3px 3px 0 #1e293b, -2px -2px 0 #1e293b;
+      margin-top: 4px;
+    }
+
+    #app.playing { padding: 6px 6px 0; padding-top: max(6px, env(safe-area-inset-top, 0px)); }
+    #app.playing #settings { display: none; }
+    #app.playing #hud, #app.playing #dragPad { display: flex; }
+    #app.playing #debugToggle { display: block; }
+    #app.playing #game-container { flex: 0 0 65%; }
+    #app.playing.debug #settings {
+      display: block; position: absolute; left: 8px; right: 8px; top: 14%; z-index: 20;
+      background: rgba(15,23,42,.94);
+    }
+    #info { font-size: 14px; color: var(--muted); }
   </style>
 </head>
 <body>
   <div id="app">
     <div id="settings">
-      <h2 style="display:flex;align-items:center;gap:10px;"><img src="/logo.png" alt="땅따 | Turf Duel" style="height:40px;"></h2>
+      <h2><img src="/logo.png" alt="" style="height:40px;">땅따</h2>
       <div class="server-url">
-        <label>Server URL:</label>
+        <label>서버 URL</label>
         <input type="text" id="serverUrl" value="ws://localhost:2567">
       </div>
       <div>
-        <button id="connectBtn">Connect to Server</button>
-        <button id="botBtn">Play vs Bot (Local)</button>
+        <button id="connectBtn">서버에 연결</button>
+        <button id="botBtn">봇과 한 판</button>
       </div>
       <div id="info">
-        <p>Controls: drag in the bottom pad to draw curves</p>
-        <p id="status">Ready to connect</p>
+        <p>아래 패드를 드래그해서 곡선을 그려요</p>
+        <p id="status">연결 대기</p>
       </div>
     </div>
     <div id="hud">
       <button type="button" id="debugToggle" aria-label="서버 정보">⚙</button>
-      <div id="hearts"><span id="heartsYou">♥♥♥</span><span id="heartsFoe">♥♥♥</span></div>
-      <div id="timer">2:30</div>
-      <div id="barWrap"><div id="barP1"></div><div id="barP2"></div><div id="barMid"></div></div>
+      <div id="hudPanel">
+        <div id="hudTop">
+          <div class="fighter me">
+            <div class="avatar me" aria-hidden="true"></div>
+            <div class="meta">
+              <div class="name" id="nameYou">나</div>
+              <div class="hearts" id="heartsYou"></div>
+            </div>
+          </div>
+          <div id="timerBox"><span id="timer" class="nums">2:30</span></div>
+          <div class="fighter foe">
+            <div class="avatar foe" aria-hidden="true"></div>
+            <div class="meta">
+              <div class="name" id="nameFoe">상대</div>
+              <div class="hearts" id="heartsFoe"></div>
+            </div>
+          </div>
+        </div>
+        <div id="barBlock">
+          <div id="barWrap">
+            <div id="barP1"></div>
+            <div id="barP2"></div>
+            <div id="barHighlight"></div>
+            <div id="barMid"></div>
+            <div id="barPctYou" class="nums">0%</div>
+            <div id="barPctFoe" class="nums">0%</div>
+          </div>
+          <div id="goalMark">
+            <div id="goalTri"></div>
+            <div id="goalLabel">목표 50%</div>
+          </div>
+        </div>
+      </div>
       <div id="matchHud" aria-live="polite"></div>
     </div>
     <div id="game-container"></div>
-    <div id="dragPad">Drag here to draw</div>
+    <div id="fxRoot">
+      <div id="hitFlash"></div>
+      <div id="cutStack">
+        <div id="cutShout">싹둑!</div>
+        <div id="cutPopup">+6%</div>
+      </div>
+    </div>
+    <div id="dragPad">
+      <svg class="arc" viewBox="0 0 200 60" aria-hidden="true">
+        <path d="M 20 48 Q 100 8 180 48" fill="none" stroke="#FF7A1A" stroke-width="5" stroke-linecap="round"/>
+      </svg>
+      <div class="finger" aria-hidden="true"></div>
+      <p class="hint">여기를 드래그해서 선을 그려요</p>
+    </div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
