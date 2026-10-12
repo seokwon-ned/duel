@@ -366,6 +366,28 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player2.hearts).toBe(start2);
   });
 
+  test('idling at the start position for 30s keeps all hearts', () => {
+    // 20Hz × 30s = 600 ticks. Full 200×300 board, both Sparx looping the rim.
+    let state = createInitialState({ matchTicks: 800 });
+    expect(state.player1.position.y).toBe(state.gridHeight - 2);
+    expect(state.player1.position.y === 0 || state.player1.position.y === state.gridHeight - 1).toBe(false);
+    expect(state.player1.position.x === 0 || state.player1.position.x === state.gridWidth - 1).toBe(false);
+    const start1 = state.player1.hearts;
+    const start2 = state.player2.hearts;
+    state = run(state, [], 600);
+    expect(state.tick).toBe(600);
+    expect(state.player1.hearts).toBe(start1);
+    expect(state.player2.hearts).toBe(start2);
+    expect(state.player1.isAlive).toBe(true);
+    expect(state.player2.isAlive).toBe(true);
+    expect(state.result).toBeNull();
+    for (const s of [state.sparx1, state.sparx2]) {
+      const x = cellOf(s.xFp);
+      const y = cellOf(s.yFp);
+      expect(x === 0 || y === 0 || x === state.gridWidth - 1 || y === state.gridHeight - 1).toBe(true);
+    }
+  });
+
   test('after a hit the player is invincible for 1.5 seconds', () => {
     let state = createInitialState({ width: 24, height: 24, matchTicks: 400 });
     state.player1.hearts = 99;

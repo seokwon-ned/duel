@@ -520,9 +520,12 @@ function hitTrailAndDrawer(state: MatchState, x: number, y: number, events: Game
 function hitAnyPlayer(state: MatchState, x: number, y: number, events: GameEvent[]): void {
   for (const num of [1, 2] as const) {
     const p = num === 1 ? state.player1 : state.player2;
-    if (p.isAlive && cellOf(p.xFp) === x && cellOf(p.yFp) === y) {
-      hurt(state, num, events);
-    }
+    if (!p.isAlive || cellOf(p.xFp) !== x || cellOf(p.yFp) !== y) continue;
+    // Sparx only live on the outer rim. A player who is not on that rim
+    // and not currently drawing a line cannot be hit.
+    const onBorder = isOuterEdge(state, x, y);
+    const onLine = p.drawing || isTrail(state.grid[y][x], num);
+    if (onBorder || onLine) hurt(state, num, events);
   }
 }
 
