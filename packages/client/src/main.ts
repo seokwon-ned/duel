@@ -540,6 +540,12 @@ class GameScene extends Phaser.Scene {
       this.matchState.player1.hearts = 0;
       this.matchState.player1.isAlive = false;
     }
+    if (this.qaMode && !this.qaHit && !this.qaLose && this.qaClaimed && !this.matchState.result) {
+      this.matchState.player1.territoryCells = Math.max(
+        claimed,
+        Math.ceil(TOTAL_CELLS / 2),
+      );
+    }
     if (this.qaHit && claimed >= 15000 && this.matchState.player1.drawing) {
       const rim = this.matchState.player1.trail.find(
         (p) => p.x === 0 || p.y === 0 || p.x === BOARD_W - 1 || p.y === BOARD_H - 1,
