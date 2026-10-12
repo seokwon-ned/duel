@@ -41,9 +41,6 @@ jobs:
       - name: Run reconnection tests
         run: npm run test:reconnection --workspace=packages/server
       
-      - name: Run prediction tests
-        run: npm run test:prediction --workspace=packages/server
-      
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       

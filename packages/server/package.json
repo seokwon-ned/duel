@@ -11,8 +11,7 @@
     "test:crash": "tsx src/e2e-crash.ts",
     "test:lossless": "tsx src/e2e-lossless.ts",
     "test:fault": "tsx src/e2e-fault-isolation.ts",
-    "test:reconnection": "tsx src/reconnection.test.ts",
-    "test:prediction": "tsx src/e2e-prediction.ts"
+    "test:reconnection": "tsx src/reconnection.test.ts"
   },
   "dependencies": {
     "@colyseus/core": "0.18.18",

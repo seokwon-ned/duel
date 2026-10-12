@@ -32,9 +32,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected bytesSentPerPlayer = new Map<string, number>();
   protected playerMapping = new Map<string, 1 | 2>();
   protected previousGrid: CellType[][] | null = null;
-  protected stateHistory: MatchState[] = []; // For rollback (keep last 10 ticks)
-  protected readonly LAG_WINDOW_TICKS = 6; // ~300ms at 20Hz
-  protected readonly HISTORY_SIZE = 16;
+  protected matchStarted = false;
   protected readonly maxDisconnects = 2;
   protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
 
@@ -154,17 +152,55 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   }
 
   async onLeave(client: Client, code?: number) {
+    const resolved = code ?? 1006;
     const playerNum = this.playerMapping.get(client.sessionId);
-    if (!playerNum) return;
-    
-    console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
+    console.log(`Player ${playerNum ?? '?'} left: ${client.sessionId} (code: ${resolved})`);
 
-    // 4001 = server dispose. 4000 = voluntary client leave and MUST count.
-    // 1000 = consented leave(true), used by test teardown only.
-    if (code === 1000 || code === 4001) {
+    if (!playerNum) {
+      console.log(`Leave with no seat mapping (code ${resolved})`);
       return;
     }
 
+    // Waiting room: just free the seat. No disconnect count, no walkover.
+    if (!this.matchStarted) {
+      this.freeWaitingSeat(client.sessionId);
+      return;
+    }
+
+    // Every close code is a leave (immediate loss) or a disconnect (pause + reconnect).
+    if (this.isImmediateLeave(resolved)) {
+      this.handleImmediateLeave(playerNum, resolved);
+      return;
+    }
+
+    await this.handleUnexpectedDisconnect(client, playerNum, resolved);
+  }
+
+  /** 4000 / 1000 = client leave. 4001 = server dispose / kick. */
+  private isImmediateLeave(code: number): boolean {
+    return code === 4000 || code === 1000 || code === 4001;
+  }
+
+  private freeWaitingSeat(sessionId: string): void {
+    this.playerMapping.delete(sessionId);
+    this.disconnectInfo.delete(sessionId);
+    this.bytesSentPerPlayer.delete(sessionId);
+    this.bytesPerSecondPerPlayer.delete(sessionId);
+    console.log(`Waiting-room seat freed: ${sessionId}`);
+  }
+
+  /** Voluntary/normal leave: opponent wins now. Do not hold allowReconnection. */
+  private handleImmediateLeave(playerNum: 1 | 2, code: number): void {
+    if (this.matchState.result) {
+      console.log(`Player ${playerNum} leave ${code} after match end`);
+      return;
+    }
+    const winner = playerNum === 1 ? 2 : 1;
+    console.log(`Player ${playerNum} leave ${code}: immediate loss`);
+    this.finalizeForfeit(winner, ResultReason.DISCONNECTED);
+  }
+
+  private async handleUnexpectedDisconnect(client: Client, playerNum: 1 | 2, code: number): Promise<void> {
     const info = this.disconnectInfo.get(client.sessionId);
     if (!info) return;
 
@@ -187,7 +223,6 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.startDisconnectCountdown();
 
     const remainingMs = Math.max(0, this.maxDisconnectMs - info.totalDisconnectedMs);
-    // +2s so a client can still reconnect after a forfeit to read the result
     const windowSec = Math.max(2, Math.ceil(remainingMs / 1000) + 2);
     try {
       await this.allowReconnection(client, windowSec);
@@ -195,8 +230,6 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     } catch (e) {
       console.log(`Player ${playerNum} reconnection failed:`, e);
     }
-    // If they never came back, keep the running timer so ms-accurate
-    // countdown can still forfeit (do not zero it on a failed window).
     if (info.currentDisconnectStartTime !== null) {
       this.evaluateDisconnectLimits();
     }
@@ -349,32 +382,26 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       clearInterval(this.gameLoop);
       this.gameLoop = null;
     }
+    this.scheduleRoomDispose(3000);
+  }
+
+  private scheduleRoomDispose(delayMs: number): void {
     if (this.forfeitCleanupTimer) {
       clearTimeout(this.forfeitCleanupTimer);
     }
-    // Keep the room long enough for remaining/reconnecting clients to see the result
     this.forfeitCleanupTimer = setTimeout(() => {
-      this.disconnect().catch((err) => console.error('Failed to dispose forfeited room:', err));
-    }, 3000);
+      this.disconnect().catch((err) => console.error('Failed to dispose room:', err));
+    }, delayMs);
   }
 
   /** Test-room hook. Production is a no-op. */
   protected onBeforeTick(): void {}
 
-  /** Test-room hook: record the cell where a tagged/queued input is applied. */
-  protected onInputApplied(
-    _player: 1 | 2,
-    _tick: number,
-    _position: { x: number; y: number },
-    _oldDirection: Direction,
-    _newDirection: Direction,
-  ): void {}
-
   protected startGame() {
     console.log('Starting game loop at 20Hz');
-    
+    this.matchStarted = true;
+
     const tickInterval = 1000 / TICKS_PER_SECOND;
-    this.stateHistory.push(JSON.parse(JSON.stringify(this.matchState)));
 
     // Track per-second bandwidth
     const bandwidthInterval = setInterval(() => {
@@ -427,29 +454,15 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
           const inputs = [...this.inputQueue];
           this.inputQueue = [];
 
-          for (const input of inputs) {
-            const playerState = input.player === 1 ? this.matchState.player1 : this.matchState.player2;
-            this.onInputApplied(
-              input.player,
-              this.matchState.tick,
-              { x: playerState.position.x, y: playerState.position.y },
-              playerState.direction,
-              input.direction,
-            );
-          }
-          
           const result = step(this.matchState, inputs);
           this.matchState = result.state;
-          this.stateHistory.push(JSON.parse(JSON.stringify(this.matchState)));
-          if (this.stateHistory.length > this.HISTORY_SIZE) {
-            this.stateHistory.shift();
-          }
           this.syncState();
 
           if (this.matchState.result !== null) {
             clearInterval(bandwidthInterval);
             console.log('Match ended:', this.matchState.result);
             this.logBandwidth();
+            this.scheduleRoomDispose(3000);
           }
         } catch (error) {
           console.error(`Room ${this.roomId} tick error:`, error);
@@ -484,77 +497,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       return;
     }
 
-    const direction = message.direction as Direction;
-    const clientTick = typeof message.clientTick === 'number' ? message.clientTick : undefined;
-    
-    const input: PlayerInput = {
+    this.inputQueue.push({
       player: playerNum,
-      direction,
-      clientTick,
-    };
-
-    // Client-side prediction with rollback
-    if (clientTick !== undefined) {
-      const tickDiff = this.matchState.tick - clientTick;
-
-      if (tickDiff <= 0) {
-        // Current or future tick — clamp to now and apply on the next step
-        input.clientTick = this.matchState.tick;
-        this.inputQueue.push(input);
-      } else if (tickDiff <= this.LAG_WINDOW_TICKS) {
-        this.handleRollback(input, clientTick);
-      } else {
-        // Too old — clamp so it cannot rewrite history
-        input.clientTick = this.matchState.tick;
-        this.inputQueue.push(input);
-      }
-    } else {
-      this.inputQueue.push(input);
-    }
-  }
-  
-  private handleRollback(input: PlayerInput, targetTick: number) {
-    // Room-level flags (paused / disconnect / result) are never rewritten by rollback
-    if (this.matchState.result !== null || this.matchState.paused) {
-      return;
-    }
-
-    const historyEntry =
-      this.stateHistory.find((s) => s.tick === targetTick) ??
-      (this.matchState.tick === targetTick ? this.matchState : undefined);
-
-    if (!historyEntry) {
-      console.log(`No history for tick ${targetTick}, applying at current tick ${this.matchState.tick}`);
-      input.clientTick = this.matchState.tick;
-      this.inputQueue.push(input);
-      return;
-    }
-
-    const restoredState = JSON.parse(JSON.stringify(historyEntry)) as MatchState;
-    const playerState = input.player === 1 ? restoredState.player1 : restoredState.player2;
-    this.onInputApplied(
-      input.player,
-      targetTick,
-      { x: playerState.position.x, y: playerState.position.y },
-      playerState.direction,
-      input.direction,
-    );
-
-    const paused = this.matchState.paused;
-    const existingResult = this.matchState.result;
-    const ticksToResimulate = this.matchState.tick - targetTick;
-    let currentState = restoredState;
-    currentState.paused = false;
-    currentState.result = null;
-    currentState = step(currentState, [input]).state;
-    for (let i = 1; i < ticksToResimulate; i++) {
-      currentState = step(currentState, []).state;
-    }
-
-    currentState.paused = paused;
-    currentState.result = existingResult;
-    this.matchState = currentState;
-    this.syncState();
+      direction: message.direction as Direction,
+    });
   }
 
   protected syncState() {
@@ -565,16 +511,12 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     state.player1.direction = this.matchState.player1.direction;
     state.player1.isAlive = this.matchState.player1.isAlive;
     state.player1.territoryCells = this.matchState.player1.territoryCells;
-    state.player1.movementAccumulator = this.matchState.player1.movementAccumulator;
-    state.player1.inputBuffer = this.matchState.player1.inputBuffer ?? '';
 
     state.player2.position.x = this.matchState.player2.position.x;
     state.player2.position.y = this.matchState.player2.position.y;
     state.player2.direction = this.matchState.player2.direction;
     state.player2.isAlive = this.matchState.player2.isAlive;
     state.player2.territoryCells = this.matchState.player2.territoryCells;
-    state.player2.movementAccumulator = this.matchState.player2.movementAccumulator;
-    state.player2.inputBuffer = this.matchState.player2.inputBuffer ?? '';
 
     state.tick = this.matchState.tick;
     state.paused = this.matchState.paused;

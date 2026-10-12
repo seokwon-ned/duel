@@ -10,8 +10,6 @@ export class PlayerSchema extends Schema {
   @type('string') direction: string = 'RIGHT';
   @type('boolean') isAlive: boolean = true;
   @type('number') territoryCells: number = 9;
-  @type('number') movementAccumulator: number = 0;
-  @type('string') inputBuffer: string = '';
   @type('boolean') connected: boolean = true;
   @type('number') disconnectCount: number = 0;
   @type('number') totalDisconnectedMs: number = 0;
