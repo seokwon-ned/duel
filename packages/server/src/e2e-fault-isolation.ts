@@ -82,7 +82,7 @@ async function testFaultIsolation(): Promise<void> {
     
     console.log(`✓ New room created: ${room3a.roomId}`);
 
-    const leaveSoon = (room: { leave: () => Promise<void> }) =>
+    const leaveSoon = (room: { leave: () => Promise<number> }) =>
       Promise.race([room.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
     await leaveSoon(room2a);
     await leaveSoon(room2b);

@@ -5,7 +5,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
 
-function leaveSoon(room: { leave: () => Promise<void> }): Promise<unknown> {
+function leaveSoon(room: { leave: () => Promise<number> }): Promise<unknown> {
   return Promise.race([room.leave().catch(() => undefined), new Promise((r) => setTimeout(r, 400))]);
 }
 
