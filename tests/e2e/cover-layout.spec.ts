@@ -74,9 +74,10 @@ test.describe('Cover spike 390x844', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'bot-match.png') });
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'cut.png') });
 
-    await page.waitForFunction(() => Boolean(window.__turfDebug?.result), { timeout: 60000 });
+    await page.waitForFunction(() => Boolean(window.__turfDebug?.result?.includes('승리')), { timeout: 60000 });
     await expect(page.locator('#matchHud')).toBeVisible();
     await expect(page.locator('#resultOverlay')).toBeVisible();
+    await expect(page.locator('#resultTitle')).toHaveText('승리!');
     await expect(page.locator('#rematchBtn')).toBeVisible();
     await page.waitForTimeout(420);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'results.png') });

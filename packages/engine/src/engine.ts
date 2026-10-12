@@ -220,19 +220,64 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
     hurt(state, num, events);
   }
 
-  const pendingClose: Array<1 | 2> = [];
-  for (const intent of intents) {
-    if (!intent.player.isAlive || willHurt.has(intent.num)) continue;
-    if (intent.player.lastHurtTick === state.tick) continue;
+  const applyIntent = (
+    intent: (typeof intents)[number],
+    pendingClose: Array<1 | 2>,
+  ): void => {
+    if (!intent.player.isAlive || willHurt.has(intent.num)) return;
+    if (intent.player.lastHurtTick === state.tick) return;
     if (intent.crossedFoe) {
       paintCrossedTrail(state, intent.num, intent.player, intent.xFp, intent.yFp, intent.cx, intent.cy);
     } else if (tryMovePlayer(state, intent.num, intent.player, intent.xFp, intent.yFp, events)) {
       pendingClose.push(intent.num);
     }
-  }
+  };
 
-  // Same-tick double close: skip sever so P1-first order cannot cancel P2.
-  const skipSever = pendingClose.length > 1;
+  const closers = intents
+    .filter((intent) => {
+      if (!intent.player.isAlive || willHurt.has(intent.num)) return false;
+      if (intent.player.lastHurtTick === state.tick || intent.crossedFoe) return false;
+      return intentWouldClose(state, intent);
+    })
+    .map((intent) => intent.num);
+  const skipSever = closers.length > 1;
+  const pendingClose: Array<1 | 2> = [];
+
+  if (closers.length === 1) {
+    const closer = closers[0];
+    for (const intent of intents) {
+      if (intent.num === closer) applyIntent(intent, pendingClose);
+    }
+    flushCloses(state, pendingClose, events, false);
+    pendingClose.length = 0;
+    for (const intent of intents) {
+      if (intent.num !== closer) applyIntent(intent, pendingClose);
+    }
+    flushCloses(state, pendingClose, events, false);
+  } else {
+    for (const intent of intents) applyIntent(intent, pendingClose);
+    flushCloses(state, pendingClose, events, skipSever);
+  }
+}
+
+function intentWouldClose(
+  state: MatchState,
+  intent: { player: PlayerState; num: 1 | 2; cx: number; cy: number },
+): boolean {
+  if (!intent.player.drawing) return false;
+  if (!inBounds(intent.cx, intent.cy, state.gridWidth, state.gridHeight)) return false;
+  const cell = state.grid[intent.cy][intent.cx];
+  const foe: 1 | 2 = intent.num === 1 ? 2 : 1;
+  if (isTrail(cell, foe) || isTrail(cell, intent.num)) return false;
+  return isOpened(cell);
+}
+
+function flushCloses(
+  state: MatchState,
+  pendingClose: Array<1 | 2>,
+  events: GameEvent[],
+  skipSever: boolean,
+): void {
   for (const num of pendingClose) {
     const player = num === 1 ? state.player1 : state.player2;
     if (!player.isAlive || player.lastHurtTick === state.tick) continue;
