@@ -117,14 +117,34 @@ describe('cover engine (Amy ★)', () => {
   });
 
   test('stopping mid-line starts a burn after 2 seconds', () => {
-    let state = createInitialState({ width: 16, height: 16, matchTicks: 400 });
+    const state = createInitialState({ width: 16, height: 16, matchTicks: 400 });
+    state.player1.drawing = true;
+    state.player1.thrusting = false;
+    state.player1.trail = [
+      { x: 8, y: 10 },
+      { x: 8, y: 9 },
+      { x: 8, y: 8 },
+      { x: 8, y: 7 },
+    ];
+    for (const p of state.player1.trail) {
+      state.grid[p.y][p.x] = CellType.PLAYER1_TRAIL;
+    }
+    state.player1.xFp = (8 << 8) + 128;
+    state.player1.yFp = (7 << 8) + 128;
+    state.player1.idleTicks = 0;
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
     state.boss.xFp = (1 << 8) + 128;
     state.boss.yFp = (1 << 8) + 128;
-    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 5);
-    expect(state.player1.drawing).toBe(true);
-    const hearts = state.player1.hearts;
-    state = run(state, [{ player: 1, heading: 192, thrusting: false }], 45);
-    expect(state.player1.hearts).toBeLessThan(hearts);
+    state.sparx1.xFp = (0 << 8) + 128;
+    state.sparx1.yFp = (0 << 8) + 128;
+    state.sparx2.xFp = (15 << 8) + 128;
+    state.sparx2.yFp = (0 << 8) + 128;
+    const idle = run(state, [{ player: 1, heading: 192, thrusting: false }], 40);
+    expect(idle.player1.fuseIndex).toBeGreaterThanOrEqual(0);
+    const before = idle.player1.hearts;
+    const burned = run(idle, [{ player: 1, heading: 192, thrusting: false }], 8);
+    expect(burned.player1.hearts).toBeLessThan(before);
   });
 
   test('trapping a monster in a small piece grants +5%', () => {

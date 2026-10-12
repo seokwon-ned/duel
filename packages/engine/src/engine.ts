@@ -97,8 +97,14 @@ export function createInitialState(options?: {
   };
 }
 
+function snapCell(player: PlayerState): void {
+  player.position.x = cellOf(player.xFp);
+  player.position.y = cellOf(player.yFp);
+}
+
 function makePlayer(x: number, y: number, heading: number): PlayerState {
   return {
+    position: { x, y },
     xFp: toFp(x),
     yFp: toFp(y),
     heading,
@@ -195,10 +201,11 @@ function tryMovePlayer(
   const cell = state.grid[cy][cx];
   const foe = num === 1 ? 2 : 1;
 
-  if (isTrail(cell, foe)) {
+    if (isTrail(cell, foe)) {
     hurt(state, foe, events);
     player.xFp = xFp;
     player.yFp = yFp;
+    snapCell(player);
     return;
   }
 
@@ -214,12 +221,14 @@ function tryMovePlayer(
     if (isOpened(cell)) {
       player.xFp = xFp;
       player.yFp = yFp;
+      snapCell(player);
       closeTrail(state, num, events);
       return;
     }
     if (isCover(cell)) {
       player.xFp = xFp;
       player.yFp = yFp;
+      snapCell(player);
       if (fromX !== cx || fromY !== cy) {
         state.grid[cy][cx] = playerTrailType(num);
         player.trail.push({ x: cx, y: cy });
@@ -231,6 +240,7 @@ function tryMovePlayer(
   if (isOpened(cell)) {
     player.xFp = xFp;
     player.yFp = yFp;
+    snapCell(player);
     player.spawnX = cx;
     player.spawnY = cy;
     return;
@@ -243,6 +253,7 @@ function tryMovePlayer(
     player.idleTicks = 0;
     player.xFp = xFp;
     player.yFp = yFp;
+    snapCell(player);
     state.grid[cy][cx] = playerTrailType(num);
     player.trail.push({ x: cx, y: cy });
   }
@@ -304,6 +315,7 @@ function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   player.thrusting = false;
   player.xFp = toFp(player.spawnX);
   player.yFp = toFp(player.spawnY);
+  snapCell(player);
   events.push({ type: 'heart', player: num });
 
   if (player.hearts <= 0) {
@@ -366,8 +378,11 @@ function moveBoss(state: MatchState, events: GameEvent[]): void {
 }
 
 function moveSparx(state: MatchState, events: GameEvent[]): void {
-  walkSparx(state, state.sparx1, 1);
-  walkSparx(state, state.sparx2, -1);
+  const steps = 8;
+  for (let i = 0; i < steps; i++) {
+    walkSparx(state, state.sparx1, 1);
+    walkSparx(state, state.sparx2, -1);
+  }
   for (const s of [state.sparx1, state.sparx2]) {
     hitAnyPlayer(state, cellOf(s.xFp), cellOf(s.yFp), events);
   }

@@ -20,6 +20,7 @@ export interface Position {
 }
 
 export interface PlayerState {
+  position: Position;
   xFp: number;
   yFp: number;
   heading: number;
