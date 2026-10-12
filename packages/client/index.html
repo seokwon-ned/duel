@@ -2,93 +2,65 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>땅따 | Turf Duel</title>
-  
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="/favicon.png">
-  
-  <!-- Apple Touch Icon -->
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  
-  <!-- PWA Manifest -->
   <link rel="manifest" href="/manifest.json">
-  
-  <!-- Theme Color -->
   <meta name="theme-color" content="#0F172A">
-  
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background: #0F172A;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      color: white;
-      overflow: hidden;
-    }
-    #app {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 20px;
-    }
-    #settings {
-      margin-bottom: 20px;
-      padding: 20px;
-      background: rgba(255,255,255,0.1);
-      border-radius: 8px;
-    }
-    #settings input {
-      padding: 8px;
-      margin: 5px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-    }
-    #settings button {
-      padding: 8px 16px;
-      margin: 5px;
-      background: #FF7A1A;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    #settings button:hover {
-      background: #e66910;
-    }
-    #game-container {
-      position: relative;
-    }
-    #info {
-      margin-top: 10px;
-      font-size: 14px;
-      color: #aaa;
-    }
+    html, body { margin:0; padding:0; width:100%; height:100%; background:#0F172A; color:#fff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; overflow:hidden; touch-action:none; overscroll-behavior:none; }
+    #app { display:flex; flex-direction:column; width:100%; height:100%; box-sizing:border-box; padding:8px; position:relative; }
+    #settings { flex:0 0 auto; padding:12px; background:rgba(255,255,255,.1); border-radius:8px; margin-bottom:8px; }
+    #settings input { padding:8px; margin:5px 0; border-radius:4px; border:1px solid #ccc; max-width:100%; width:min(100%,260px); box-sizing:border-box; }
+    #settings button { padding:8px 16px; margin:5px 5px 5px 0; background:#FF7A1A; color:#fff; border:none; border-radius:4px; font-weight:bold; }
+    #hud { display:none; flex:0 0 10%; flex-direction:column; justify-content:center; gap:4px; position:relative; }
+    #hearts { display:flex; justify-content:space-between; font-size:16px; padding:0 4px; }
+    #timer { text-align:center; font-variant-numeric:tabular-nums; font-size:18px; font-weight:700; }
+    #barWrap { position:relative; height:10px; background:#1e293b; border-radius:6px; overflow:hidden; }
+    #barP1 { position:absolute; left:0; top:0; bottom:0; background:#FF7A1A; width:0; }
+    #barP2 { position:absolute; right:0; top:0; bottom:0; background:#2F6BFF; width:0; }
+    #barMid { position:absolute; left:50%; top:-2px; bottom:-2px; width:2px; background:#FFD166; }
+    #matchHud { text-align:center; font-size:14px; min-height:1.2em; }
+    #matchHud.result { color:#FFD166; font-weight:700; font-size:16px; }
+    #debugToggle { display:none; position:absolute; right:0; top:0; border:none; background:transparent; color:#64748b; }
+    #game-container { flex:1 1 auto; min-height:0; position:relative; }
+    #dragPad { display:none; flex:0 0 25%; margin-top:6px; border:1px dashed #334155; border-radius:12px; color:#64748b; align-items:center; justify-content:center; font-size:13px; user-select:none; }
+    #app.playing { padding:4px 4px 0; }
+    #app.playing #settings { display:none; }
+    #app.playing #hud, #app.playing #dragPad { display:flex; }
+    #app.playing #debugToggle { display:block; }
+    #app.playing #game-container { flex:0 0 65%; }
+    #app.playing.debug #settings { display:block; position:absolute; left:8px; right:8px; top:12%; z-index:20; background:rgba(15,23,42,.94); }
+    #info { font-size:14px; color:#aaa; }
   </style>
 </head>
 <body>
   <div id="app">
     <div id="settings">
-      <h2 style="display: flex; align-items: center; gap: 10px;">
-        <img src="/logo.png" alt="땅따 | Turf Duel" style="height: 40px;">
-      </h2>
-      <div>
+      <h2 style="display:flex;align-items:center;gap:10px;"><img src="/logo.png" alt="땅따 | Turf Duel" style="height:40px;"></h2>
+      <div class="server-url">
         <label>Server URL:</label>
-        <input type="text" id="serverUrl" value="ws://localhost:2567" placeholder="ws://localhost:2567">
+        <input type="text" id="serverUrl" value="ws://localhost:2567">
       </div>
       <div>
         <button id="connectBtn">Connect to Server</button>
         <button id="botBtn">Play vs Bot (Local)</button>
       </div>
       <div id="info">
-        <p>Controls: Arrow keys or WASD</p>
+        <p>Controls: drag in the bottom pad to draw curves</p>
         <p id="status">Ready to connect</p>
       </div>
     </div>
+    <div id="hud">
+      <button type="button" id="debugToggle" aria-label="서버 정보">⚙</button>
+      <div id="hearts"><span id="heartsYou">♥♥♥</span><span id="heartsFoe">♥♥♥</span></div>
+      <div id="timer">2:30</div>
+      <div id="barWrap"><div id="barP1"></div><div id="barP2"></div><div id="barMid"></div></div>
+      <div id="matchHud" aria-live="polite"></div>
+    </div>
     <div id="game-container"></div>
+    <div id="dragPad">Drag here to draw</div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
