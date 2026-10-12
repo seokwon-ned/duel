@@ -3,6 +3,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { createInitialState, step } from '@turf-duel/engine';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
+import { clockRooms, TurfDuelClockRoom } from './rooms/TurfDuelClockRoom.js';
 import { TurfDuelState } from './schema/TurfDuelState.js';
 
 // Same limit math as production; shrink the window so CI stays fast.
@@ -78,6 +79,34 @@ async function startServer(port: number) {
   server.define('turf_duel', TurfDuelRoom);
   await server.listen(port);
   return server;
+}
+
+function clockOf(roomId: string): TurfDuelClockRoom {
+  const room = clockRooms.get(roomId);
+  if (!room) {
+    throw new Error(`No clock room for ${roomId}`);
+  }
+  return room;
+}
+
+async function startClockPair(port: number) {
+  const server = new Server({
+    transport: new WebSocketTransport({}),
+  });
+  server.define('turf_duel', TurfDuelClockRoom);
+  await server.listen(port);
+  const client1 = new Client(`ws://localhost:${port}`);
+  const client2 = new Client(`ws://localhost:${port}`);
+  const room1 = await client1.joinOrCreate<TurfDuelState>('turf_duel');
+  const room2 = await client2.joinOrCreate<TurfDuelState>('turf_duel');
+  disableAutoReconnect(room1);
+  disableAutoReconnect(room2);
+  await sleep(START_WAIT_MS);
+  if (room1.state.result) {
+    await shutdown(server);
+    throw new Error(`Warmup ended the match: ${JSON.stringify(room1.state.result)}`);
+  }
+  return { server, client1, client2, room1, room2, clock: clockOf(room1.roomId) };
 }
 
 async function startPair(port: number) {
@@ -710,6 +739,422 @@ async function testRoomDisposesAfterNormalEnd(): Promise<ReconnectionTestResult>
   }
 }
 
+async function testResumeAt29900Ms(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12590);
+  try {
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause');
+    clock.advance(29900);
+    const reconnected = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    await sleep(AFTER_RECONNECT_MS);
+
+    if (room1.state.result) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `29.9s must resume. Result: ${JSON.stringify(room1.state.result)}`,
+      };
+    }
+    if (room1.state.paused) {
+      await shutdown(server);
+      return { passed: false, message: '29.9s reconnect should unpause' };
+    }
+    const spent = reconnected.state.player2.totalDisconnectedMs as number;
+    if (spent < 29900 || spent > 29900 + 200) {
+      await shutdown(server);
+      return { passed: false, message: `Expected ~29900ms accrued, got ${spent}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Resume at 29.9s' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testForfeitAt30100Ms(): Promise<ReconnectionTestResult> {
+  const { server, room1, room2, clock } = await startClockPair(12591);
+  try {
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause');
+    clock.advance(30100);
+    await waitUntil(() => Boolean(room1.state.result), 500, 'forfeit at 30.1s');
+
+    const result = room1.state.result as { winner: number } | undefined;
+    if (!result || result.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `30.1s must forfeit. Result: ${JSON.stringify(result)}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Forfeit at 30.1s' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testForfeitAt15500Plus14800Ms(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12592);
+  try {
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause before 15.5s');
+    clock.advance(15500);
+    const mid = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    await sleep(150);
+    if (room1.state.result) {
+      await shutdown(server);
+      return { passed: false, message: '15.5s fragment must still be alive' };
+    }
+
+    await mid.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause before 14.8s');
+    clock.advance(14800);
+    const again = await manualReconnect<TurfDuelState>(client2, mid.reconnectionToken!).catch(() => null);
+    if (again) {
+      await waitUntil(() => Boolean(again.state.result), 500, '15.5+14.8 forfeit').catch(() => undefined);
+    }
+    await waitUntil(() => Boolean(room1.state.result), 500, '15.5+14.8 forfeit on remaining').catch(() => undefined);
+
+    const result = (again?.state.result ?? room1.state.result) as { winner: number } | undefined;
+    if (!result || result.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `15.5+14.8s must forfeit. Result: ${JSON.stringify(result)}` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Forfeit at 15.5s+14.8s' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testResumeAt15000Plus14000Ms(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12593);
+  try {
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause before 15s');
+    clock.advance(15000);
+    const mid = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    await sleep(150);
+    if (room1.state.result) {
+      await shutdown(server);
+      return { passed: false, message: '15s fragment must still be alive' };
+    }
+
+    await mid.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause before 14s');
+    clock.advance(14000);
+    const again = await manualReconnect<TurfDuelState>(client2, mid.reconnectionToken!);
+    await sleep(AFTER_RECONNECT_MS);
+
+    if (again.state.result || room1.state.result) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `15+14s must resume. Result: ${JSON.stringify(again.state.result ?? room1.state.result)}`,
+      };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Resume at 15s+14s' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testThirdDisconnectWhileOpponentDisconnected(): Promise<ReconnectionTestResult> {
+  const { server, client1, client2, room1, room2 } = await startPair(12594);
+  try {
+    await room2.leave(false);
+    await sleep(BRIEF_MS);
+    const r1 = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    await sleep(150);
+
+    const token2 = r1.reconnectionToken!;
+    await r1.leave(false);
+    await sleep(BRIEF_MS);
+    const r2 = await manualReconnect<TurfDuelState>(client2, token2);
+    await sleep(150);
+
+    const token1 = room1.reconnectionToken!;
+    await room1.leave(false);
+    await sleep(100);
+    await r2.leave(false);
+
+    const spectator = await manualReconnect<TurfDuelState>(client1, token1);
+    await waitUntil(() => Boolean(spectator.state.result), 1000, '3rd disconnect while opponent gone');
+
+    const result = spectator.state.result as { winner: number } | undefined;
+    if (!result || result.winner !== 1) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `3rd disconnect while opponent is gone must lose. Result: ${JSON.stringify(result)}`,
+      };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: '3rd disconnect loses while opponent is also disconnected' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testSameTickInputsBothApplied(): Promise<ReconnectionTestResult> {
+  const { server, room1, room2 } = await startPair(12595);
+  try {
+    room1.send('input', { direction: 'DOWN' });
+    room2.send('input', { direction: 'UP' });
+
+    await waitUntil(
+      () => room1.state.player1.direction === 'DOWN' && room1.state.player2.direction === 'UP',
+      1500,
+      'both same-tick directions applied',
+    );
+
+    if (room1.state.player1.direction !== 'DOWN' || room1.state.player2.direction !== 'UP') {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Both inputs must apply. P1=${room1.state.player1.direction} P2=${room1.state.player2.direction}`,
+      };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Same-tick inputs from both players are both applied' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testThirdClientCannotTakeSeat(): Promise<ReconnectionTestResult> {
+  const { server, room1, room2 } = await startPair(12596);
+  try {
+    const client3 = new Client('ws://localhost:12596');
+    let stole = false;
+    try {
+      await client3.joinById<TurfDuelState>(room1.roomId);
+      stole = true;
+    } catch {
+      /* expected */
+    }
+    if (stole) {
+      await shutdown(server);
+      return { passed: false, message: 'Third client joined the full room by id' };
+    }
+
+    const other = await client3.joinOrCreate<TurfDuelState>('turf_duel');
+    disableAutoReconnect(other);
+    if (other.roomId === room1.roomId || other.roomId === room2.roomId) {
+      await shutdown(server);
+      return { passed: false, message: 'Third client took a seat in the full match' };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Third client cannot take a seat' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testForgedExpiredReusedTokensRejected(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12597);
+  try {
+    const stranger = new Client('ws://localhost:12597');
+    try {
+      await stranger.reconnect('forged-not-a-token');
+      await shutdown(server);
+      return { passed: false, message: 'Forged token must be rejected' };
+    } catch {
+      /* expected */
+    }
+
+    const firstToken = room2.reconnectionToken!;
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause for token tests');
+
+    const ok = await manualReconnect<TurfDuelState>(client2, firstToken);
+    try {
+      await stranger.reconnect(firstToken);
+      await shutdown(server);
+      return { passed: false, message: 'Reused token must be rejected' };
+    } catch {
+      /* expected */
+    }
+
+    const expireToken = ok.reconnectionToken!;
+    await ok.leave(false);
+    await sleep(1500);
+    try {
+      await stranger.reconnect(expireToken);
+      await shutdown(server);
+      return { passed: false, message: 'Expired token must be rejected' };
+    } catch {
+      /* expected */
+    }
+
+    void clock;
+    await shutdown(server);
+    return { passed: true, message: 'Forged, reused, and expired tokens are rejected' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testFailedReconnectDoesNotConsumeLimits(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12598);
+  try {
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause');
+    const countAfterLeave = room1.state.player2.disconnectCount as number;
+    if (countAfterLeave !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `Expected count 1 after leave, got ${countAfterLeave}` };
+    }
+
+    clock.advance(5000);
+    try {
+      await client2.reconnect('bad-token');
+      await shutdown(server);
+      return { passed: false, message: 'Bad token should fail' };
+    } catch {
+      /* expected */
+    }
+
+    if ((room1.state.player2.disconnectCount as number) !== 1) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Failed reconnect consumed count: ${room1.state.player2.disconnectCount}`,
+      };
+    }
+
+    const ok = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    await sleep(AFTER_RECONNECT_MS);
+
+    const count = ok.state.player2.disconnectCount as number;
+    const spent = ok.state.player2.totalDisconnectedMs as number;
+    if (count !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `Failed reconnect used a disconnect count: ${count}` };
+    }
+    if (spent < 5000 || spent > 5200) {
+      await shutdown(server);
+      return { passed: false, message: `Failed reconnect used extra time: ${spent}ms` };
+    }
+    if (ok.state.result) {
+      await shutdown(server);
+      return { passed: false, message: 'Failed reconnect must not forfeit' };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Failed reconnect does not consume count or time' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testForfeitResultOnBothThenDispose(): Promise<ReconnectionTestResult> {
+  const { server, client2, room1, room2, clock } = await startClockPair(12599);
+  try {
+    let left1 = false;
+    let left2 = false;
+    room1.onLeave(() => {
+      left1 = true;
+    });
+
+    await room2.leave(false);
+    await waitUntil(() => room1.state.paused, 1000, 'pause before forfeit clock');
+    clock.advance(30100);
+    await waitUntil(() => Boolean(room1.state.result), 500, 'forfeit result on P1');
+    const r1 = room1.state.result as { winner: number } | undefined;
+    if (!r1 || r1.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `P1 missing forfeit. ${JSON.stringify(r1)}` };
+    }
+
+    const p2 = await manualReconnect<TurfDuelState>(client2, room2.reconnectionToken!);
+    p2.onLeave(() => {
+      left2 = true;
+    });
+    await waitUntil(() => Boolean(p2.state.result), 500, 'forfeit result on P2');
+    const r2 = p2.state.result as { winner: number } | undefined;
+    if (!r2 || r2.winner !== 1) {
+      await shutdown(server);
+      return { passed: false, message: `P2 missing forfeit. ${JSON.stringify(r2)}` };
+    }
+
+    const endedAt = Date.now();
+    await waitUntil(() => left1 && left2, 4000, 'dispose after forfeit');
+    const elapsed = Date.now() - endedAt;
+    if (elapsed > 3500) {
+      await shutdown(server);
+      return { passed: false, message: `Forfeit room dispose took ${elapsed}ms` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: `Forfeit result on both clients; disposed in ${elapsed}ms` };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testVoidResultOnBothThenDispose(): Promise<ReconnectionTestResult> {
+  const { server, client1, client2, room1, room2, clock } = await startClockPair(12600);
+  try {
+    const token1 = room1.reconnectionToken!;
+    const token2 = room2.reconnectionToken!;
+    await room1.leave(false);
+    await room2.leave(false);
+    await waitUntil(() => (clockRooms.get(room1.roomId)?.state.disconnectedPlayer ?? 0) === 3, 1000, 'both disconnected');
+    clock.advance(30100);
+    await sleep(80);
+
+    const s1 = await manualReconnect<TurfDuelState>(client1, token1);
+    const s2 = await manualReconnect<TurfDuelState>(client2, token2);
+    await waitUntil(() => Boolean(s1.state.result) && Boolean(s2.state.result), 1000, 'void on both');
+
+    const a = s1.state.result as { winner: number } | undefined;
+    const b = s2.state.result as { winner: number } | undefined;
+    if (!a || a.winner !== 0 || !b || b.winner !== 0) {
+      await shutdown(server);
+      return { passed: false, message: `Void must reach both. P1=${JSON.stringify(a)} P2=${JSON.stringify(b)}` };
+    }
+
+    let left1 = false;
+    let left2 = false;
+    s1.onLeave(() => {
+      left1 = true;
+    });
+    s2.onLeave(() => {
+      left2 = true;
+    });
+    const endedAt = Date.now();
+    await waitUntil(() => left1 && left2, 4000, 'dispose after void');
+    const elapsed = Date.now() - endedAt;
+    if (elapsed > 3500) {
+      await shutdown(server);
+      return { passed: false, message: `Void room dispose took ${elapsed}ms` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: `Void result on both clients; disposed in ${elapsed}ms` };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
 async function runAllTests() {
   console.log('🎮 땅따 Reconnection E2E Tests\n');
 
@@ -732,6 +1177,17 @@ async function runAllTests() {
     { name: 'Room disposes within ~3s after normal end', fn: testRoomDisposesAfterNormalEnd },
     { name: 'Input while paused is dropped', fn: testInputDroppedWhilePaused },
     { name: 'Input after result is dropped', fn: testInputDroppedAfterResult },
+    { name: 'Resume at 29.9s', fn: testResumeAt29900Ms },
+    { name: 'Forfeit at 30.1s', fn: testForfeitAt30100Ms },
+    { name: 'Forfeit at 15.5s+14.8s', fn: testForfeitAt15500Plus14800Ms },
+    { name: 'Resume at 15s+14s', fn: testResumeAt15000Plus14000Ms },
+    { name: '3rd disconnect loses while opponent is also disconnected', fn: testThirdDisconnectWhileOpponentDisconnected },
+    { name: 'Same-tick inputs from both players are both applied', fn: testSameTickInputsBothApplied },
+    { name: 'Third client cannot take a seat', fn: testThirdClientCannotTakeSeat },
+    { name: 'Forged, expired, and reused tokens are rejected', fn: testForgedExpiredReusedTokensRejected },
+    { name: 'Failed reconnect does not consume count or time', fn: testFailedReconnectDoesNotConsumeLimits },
+    { name: 'Forfeit result reaches both clients and room disposes', fn: testForfeitResultOnBothThenDispose },
+    { name: 'Void result reaches both clients and room disposes', fn: testVoidResultOnBothThenDispose },
   ];
 
   let passed = 0;
