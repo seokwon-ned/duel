@@ -61,6 +61,57 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player1.trail.length).toBeGreaterThanOrEqual(5);
   });
 
+  test('a straight line of N cells keeps moving and finishes still drawing', () => {
+    const N = 20;
+    let state = createInitialState({ width: 48, height: 48, matchTicks: 2000 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(47);
+    state.sparx2.yFp = toFp(0);
+    const startY = state.player1.position.y;
+    const ticks = Math.ceil((N * 256) / 192) + 2;
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], ticks);
+    expect(state.player1.hearts).toBe(99);
+    expect(state.player1.drawing).toBe(true);
+    expect(state.player1.trail.length).toBeGreaterThanOrEqual(N);
+    expect(startY - state.player1.position.y).toBeGreaterThanOrEqual(N);
+    expect(state.player1.trail.length).toBe(new Set(state.player1.trail.map((p) => `${p.x},${p.y}`)).size);
+  });
+
+  test('a long curve keeps moving and finishes still drawing', () => {
+    let state = createInitialState({ width: 64, height: 64, matchTicks: 4000 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(2);
+    state.boss.yFp = toFp(2);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(63);
+    state.sparx2.yFp = toFp(0);
+    // Wave up through the interior: up, up-right, up, up-left, up.
+    const script: Array<{ heading: number; ticks: number }> = [
+      { heading: 192, ticks: 16 },
+      { heading: 224, ticks: 14 },
+      { heading: 192, ticks: 16 },
+      { heading: 160, ticks: 14 },
+      { heading: 192, ticks: 16 },
+    ];
+    for (const seg of script) {
+      state = run(state, [{ player: 1, heading: seg.heading, thrusting: true }], seg.ticks);
+    }
+    expect(state.player1.hearts).toBe(99);
+    expect(state.player1.drawing).toBe(true);
+    expect(state.player1.trail.length).toBeGreaterThanOrEqual(24);
+    const xs = new Set(state.player1.trail.map((p) => p.x));
+    const ys = new Set(state.player1.trail.map((p) => p.y));
+    expect(xs.size).toBeGreaterThan(3);
+    expect(ys.size).toBeGreaterThan(3);
+  });
+
   test('returning to the edge claims the side without the boss', () => {
     let state = createInitialState({ width: 16, height: 16, matchTicks: 500 });
     state.player1.hearts = 99;
