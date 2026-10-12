@@ -33,7 +33,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected previousGrid: CellType[][] | null = null;
   protected stateHistory: MatchState[] = []; // For rollback (keep last 10 ticks)
   protected readonly LAG_WINDOW_TICKS = 6; // ~300ms at 20Hz
-  protected readonly HISTORY_SIZE = 10;
+  protected readonly HISTORY_SIZE = 16;
 
   maxClients = 2;
 
@@ -100,9 +100,11 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
     console.log(`Player ${playerNum} joined: ${client.sessionId}`);
 
+    client.send('player', { num: playerNum });
+
     // Hook into WebSocket to measure actual bytes sent
-    // Try multiple paths to access the underlying WebSocket
-    const ws = (client as any).raw || (client as any)._connection || (client as any).connection;
+    // Colyseus 0.18 exposes the socket as client.ref
+    const ws = (client as any).ref || (client as any).raw || (client as any)._connection || (client as any).connection;
     
     if (ws && ws.send) {
       const originalWsSend = ws.send.bind(ws);
@@ -153,8 +155,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (!playerNum) return;
     
     console.log(`Player ${playerNum} left: ${client.sessionId} (code: ${code})`);
-    
-    // If consented leave (code 1000 or 4001), don't track reconnection
+
+    // Consented leave (leave(true) / server dispose): skip reconnection window.
+    // Client-triggered leave(false) and unexpected drops still count.
     if (code === 1000 || code === 4001) {
       return;
     }
@@ -326,11 +329,24 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }
   }
 
+  /** Test-room hook. Production is a no-op. */
+  protected onBeforeTick(): void {}
+
+  /** Test-room hook: record the cell where a tagged/queued input is applied. */
+  protected onInputApplied(
+    _player: 1 | 2,
+    _tick: number,
+    _position: { x: number; y: number },
+    _oldDirection: Direction,
+    _newDirection: Direction,
+  ): void {}
+
   protected startGame() {
     console.log('Starting game loop at 20Hz');
     
     const tickInterval = 1000 / TICKS_PER_SECOND;
-    
+    this.stateHistory.push(JSON.parse(JSON.stringify(this.matchState)));
+
     // Track per-second bandwidth
     const bandwidthInterval = setInterval(() => {
       for (const [sessionId] of this.playerMapping) {
@@ -377,17 +393,28 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       
       if (!this.matchState.paused && this.matchState.result === null) {
         try {
-          // Save state history for rollback (deep clone)
+          this.onBeforeTick();
+
+          const inputs = [...this.inputQueue];
+          this.inputQueue = [];
+
+          for (const input of inputs) {
+            const playerState = input.player === 1 ? this.matchState.player1 : this.matchState.player2;
+            this.onInputApplied(
+              input.player,
+              this.matchState.tick,
+              { x: playerState.position.x, y: playerState.position.y },
+              playerState.direction,
+              input.direction,
+            );
+          }
+          
+          const result = step(this.matchState, inputs);
+          this.matchState = result.state;
           this.stateHistory.push(JSON.parse(JSON.stringify(this.matchState)));
           if (this.stateHistory.length > this.HISTORY_SIZE) {
             this.stateHistory.shift();
           }
-          
-          const inputs = [...this.inputQueue];
-          this.inputQueue = [];
-          
-          const result = step(this.matchState, inputs);
-          this.matchState = result.state;
           this.syncState();
 
           if (this.matchState.result !== null) {
@@ -436,59 +463,52 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     // Client-side prediction with rollback
     if (clientTick !== undefined) {
       const tickDiff = this.matchState.tick - clientTick;
-      
-      // Clamp to lag window: accept inputs up to LAG_WINDOW_TICKS behind
-      if (tickDiff < 0) {
-        // Future tick - clamp to current tick
+
+      if (tickDiff <= 0) {
+        // Current or future tick — clamp to now and apply on the next step
         input.clientTick = this.matchState.tick;
         this.inputQueue.push(input);
       } else if (tickDiff <= this.LAG_WINDOW_TICKS) {
-        // Within lag window - perform rollback
         this.handleRollback(input, clientTick);
       } else {
-        // Too old - clamp to current tick
+        // Too old — clamp so it cannot rewrite history
         input.clientTick = this.matchState.tick;
         this.inputQueue.push(input);
       }
     } else {
-      // No clientTick - legacy behavior
       this.inputQueue.push(input);
     }
   }
   
   private handleRollback(input: PlayerInput, targetTick: number) {
-    // Find state at targetTick
-    const historyEntry = this.stateHistory.find(s => s.tick === targetTick);
+    const historyEntry =
+      this.stateHistory.find((s) => s.tick === targetTick) ??
+      (this.matchState.tick === targetTick ? this.matchState : undefined);
+
     if (!historyEntry) {
       console.log(`No history for tick ${targetTick}, applying at current tick ${this.matchState.tick}`);
-      // No history for that tick - apply at current tick
       input.clientTick = this.matchState.tick;
       this.inputQueue.push(input);
       return;
     }
-    
-    console.log(`Rollback: restoring tick ${targetTick}, current tick ${this.matchState.tick}`);
-    
-    // Deep clone the historical state
+
     const restoredState = JSON.parse(JSON.stringify(historyEntry)) as MatchState;
-    
-    // Re-simulate from targetTick to current tick with the new input
+    const playerState = input.player === 1 ? restoredState.player1 : restoredState.player2;
+    this.onInputApplied(
+      input.player,
+      targetTick,
+      { x: playerState.position.x, y: playerState.position.y },
+      playerState.direction,
+      input.direction,
+    );
+
     const ticksToResimulate = this.matchState.tick - targetTick;
-    
     let currentState = restoredState;
-    // Apply input at the first tick (targetTick)
-    const result = step(currentState, [input]);
-    currentState = result.state;
-    
-    // Continue simulation without new inputs for remaining ticks
+    currentState = step(currentState, [input]).state;
     for (let i = 1; i < ticksToResimulate; i++) {
-      const result = step(currentState, []);
-      currentState = result.state;
+      currentState = step(currentState, []).state;
     }
-    
-    console.log(`Rollback complete: from tick ${targetTick} to ${this.matchState.tick}, player ${input.player} applied ${input.direction}`);
-    
-    // Update matchState with re-simulated state
+
     this.matchState = currentState;
     this.syncState();
   }
@@ -501,12 +521,16 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     state.player1.direction = this.matchState.player1.direction;
     state.player1.isAlive = this.matchState.player1.isAlive;
     state.player1.territoryCells = this.matchState.player1.territoryCells;
+    state.player1.movementAccumulator = this.matchState.player1.movementAccumulator;
+    state.player1.inputBuffer = this.matchState.player1.inputBuffer ?? '';
 
     state.player2.position.x = this.matchState.player2.position.x;
     state.player2.position.y = this.matchState.player2.position.y;
     state.player2.direction = this.matchState.player2.direction;
     state.player2.isAlive = this.matchState.player2.isAlive;
     state.player2.territoryCells = this.matchState.player2.territoryCells;
+    state.player2.movementAccumulator = this.matchState.player2.movementAccumulator;
+    state.player2.inputBuffer = this.matchState.player2.inputBuffer ?? '';
 
     state.tick = this.matchState.tick;
     state.paused = this.matchState.paused;

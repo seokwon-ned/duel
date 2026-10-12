@@ -7,6 +7,8 @@ import {
   MatchState,
   CellType,
   GRID_SIZE,
+  ClientPredictor,
+  schemaToMatchState,
 } from '@turf-duel/engine';
 import { Bot } from '@turf-duel/bot';
 
@@ -51,9 +53,8 @@ class GameScene extends Phaser.Scene {
   private botInterval: NodeJS.Timeout | null = null;
   private infoText: Phaser.GameObjects.Text | null = null;
   
-  // Client-side prediction
-  private predictedState: MatchState | null = null;
-  private pendingInputs: Array<{ direction: Direction; tick: number }> = [];
+  // Client-side prediction (shared deterministic module)
+  private predictor: ClientPredictor | null = null;
   private lastServerTick = 0;
 
   constructor() {
@@ -108,29 +109,12 @@ class GameScene extends Phaser.Scene {
 
       if (newDirection) {
         this.currentDirection = newDirection;
-        if (this.room && this.matchState) {
-          // Client-side prediction: apply input immediately
-          const currentTick = this.matchState.tick;
-          this.pendingInputs.push({ direction: newDirection, tick: currentTick });
-          
-          // Predict next state
-          if (!this.predictedState) {
-            this.predictedState = JSON.parse(JSON.stringify(this.matchState));
-          }
-          
-          const result = step(this.predictedState!, [{
-            player: this.playerNum,
+        if (this.room && this.predictor?.predicted) {
+          const { clientTick } = this.predictor.applyInput(newDirection);
+          this.renderState(this.predictor.predicted);
+          this.room.send('input', {
             direction: newDirection,
-          }]);
-          this.predictedState = result.state;
-          
-          // Render predicted state
-          this.renderState(this.predictedState!);
-          
-          // Send to server with clientTick
-          this.room.send('input', { 
-            direction: newDirection,
-            clientTick: currentTick,
+            clientTick,
           });
         }
       }
@@ -140,89 +124,49 @@ class GameScene extends Phaser.Scene {
   startOnlineMode(room: Room) {
     this.isOnlineMode = true;
     this.room = room;
+    this.predictor = new ClientPredictor(this.playerNum);
+
+    room.onMessage('player', (message: { num: 1 | 2 }) => {
+      this.playerNum = message.num;
+      this.predictor = new ClientPredictor(this.playerNum);
+      if (room.state) {
+        this.predictor.reconcile(schemaToMatchState(room.state));
+      }
+    });
 
     room.onStateChange.once((state) => {
-      // Initial state received, render full board
       this.renderFromSchema(state);
-      
-      // Initialize matchState for prediction
-      this.matchState = this.convertSchemaToMatchState(state);
-      this.lastServerTick = this.matchState.tick;
+      const serverState = schemaToMatchState(state);
+      this.matchState = serverState;
+      this.lastServerTick = serverState.tick;
+      this.predictor?.reconcile(serverState);
+      this.updateDebug(serverState);
     });
 
     room.onStateChange((state) => {
-      // Server reconciliation
-      const serverState = this.convertSchemaToMatchState(state);
-      const serverTick = serverState.tick;
-      
-      // Remove acknowledged inputs
-      this.pendingInputs = this.pendingInputs.filter(input => input.tick > serverTick);
-      
-      // Reconcile: start from server state and re-apply pending inputs
-      if (this.pendingInputs.length > 0) {
-        this.predictedState = JSON.parse(JSON.stringify(serverState));
-        
-        for (const input of this.pendingInputs) {
-          const result = step(this.predictedState!, [{
-            player: this.playerNum,
-            direction: input.direction,
-          }]);
-          this.predictedState = result.state;
-        }
-        
-        // Render reconciled predicted state
-        this.renderState(this.predictedState!);
-      } else {
-        // No pending inputs, use server state directly
-        this.predictedState = null;
-        this.renderState(serverState);
-      }
-      
+      const serverState = schemaToMatchState(state);
+      this.predictor?.reconcile(serverState);
+      const toRender = this.predictor?.predicted ?? serverState;
+      this.renderState(toRender);
       this.matchState = serverState;
-      this.lastServerTick = serverTick;
+      this.lastServerTick = serverState.tick;
+      this.updateDebug(toRender);
     });
 
     room.onMessage('*', (type, message) => {
       console.log('Message from server:', type, message);
     });
   }
-  
-  private convertSchemaToMatchState(state: any): MatchState {
-    // Convert Colyseus schema to engine MatchState
-    const grid: CellType[][] = [];
-    for (let y = 0; y < GRID_SIZE; y++) {
-      grid[y] = [];
-      for (let x = 0; x < GRID_SIZE; x++) {
-        grid[y][x] = state.grid[y * GRID_SIZE + x];
-      }
+
+  private updateDebug(state: MatchState) {
+    if (typeof window !== 'undefined' && window.__turfDebug) {
+      window.__turfDebug.tick = state.tick;
+      window.__turfDebug.ownedCells = {
+        p1: state.player1.territoryCells,
+        p2: state.player2.territoryCells,
+      };
+      window.__turfDebug.renderedFrames++;
     }
-    
-    return {
-      grid,
-      player1: {
-        position: { x: state.player1.position.x, y: state.player1.position.y },
-        direction: state.player1.direction as Direction,
-        inputBuffer: null,
-        isAlive: state.player1.isAlive,
-        territoryCells: state.player1.territoryCells,
-        movementAccumulator: 0,
-      },
-      player2: {
-        position: { x: state.player2.position.x, y: state.player2.position.y },
-        direction: state.player2.direction as Direction,
-        inputBuffer: null,
-        isAlive: state.player2.isAlive,
-        territoryCells: state.player2.territoryCells,
-        movementAccumulator: 0,
-      },
-      tick: state.tick,
-      paused: state.paused,
-      result: state.result ? {
-        winner: state.result.winner,
-        reason: state.result.reason,
-        tick: state.result.tick,
-      } : null,
-    };
   }
 
   startBotMode() {
@@ -332,6 +276,7 @@ class GameScene extends Phaser.Scene {
 
     this.cells[state.player1.position.y][state.player1.position.x].setStrokeStyle(2, 0xFFFFFF);
     this.cells[state.player2.position.y][state.player2.position.x].setStrokeStyle(2, 0xFFFFFF);
+    this.updateDebug(state);
 
     if (this.infoText) {
       const p1Percent = Math.round((state.player1.territoryCells / (GRID_SIZE * GRID_SIZE)) * 100);

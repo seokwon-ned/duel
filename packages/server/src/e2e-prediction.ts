@@ -1,278 +1,291 @@
-// Client-Side Prediction E2E Test
-// Tests that client prediction works correctly with 200ms latency
+// Client-side prediction E2E:
+// 1) Real 200ms bidirectional delay; turn cell == head at clientTick (0 offset), 5 phases
+// 2) Predicted/reconciled local grid+head == authority server state
+// 3) Out-of-window / future ticks are clamped
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { Client } from '@colyseus/sdk';
-import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
-import { Direction, GRID_SIZE } from '@turf-duel/engine';
+import { TurfDuelTestRoom, testRooms, TurnLog } from './rooms/TurfDuelTestRoom.js';
+import { DelayedClient, DelayedRoom } from './test-utils/DelayedClient.js';
+import { ClientPredictor, Direction } from '@turf-duel/engine';
+
+const DELAY_MS = 200;
 
 interface TestResult {
   passed: boolean;
   message: string;
 }
 
-// Helper to add artificial latency
 function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function testPredictionWithLatency(): Promise<TestResult> {
-  console.log('\n=== Test: 200ms Latency - Turn at Intended Cell ===\n');
-  
+function manhattan(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function perpendicular(dir: Direction): Direction {
+  switch (dir) {
+    case Direction.RIGHT:
+      return Direction.DOWN;
+    case Direction.DOWN:
+      return Direction.LEFT;
+    case Direction.LEFT:
+      return Direction.UP;
+    case Direction.UP:
+      return Direction.RIGHT;
+  }
+}
+
+/** Pick a legal perpendicular that stays farthest from the walls. */
+function safeTurn(pos: { x: number; y: number }, dir: Direction): Direction {
+  const options: Direction[] =
+    dir === Direction.UP || dir === Direction.DOWN
+      ? [Direction.LEFT, Direction.RIGHT]
+      : [Direction.UP, Direction.DOWN];
+  const room = (d: Direction) => {
+    if (d === Direction.UP) return pos.y;
+    if (d === Direction.DOWN) return 39 - pos.y;
+    if (d === Direction.LEFT) return pos.x;
+    return 39 - pos.x;
+  };
+  return room(options[0]) >= room(options[1]) ? options[0] : options[1];
+}
+
+async function waitUntil(pred: () => boolean, timeoutMs: number, label: string): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for ${label}`);
+    }
+    await delay(10);
+  }
+}
+
+async function startRoom(port: number): Promise<{
+  server: Server;
+  room1: DelayedRoom;
+  room2: DelayedRoom;
+  testRoom: TurfDuelTestRoom;
+  predictor: ClientPredictor;
+}> {
   const server = new Server({
     transport: new WebSocketTransport({}),
   });
+  server.define('turf_duel', TurfDuelTestRoom);
+  await server.listen(port);
 
-  server.define('turf_duel', TurfDuelRoom);
-  await server.listen(12573);
-  console.log('✓ Server started on port 12573');
+  const client1 = new DelayedClient(`ws://localhost:${port}`, DELAY_MS);
+  const client2 = new DelayedClient(`ws://localhost:${port}`, DELAY_MS);
+  const room1 = await client1.joinOrCreate('turf_duel');
+  const room2 = await client2.joinOrCreate('turf_duel');
+
+  const testRoom = testRooms.get(room1.roomId);
+  if (!testRoom) {
+    throw new Error(`Test room ${room1.roomId} not registered`);
+  }
+
+  const predictor = new ClientPredictor(1, DELAY_MS);
+  room1.onStateChange((state) => {
+    predictor.reconcile(state);
+  });
+
+  await waitUntil(() => predictor.predicted !== null && testRoom.getAuthorityState().tick > 2, 4000, 'first delayed state + ticks');
+
+  return { server, room1, room2, testRoom, predictor };
+}
+
+async function shutdown(server: Server, room1: DelayedRoom, room2: DelayedRoom): Promise<void> {
+  try {
+    await room1.leave(true);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await room2.leave(true);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await server.gracefullyShutdown(false);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function testPredictionWithLatency(): Promise<TestResult> {
+  console.log('\n=== Test: 200ms bidirectional delay — turn cell == intended cell (5 phases) ===\n');
+
+  const { server, room1, room2, testRoom, predictor } = await startRoom(12573);
+  const offsets: number[] = [];
 
   try {
-    const client1 = new Client('ws://localhost:12573');
-    const client2 = new Client('ws://localhost:12573');
+    for (let phase = 0; phase < 5; phase++) {
+      await waitUntil(
+        () => predictor.predicted !== null && predictor.predicted.tick % 5 === phase && predictor.predicted.tick > 4,
+        4000,
+        `tick phase ${phase}`,
+      );
 
-    const room1 = await client1.joinOrCreate('turf_duel');
-    const room2 = await client2.joinOrCreate('turf_duel');
-    console.log(`✓ Both clients connected to room: ${room1.roomId}`);
+      const beforeLogs = testRoom.turnLogs.length;
+      const dir = safeTurn(predictor.view().head, predictor.view().direction);
+      const { clientTick, intendedCell } = predictor.applyInput(dir);
 
-    // Wait for game to start and state sync
-    await delay(300);
+      console.log(
+        `Phase ${phase}: clientTick=${clientTick} intended=(${intendedCell.x},${intendedCell.y}) dir=${dir} serverTick=${testRoom.getAuthorityState().tick}`,
+      );
 
-    // Record player 1's position and tick when we send the input
-    let initialPos = {
-      x: (room1.state as any).player1.position.x,
-      y: (room1.state as any).player1.position.y,
-    };
-    let currentTick = (room1.state as any).tick;
+      room1.send('input', { direction: dir, clientTick });
 
-    console.log(`Initial P1 position: (${initialPos.x}, ${initialPos.y}) at tick ${currentTick}`);
+      await waitUntil(
+        () => testRoom.turnLogs.slice(beforeLogs).some((log) => log.player === 1 && log.newDirection === dir),
+        3000,
+        `turn log for phase ${phase}`,
+      );
 
-    // Send input with clientTick
-    room1.send('input', { 
-      direction: Direction.DOWN, 
-      clientTick: currentTick,
-    });
+      const log: TurnLog | undefined = testRoom.turnLogs
+        .slice(beforeLogs)
+        .find((entry) => entry.player === 1 && entry.newDirection === dir);
 
-    // Wait for server to process (simulate 200ms network latency)
-    await delay(200);
+      if (!log) {
+        return { passed: false, message: `Phase ${phase}: no turn log recorded` };
+      }
 
-    // Server should have rolled back and applied input at clientTick
-    // Check the direction changed (turn happened)
-    const newDirection = (room1.state as any).player1.direction;
-    const turnPosition = {
-      x: (room1.state as any).player1.position.x,
-      y: (room1.state as any).player1.position.y,
-    };
+      const offset = manhattan(log.position, intendedCell);
+      offsets.push(offset);
+      console.log(
+        `  server applied at tick ${log.tick} cell (${log.position.x},${log.position.y}) offset=${offset}`,
+      );
 
-    console.log(`After rollback: direction=${newDirection}, position=(${turnPosition.x}, ${turnPosition.y})`);
+      if (offset !== 0) {
+        await shutdown(server, room1, room2);
+        return {
+          passed: false,
+          message: `Phase ${phase}: turn-cell offset ${offset} (expected 0). intended=(${intendedCell.x},${intendedCell.y}) applied=(${log.position.x},${log.position.y}) clientTick=${clientTick} appliedTick=${log.tick}`,
+        };
+      }
 
-    // Verify direction changed (input was applied)
-    if (newDirection !== Direction.DOWN) {
-      await room1.leave(true);
-      await room2.leave(true);
-      await server.gracefullyShutdown();
-      return {
-        passed: false,
-        message: `Input not applied: direction is ${newDirection}, expected DOWN`,
-      };
+      await delay(250);
     }
 
-    // With rollback, position should be close to initial (within lag window tolerance)
-    // Since we applied at clientTick but server continued, some movement is expected
-    const distance = Math.abs(turnPosition.x - initialPos.x) + Math.abs(turnPosition.y - initialPos.y);
-    
-    console.log(`Distance from intended cell: ${distance}`);
-    
-    // Accept if turn happened within reasonable range (rollback worked)
-    if (distance > 1) {
-      await room1.leave(true);
-      await room2.leave(true);
-      await server.gracefullyShutdown();
-      return {
-        passed: false,
-        message: `Turn too far from intended cell: distance=${distance} (expected ≤1). Initial: (${initialPos.x},${initialPos.y}), Turn: (${turnPosition.x},${turnPosition.y})`,
-      };
-    }
-
-    await room1.leave(true);
-    await room2.leave(true);
-    await server.gracefullyShutdown();
-
+    await shutdown(server, room1, room2);
     return {
       passed: true,
-      message: `✓ Rollback worked: input applied with 200ms latency (distance=${distance})`,
+      message: `✓ 5/5 phases: turn cell == intended cell (offsets=${JSON.stringify(offsets)})`,
     };
   } catch (error) {
-    await server.gracefullyShutdown();
-    return {
-      passed: false,
-      message: `Error: ${error}`,
-    };
+    await shutdown(server, room1, room2);
+    return { passed: false, message: `Error: ${error}` };
   }
 }
 
 async function testReconciliationGridMatch(): Promise<TestResult> {
-  console.log('\n=== Test: Reconciliation - Grid Match After Sync ===\n');
-  
-  const server = new Server({
-    transport: new WebSocketTransport({}),
-  });
+  console.log('\n=== Test: predicted/reconciled local grid+head == server authority ===\n');
 
-  server.define('turf_duel', TurfDuelRoom);
-  await server.listen(12574);
-  console.log('✓ Server started on port 12574');
+  const { server, room1, room2, testRoom, predictor } = await startRoom(12574);
 
   try {
-    const client1 = new Client('ws://localhost:12574');
-    const client2 = new Client('ws://localhost:12574');
-
-    const room1 = await client1.joinOrCreate('turf_duel');
-    const room2 = await client2.joinOrCreate('turf_duel');
-    console.log(`✓ Both clients connected to room: ${room1.roomId}`);
-
-    // Wait for game to start
-    await delay(200);
-
-    // Send multiple inputs from both clients
-    for (let i = 0; i < 10; i++) {
-      const tick1 = (room1.state as any).tick;
-      const tick2 = (room2.state as any).tick;
-      
-      room1.send('input', { direction: Direction.RIGHT, clientTick: tick1 });
-      room2.send('input', { direction: Direction.LEFT, clientTick: tick2 });
-      
-      await delay(50); // 50ms between inputs
+    for (let i = 0; i < 8; i++) {
+      await waitUntil(() => predictor.predicted !== null, 2000, 'predictor ready');
+      const dir = safeTurn(predictor.view().head, predictor.view().direction);
+      const { clientTick } = predictor.applyInput(dir);
+      room1.send('input', { direction: dir, clientTick });
+      await delay(80);
     }
 
-    // Wait for sync
-    await delay(500);
+    // Flush send + receive delays and let pending inputs ack
+    await delay(DELAY_MS * 2 + 400);
 
-    // Compare grids between both clients
-    const grid1 = (room1.state as any).grid;
-    const grid2 = (room2.state as any).grid;
+    const authority = testRoom.getAuthorityState();
+    const view = predictor.view();
+    const gridDiffs = predictor.gridDiff(authority.grid);
+    const headOffset = manhattan(view.head, authority.player1.position);
 
-    let diffCount = 0;
-    for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
-      if (grid1[i] !== grid2[i]) {
-        diffCount++;
-      }
-    }
+    console.log(`grid diffs=${gridDiffs} head offset=${headOffset} localTick=${view.tick} serverTick=${authority.tick}`);
 
-    console.log(`Grid diff: ${diffCount} cells (expected 0)`);
+    await shutdown(server, room1, room2);
 
-    await room1.leave(true); // consented leave, no reconnection
-    await room2.leave(true);
-    await server.gracefullyShutdown();
-
-    if (diffCount > 0) {
+    if (gridDiffs !== 0 || headOffset !== 0) {
       return {
         passed: false,
-        message: `Grids don't match after reconciliation: ${diffCount} cell differences`,
+        message: `Reconcile mismatch: gridDiffs=${gridDiffs} headOffset=${headOffset} (expected 0/0)`,
       };
     }
 
     return {
       passed: true,
-      message: `✓ Both clients have identical grids (0 diff)`,
+      message: `✓ Predicted/reconciled grid and head match server (0/0)`,
     };
   } catch (error) {
-    await server.gracefullyShutdown();
-    return {
-      passed: false,
-      message: `Error: ${error}`,
-    };
+    await shutdown(server, room1, room2);
+    return { passed: false, message: `Error: ${error}` };
   }
 }
 
 async function testOutOfWindowInputsClamped(): Promise<TestResult> {
-  console.log('\n=== Test: Out-of-Window Inputs Clamped ===\n');
-  
-  const server = new Server({
-    transport: new WebSocketTransport({}),
-  });
+  console.log('\n=== Test: out-of-window / future ticks clamped ===\n');
 
-  server.define('turf_duel', TurfDuelRoom);
-  await server.listen(12575);
-  console.log('✓ Server started on port 12575');
+  const { server, room1, room2, testRoom } = await startRoom(12575);
 
   try {
-    const client1 = new Client('ws://localhost:12575');
-    const client2 = new Client('ws://localhost:12575');
+    const tickBefore = testRoom.getAuthorityState().tick;
+    const posBefore = { ...testRoom.getAuthorityState().player1.position };
 
-    const room1 = await client1.joinOrCreate('turf_duel');
-    const room2 = await client2.joinOrCreate('turf_duel');
-    console.log(`✓ Both clients connected to room: ${room1.roomId}`);
+    room1.send('input', { direction: Direction.UP, clientTick: tickBefore - 20 });
+    room1.send('input', { direction: Direction.DOWN, clientTick: tickBefore + 100 });
 
-    // Wait for game to start
-    await delay(200);
+    await delay(DELAY_MS + 400);
 
-    const currentTick = (room1.state as any).tick;
+    const after = testRoom.getAuthorityState();
+    const p1Alive = after.player1.isAlive;
+    const p2Alive = after.player2.isAlive;
 
-    // Send input with very old tick (beyond lag window)
-    room1.send('input', { direction: Direction.UP, clientTick: currentTick - 20 });
-    
-    // Send input with future tick
-    room1.send('input', { direction: Direction.DOWN, clientTick: currentTick + 100 });
+    // Old tick must not rewind / rewrite the past position as if applied 20 ticks ago
+    // (player may have moved forward from clamping-to-now, which is allowed)
+    const movedBackwards =
+      after.player1.position.x < posBefore.x - 1 || after.player1.position.y < posBefore.y - 1;
 
-    await delay(300);
-
-    // Verify game state is still valid (didn't crash or produce invalid state)
-    const p1Alive = (room1.state as any).player1.isAlive;
-    const p2Alive = (room1.state as any).player2.isAlive;
-
-    await room1.leave(true); // consented leave, no reconnection
-    await room2.leave(true);
-    await server.gracefullyShutdown();
+    await shutdown(server, room1, room2);
 
     if (!p1Alive && !p2Alive) {
-      return {
-        passed: false,
-        message: 'Both players died (possible invalid state from bad tick)',
-      };
+      return { passed: false, message: 'Both players died from out-of-window ticks' };
+    }
+    if (movedBackwards) {
+      return { passed: false, message: 'Out-of-window input rewrote a past outcome' };
     }
 
     return {
       passed: true,
-      message: '✓ Out-of-window inputs clamped, game state remains valid',
+      message: '✓ Out-of-window/future inputs clamped; past outcomes unchanged',
     };
   } catch (error) {
-    await server.gracefullyShutdown();
-    return {
-      passed: false,
-      message: `Error: ${error}`,
-    };
+    await shutdown(server, room1, room2);
+    return { passed: false, message: `Error: ${error}` };
   }
 }
 
 async function runTests() {
-  console.log('🎮 Client-Side Prediction E2E Tests\n');
+  console.log('🎮 Client-Side Prediction E2E Tests (200ms bidirectional delay)\n');
 
   const results: TestResult[] = [];
-
   results.push(await testPredictionWithLatency());
   results.push(await testReconciliationGridMatch());
   results.push(await testOutOfWindowInputsClamped());
 
   console.log('\n=== Test Results ===\n');
-  
   let passedCount = 0;
   for (const result of results) {
-    if (result.passed) {
-      console.log(`✅ ${result.message}`);
-      passedCount++;
-    } else {
-      console.log(`❌ ${result.message}`);
-    }
+    console.log(`${result.passed ? '✅' : '❌'} ${result.message}`);
+    if (result.passed) passedCount++;
   }
-
   console.log(`\n${passedCount}/${results.length} tests passed\n`);
 
-  if (passedCount < results.length) {
-    process.exit(1);
-  }
+  process.exit(passedCount < results.length ? 1 : 0);
 }
 
-runTests().catch(error => {
+runTests().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });

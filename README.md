@@ -309,7 +309,7 @@ npm run sim:bandwidth
 **측정 방법:**
 - 실제 WebSocket `message` 이벤트에서 바이트 카운트
 - Colyseus @colyseus/schema 5.0.36 delta encoding
-- 20Hz tick rate, 150초 실시간 매치 (~3000 ticks, ±20 variance)
+- 20Hz tick rate, 150초 실시간 매치 (exactly 3000 ticks)
 - 영토 확장 패턴 (2x2 → 15x15 growing loops)
 - 매 초마다 샘플링하여 avg/P95/peak/steady-state-peak 계산
 - Full grid (40×40 cells) synced every tick for lossless state under latency
@@ -402,8 +402,8 @@ npm run sim:bandwidth
 npm run test:prediction  # 200ms 지연, 그리드 일치, 윈도우 클램프
 ```
 
-- ✅ 200ms 지연 하 의도한 셀에서 턴
-- ✅ 조정 후 양 클라이언트 그리드 일치 (0 차이)
+- ✅ 양방향 200ms 지연 프록시 하에서 서버 턴 셀 == clientTick 머리 셀 (0칸, 5 phase)
+- ✅ 클라이언트 예측/조정 그리드·머리가 서버 권한 상태와 0 차이
 - ✅ 윈도우 밖/미래 입력 클램프 및 유효한 상태 유지
    - 앱 재실행 시 "진행 중인 대전으로 돌아가기" 버튼 표시
    - 판 종료 후 토큰 자동 삭제
