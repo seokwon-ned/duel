@@ -1,6 +1,7 @@
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
+import { createInitialState, step } from '@turf-duel/engine';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
 import { TurfDuelState } from './schema/TurfDuelState.js';
 
@@ -21,6 +22,15 @@ interface ReconnectionTestResult {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Same inputs (none) as the live room, with no pause. */
+function simulateUnpaused(ticks: number) {
+  let state = createInitialState();
+  while (state.tick < ticks && !state.result) {
+    state = step(state, []).state;
+  }
+  return state;
 }
 
 async function waitUntil(pred: () => boolean, timeoutMs: number, label: string): Promise<void> {
@@ -54,6 +64,20 @@ async function shutdown(server: Server): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+function rawSocket(room: { connection?: unknown }): { close(code?: number, reason?: string): void } | null {
+  const connection = room.connection as { transport?: { ws?: { close: (code?: number, reason?: string) => void } }; ws?: { close: (code?: number, reason?: string) => void } } | undefined;
+  return connection?.transport?.ws ?? connection?.ws ?? null;
+}
+
+async function startServer(port: number) {
+  const server = new Server({
+    transport: new WebSocketTransport({}),
+  });
+  server.define('turf_duel', TurfDuelRoom);
+  await server.listen(port);
+  return server;
 }
 
 async function startPair(port: number) {
@@ -108,18 +132,21 @@ async function testReconnectWithinTimeResumesMatch(): Promise<ReconnectionTestRe
       return { passed: false, message: 'Game should resume after reconnection' };
     }
 
-    const p1PosAfterReconnect = {
-      x: room1.state.player1.position.x,
-      y: room1.state.player1.position.y,
-    };
+    await waitUntil(() => room1.state.tick >= tickWhilePaused + 6, 2000, 'ticks after resume');
 
-    const moved = Math.abs(p1PosWhilePaused.x - p1PosAfterReconnect.x)
-      + Math.abs(p1PosWhilePaused.y - p1PosAfterReconnect.y);
-    if (moved > 1) {
+    const expected = simulateUnpaused(room1.state.tick);
+    const p1 = room1.state.player1.position;
+    const p2 = room1.state.player2.position;
+    if (
+      p1.x !== expected.player1.position.x ||
+      p1.y !== expected.player1.position.y ||
+      p2.x !== expected.player2.position.x ||
+      p2.y !== expected.player2.position.y
+    ) {
       await shutdown(server);
       return {
         passed: false,
-        message: `Positions should not jump during disconnect. Before: (${p1PosWhilePaused.x}, ${p1PosWhilePaused.y}), After: (${p1PosAfterReconnect.x}, ${p1PosAfterReconnect.y})`,
+        message: `Resume position must match an unpaused engine run. live P1=(${p1.x},${p1.y}) P2=(${p2.x},${p2.y}) expected P1=(${expected.player1.position.x},${expected.player1.position.y}) P2=(${expected.player2.position.x},${expected.player2.position.y}) tick=${room1.state.tick} pausedAt=${tickWhilePaused} pausedPos=(${p1PosWhilePaused.x},${p1PosWhilePaused.y})`,
       };
     }
 
@@ -465,43 +492,37 @@ async function testOverlappingSameTickBothExceedVoid(): Promise<ReconnectionTest
   }
 }
 
-async function testVoluntaryLeave4000Counts(): Promise<ReconnectionTestResult> {
-  const { server, client2, room1, room2 } = await startPair(12579);
+async function testVoluntaryLeave4000ImmediateLoss(): Promise<ReconnectionTestResult> {
+  const { server, room1, room2 } = await startPair(12579);
   try {
-    const token = room2.reconnectionToken;
-    // Colyseus 0.18 consented leave is close code 4000
-    await Promise.race([room2.leave(true), sleep(400)]);
-    await sleep(250);
+    const started = Date.now();
+    await room2.leave(true);
+    const elapsed = Date.now() - started;
 
-    if (!room1.state.paused) {
+    if (elapsed > 250) {
       await shutdown(server);
-      return { passed: false, message: 'Voluntary leave (4000) must pause the match' };
+      return { passed: false, message: `leave(true)/4000 must return immediately, took ${elapsed}ms` };
     }
-    if (room1.state.player2.disconnectCount !== 1) {
+
+    await waitUntil(() => Boolean(room1.state.result), 1000, 'immediate loss after 4000');
+    const result = room1.state.result as { winner: number } | undefined;
+    if (!result || result.winner !== 1) {
       await shutdown(server);
       return {
         passed: false,
-        message: `4000 must count as a disconnect. Count: ${room1.state.player2.disconnectCount}`,
+        message: `4000 must be an immediate loss. elapsed=${elapsed}ms result=${JSON.stringify(result)}`,
       };
     }
 
-    const reconnected = await manualReconnect<TurfDuelState>(client2, token!);
-    await sleep(AFTER_RECONNECT_MS);
-
-    if (room1.state.paused) {
-      await shutdown(server);
-      return { passed: false, message: 'Match should resume after 4000 + reconnect' };
-    }
-
     await shutdown(server);
-    return { passed: true, message: 'Voluntary leave code 4000 counts as a disconnect' };
+    return { passed: true, message: `Voluntary leave 4000 is an immediate loss (leave returned in ${elapsed}ms)` };
   } catch (error) {
     await shutdown(server);
     return { passed: false, message: `Error: ${error}` };
   }
 }
 
-async function testRollbackDoesNotUnpause(): Promise<ReconnectionTestResult> {
+async function testInputDroppedWhilePaused(): Promise<ReconnectionTestResult> {
   const { server, room1, room2 } = await startPair(12580);
   try {
     await room2.leave(false);
@@ -513,30 +534,30 @@ async function testRollbackDoesNotUnpause(): Promise<ReconnectionTestResult> {
     }
 
     const tickWhilePaused = room1.state.tick;
-    room1.send('input', { direction: 'DOWN', clientTick: Math.max(0, tickWhilePaused - 2) });
+    room1.send('input', { direction: 'DOWN' });
     await sleep(250);
 
     if (!room1.state.paused) {
       await shutdown(server);
-      return { passed: false, message: 'Rollback input must not unpause a disconnected match' };
+      return { passed: false, message: 'Input must not unpause a disconnected match' };
     }
     if (room1.state.tick !== tickWhilePaused) {
       await shutdown(server);
       return {
         passed: false,
-        message: `Rollback must not advance ticks while paused. Before: ${tickWhilePaused}, After: ${room1.state.tick}`,
+        message: `Input must not advance ticks while paused. Before: ${tickWhilePaused}, After: ${room1.state.tick}`,
       };
     }
 
     await shutdown(server);
-    return { passed: true, message: 'Rollback input does not unpause' };
+    return { passed: true, message: 'Input while paused is dropped' };
   } catch (error) {
     await shutdown(server);
     return { passed: false, message: `Error: ${error}` };
   }
 }
 
-async function testRollbackDoesNotReviveAfterResult(): Promise<ReconnectionTestResult> {
+async function testInputDroppedAfterResult(): Promise<ReconnectionTestResult> {
   const { server, room1, room2 } = await startPair(12581);
   try {
     await room2.leave(false);
@@ -545,26 +566,144 @@ async function testRollbackDoesNotReviveAfterResult(): Promise<ReconnectionTestR
     const result = room1.state.result as { winner: number } | undefined;
     if (!result || result.winner !== 1) {
       await shutdown(server);
-      return { passed: false, message: `Expected forfeit before rollback. Result: ${JSON.stringify(result)}` };
+      return { passed: false, message: `Expected forfeit before input. Result: ${JSON.stringify(result)}` };
     }
 
     const p2Alive = room1.state.player2.isAlive;
     const winner = result.winner;
-    room1.send('input', { direction: 'UP', clientTick: Math.max(0, room1.state.tick - 2) });
+    room1.send('input', { direction: 'UP' });
     await sleep(250);
 
     const after = room1.state.result as { winner: number } | undefined;
     if (!after || after.winner !== winner) {
       await shutdown(server);
-      return { passed: false, message: `Rollback must not overwrite result. After: ${JSON.stringify(after)}` };
+      return { passed: false, message: `Input must not overwrite result. After: ${JSON.stringify(after)}` };
     }
     if (room1.state.player2.isAlive !== p2Alive) {
       await shutdown(server);
-      return { passed: false, message: 'Rollback must not revive a player after the match ended' };
+      return { passed: false, message: 'Input must not revive a player after the match ended' };
     }
 
     await shutdown(server);
-    return { passed: true, message: 'Rollback after result does not revive' };
+    return { passed: true, message: 'Input after result is dropped' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testCloseCodeIsImmediateLoss(
+  port: number,
+  code: 1000 | 4001,
+): Promise<ReconnectionTestResult> {
+  const { server, room1, room2 } = await startPair(port);
+  try {
+    const ws = rawSocket(room2);
+    if (!ws) {
+      await shutdown(server);
+      return { passed: false, message: `Could not reach raw socket to close with ${code}` };
+    }
+
+    ws.close(code);
+    await waitUntil(() => Boolean(room1.state.result), 1000, `immediate loss after ${code}`);
+
+    const result = room1.state.result as { winner: number } | undefined;
+    if (!result || result.winner !== 1) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Close ${code} must be an immediate loss. Result: ${JSON.stringify(result)}`,
+      };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: `Close code ${code} is an immediate loss` };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testWaitingRoomLeaveFreesSeat(): Promise<ReconnectionTestResult> {
+  const server = await startServer(12584);
+  try {
+    const waiterClient = new Client('ws://localhost:12584');
+    const waiting = await waiterClient.joinOrCreate<TurfDuelState>('turf_duel');
+    disableAutoReconnect(waiting);
+
+    if (waiting.state.result || waiting.state.tick > 0) {
+      await shutdown(server);
+      return { passed: false, message: 'Waiting room should not have started the match' };
+    }
+
+    await waiting.leave(true);
+    await sleep(200);
+
+    const client1 = new Client('ws://localhost:12584');
+    const client2 = new Client('ws://localhost:12584');
+    const room1 = await client1.joinOrCreate<TurfDuelState>('turf_duel');
+    const room2 = await client2.joinOrCreate<TurfDuelState>('turf_duel');
+    disableAutoReconnect(room1);
+    disableAutoReconnect(room2);
+    await sleep(START_WAIT_MS);
+
+    if (room1.state.result) {
+      await shutdown(server);
+      return {
+        passed: false,
+        message: `Waiting-room leave must not walkover. Result: ${JSON.stringify(room1.state.result)}`,
+      };
+    }
+
+    const d1 = room1.state.player1.disconnectCount as number;
+    const d2 = room1.state.player2.disconnectCount as number;
+    if (d1 !== 0 || d2 !== 0) {
+      await shutdown(server);
+      return { passed: false, message: `Waiting-room leave must not count as disconnect. P1=${d1} P2=${d2}` };
+    }
+    if (room1.state.tick < 1) {
+      await shutdown(server);
+      return { passed: false, message: 'Replacement pair should start a normal match' };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: 'Waiting-room leave frees the seat with no disconnect or walkover' };
+  } catch (error) {
+    await shutdown(server);
+    return { passed: false, message: `Error: ${error}` };
+  }
+}
+
+async function testRoomDisposesAfterNormalEnd(): Promise<ReconnectionTestResult> {
+  const { server, room1 } = await startPair(12585);
+  try {
+    let left = false;
+    let leaveCode: number | undefined;
+    room1.onLeave((code) => {
+      left = true;
+      leaveCode = code;
+    });
+
+    room1.send('input', { direction: 'UP' });
+    await waitUntil(() => Boolean(room1.state.result), 3000, 'normal wall-hit end');
+
+    const result = room1.state.result as { winner: number; reason: string } | undefined;
+    if (!result || result.reason === '연결 끊김' || result.reason === '양쪽 연결 끊김 (무효)') {
+      await shutdown(server);
+      return { passed: false, message: `Expected a normal engine end, got ${JSON.stringify(result)}` };
+    }
+
+    const endedAt = Date.now();
+    await waitUntil(() => left, 4000, 'room dispose after normal end');
+    const elapsed = Date.now() - endedAt;
+
+    if (elapsed > 3500) {
+      await shutdown(server);
+      return { passed: false, message: `Room should dispose within ~3s after normal end, took ${elapsed}ms` };
+    }
+
+    await shutdown(server);
+    return { passed: true, message: `Room disposed ${elapsed}ms after normal end (code ${leaveCode})` };
   } catch (error) {
     await shutdown(server);
     return { passed: false, message: `Error: ${error}` };
@@ -586,9 +725,13 @@ async function runAllTests() {
     { name: '15.5+14.8s accumulated time loses', fn: testAccumulatedFragmentsExceedLimit },
     { name: 'Overlapping: first to exceed loses', fn: testOverlappingFirstExceedsLoses },
     { name: 'Overlapping: same-tick both exceed is void', fn: testOverlappingSameTickBothExceedVoid },
-    { name: 'Voluntary leave code 4000 counts', fn: testVoluntaryLeave4000Counts },
-    { name: 'Rollback input does not unpause', fn: testRollbackDoesNotUnpause },
-    { name: 'Rollback after result does not revive', fn: testRollbackDoesNotReviveAfterResult },
+    { name: 'Voluntary leave code 4000 is an immediate loss', fn: testVoluntaryLeave4000ImmediateLoss },
+    { name: 'Close code 1000 is an immediate loss', fn: () => testCloseCodeIsImmediateLoss(12582, 1000) },
+    { name: 'Close code 4001 is an immediate loss', fn: () => testCloseCodeIsImmediateLoss(12583, 4001) },
+    { name: 'Waiting-room leave frees the seat', fn: testWaitingRoomLeaveFreesSeat },
+    { name: 'Room disposes within ~3s after normal end', fn: testRoomDisposesAfterNormalEnd },
+    { name: 'Input while paused is dropped', fn: testInputDroppedWhilePaused },
+    { name: 'Input after result is dropped', fn: testInputDroppedAfterResult },
   ];
 
   let passed = 0;
