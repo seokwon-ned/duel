@@ -73,31 +73,32 @@
     }
     #hudPanel {
       background: var(--panel); border-radius: 40px; padding: 10px 12px 22px;
-      box-shadow: 0 8px 24px rgba(0,0,0,.35), 0 0 18px rgba(109,40,217,.2);
+      box-shadow: 0 8px 24px rgba(0,0,0,.35), 0 0 22px rgba(109,40,217,.35);
+      border: 1px solid rgba(250, 204, 21, 0.12);
     }
     #hudTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .fighter { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .fighter.foe { flex-direction: row-reverse; }
     .avatar {
-      width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto;
+      width: 42px; height: 42px; border-radius: 50%; flex: 0 0 auto;
       box-sizing: border-box; background: #0F172A;
       border: 3px solid currentColor;
       box-shadow: 0 0 12px currentColor;
       display: flex; align-items: center; justify-content: center;
-      font-family: 'Black Han Sans', sans-serif; font-size: 15px;
+      font-family: 'Black Han Sans', sans-serif; font-size: 16px;
       color: #F8FAFC; line-height: 1;
     }
     .avatar.me {
       color: #0F172A;
-      background: var(--me);
-      border-color: var(--me);
-      box-shadow: 0 0 14px rgba(255, 122, 26, 0.85);
+      background: radial-gradient(circle at 32% 28%, #FFE0C2, var(--me) 62%);
+      border-color: #FFE0C2;
+      box-shadow: 0 0 16px rgba(255, 122, 26, 0.95), inset 0 0 0 2px rgba(15, 23, 42, 0.25);
     }
     .avatar.foe {
       color: #F8FAFC;
-      background: var(--foe);
-      border-color: var(--foe);
-      box-shadow: 0 0 14px rgba(47, 107, 255, 0.85);
+      background: radial-gradient(circle at 32% 28%, #93C5FD, var(--foe) 62%);
+      border-color: #93C5FD;
+      box-shadow: 0 0 16px rgba(47, 107, 255, 0.95), inset 0 0 0 2px rgba(15, 23, 42, 0.25);
     }
     .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .fighter .name { font-size: 13px; color: var(--text); line-height: 1.1; }

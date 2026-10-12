@@ -336,10 +336,7 @@ function tryMovePlayer(
     return;
   }
 
-  if (
-    isCover(cell) &&
-    (isOpened(state.grid[fromY][fromX]) || isInvincibleFoeTrail(state, num, fromX, fromY))
-  ) {
+  if (isCover(cell) && isOpened(state.grid[fromY][fromX])) {
     if (cellOf(state.boss.xFp) === cx && cellOf(state.boss.yFp) === cy) {
       hurt(state, num, events);
       return;
@@ -377,6 +374,8 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
     { x: cellOf(state.sparx2.xFp), y: cellOf(state.sparx2.yFp) },
   ];
   const total = state.gridWidth * state.gridHeight;
+  // Closing across a live foe line severs it. Invincible: line only, no heart.
+  severOverlappingFoeLine(state, num, player.trail, events);
   const { claimed, remainingCover } = claimClosedTrail(state.grid, player.trail, num, bossCell);
 
   const paint = playerOpenType(num);
@@ -423,13 +422,6 @@ function isInvincible(player: PlayerState, tick: number): boolean {
   return player.lastHurtTick >= 0 && tick - player.lastHurtTick < HURT_IFRAME_TICKS;
 }
 
-function isInvincibleFoeTrail(state: MatchState, num: 1 | 2, x: number, y: number): boolean {
-  const foe: 1 | 2 = num === 1 ? 2 : 1;
-  if (!isTrail(state.grid[y][x], foe)) return false;
-  const foePlayer = foe === 1 ? state.player1 : state.player2;
-  return isInvincible(foePlayer, state.tick);
-}
-
 /** Walk across an invincible foe line without painting over it. */
 function passOverInvincibleTrail(
   state: MatchState,
@@ -457,6 +449,35 @@ function passOverInvincibleTrail(
       player.trail.push({ x: cx, y: cy });
     }
   }
+}
+
+function severOverlappingFoeLine(
+  state: MatchState,
+  num: 1 | 2,
+  trail: Position[],
+  events: GameEvent[],
+): void {
+  const foe: 1 | 2 = num === 1 ? 2 : 1;
+  const foePlayer = foe === 1 ? state.player1 : state.player2;
+  if (!foePlayer.drawing || foePlayer.trail.length === 0) return;
+  let crossed = false;
+  for (const p of trail) {
+    if (inBounds(p.x, p.y, state.gridWidth, state.gridHeight) && isTrail(state.grid[p.y][p.x], foe)) {
+      crossed = true;
+      break;
+    }
+  }
+  if (!crossed) return;
+  if (isInvincible(foePlayer, state.tick)) {
+    clearTrail(state, foe);
+    foePlayer.drawing = false;
+    foePlayer.trail = [];
+    foePlayer.fuseIndex = -1;
+    foePlayer.idleTicks = 0;
+    foePlayer.thrusting = false;
+    return;
+  }
+  hurt(state, foe, events);
 }
 
 function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {

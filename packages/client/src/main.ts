@@ -32,7 +32,7 @@ import { QaPilot, p1CaptureWaypoints, p1HitWaypoints, p2SkyWaypoints } from './q
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
-const AFTERIMAGES = 8;
+const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
@@ -49,6 +49,7 @@ interface TurfDebug {
   result: string | null;
   cutFx: boolean;
   hitFx: boolean;
+  winFx: boolean;
   drawing: { p1: boolean; p2: boolean };
   trails: { p1: number; p2: number };
 }
@@ -68,6 +69,7 @@ if (typeof window !== 'undefined') {
     result: null,
     cutFx: false,
     hitFx: false,
+    winFx: false,
     drawing: { p1: false, p2: false },
     trails: { p1: 0, p2: 0 },
   };
@@ -262,7 +264,7 @@ class GameScene extends Phaser.Scene {
       if (spark.visible) spark.rotation += 0.04;
     }
     if (this.melting && this.localGrid) {
-      this.melt = Math.min(1, this.melt + 0.05);
+      this.melt = Math.min(1, this.melt + 0.012);
       this.paintGrid(this.localGrid);
       if (this.melt >= 1) this.melting = false;
     }
@@ -493,18 +495,18 @@ class GameScene extends Phaser.Scene {
     for (const ev of events) {
       if (ev.type === 'trap_bonus') {
         if (ev.player === 1 && notableCut) this.qaClaimed = true;
-        if (notableCut) this.playCutFx(undefined, ev.data?.percent ?? 5);
+        if (notableCut) this.playCutFx(undefined, ev.data?.percent ?? 5, prevTrail);
       }
       if (ev.type === 'claim' && !bonus) {
         if (ev.player === 1 && notableCut) this.qaClaimed = true;
-        if (notableCut) this.playCutFx(ev.data?.cells ?? 0);
+        if (notableCut) this.playCutFx(ev.data?.cells ?? 0, undefined, prevTrail);
       }
       if (ev.type === 'heart') this.playHitFx(ev.player === 1 ? prevTrail : []);
       if (ev.type === 'win') this.playWinFx();
     }
   }
 
-  private playCutFx(cells?: number, percent?: number) {
+  private playCutFx(cells?: number, percent?: number, trail: { x: number; y: number }[] = []) {
     const pct = percent ?? Math.max(1, Math.round(((cells ?? 0) / TOTAL_CELLS) * 100) || 6);
     const popup = document.getElementById('cutPopup');
     const stack = document.getElementById('cutStack');
@@ -519,8 +521,11 @@ class GameScene extends Phaser.Scene {
       if (window.__turfDebug) window.__turfDebug.cutFx = false;
     }, 2500);
     this.cameras.main.shake(180, 0.012);
-    const pos = this.worldOf(this.matchState?.player1.position ?? { x: BOARD_W / 2, y: BOARD_H - 8 });
-    this.burst(this.cutEmitter, pos.x, pos.y, 70, ['dot-me', 'dot-accent', 'dot-white']);
+    const src = trail.length ? trail : [this.matchState?.player1.position ?? { x: BOARD_W / 2, y: BOARD_H - 8 }];
+    const cx = src.reduce((s, p) => s + p.x, 0) / src.length;
+    const cy = src.reduce((s, p) => s + p.y, 0) / src.length;
+    const pos = this.worldOf({ x: cx, y: cy });
+    this.burst(this.cutEmitter, pos.x, pos.y, 80, ['dot-me', 'dot-accent', 'dot-white'], 1.4);
   }
 
   private playHitFx(trail: { x: number; y: number }[]) {
@@ -531,18 +536,21 @@ class GameScene extends Phaser.Scene {
       flash?.classList.remove('on');
       if (window.__turfDebug) window.__turfDebug.hitFx = false;
     }, 900);
-    for (const p of trail.slice(0, 40)) {
+    const pts = trail.length ? trail : this.p1TrailCopy;
+    for (const p of pts.slice(0, 48)) {
       const w = this.worldOf(p);
-      this.burst(this.hitEmitter, w.x, w.y, 3, ['dot-me', 'dot-white']);
+      this.shatterAt(w.x, w.y);
     }
   }
 
   private playWinFx() {
+    if (window.__turfDebug) window.__turfDebug.winFx = true;
     this.melting = true;
     const w = this.scale.width;
-    for (let i = 0; i < 48; i++) {
+    const h = this.scale.height * 0.62;
+    for (let i = 0; i < 72; i++) {
       const x = Math.random() * w;
-      this.burst(this.winEmitter, x, 8, 2, ['dot-accent', 'dot-spark', 'dot-me', 'dot-white']);
+      this.burst(this.winEmitter, x, 6 + Math.random() * 20, 3, ['dot-accent', 'dot-spark', 'dot-me', 'dot-white', 'dot-heart'], 1.6, h);
     }
   }
 
@@ -552,6 +560,8 @@ class GameScene extends Phaser.Scene {
     y: number,
     n: number,
     keys: string[],
+    scale = 1,
+    fall = 0,
   ) {
     try {
       emitter?.explode(n, x, y);
@@ -561,15 +571,36 @@ class GameScene extends Phaser.Scene {
     for (let i = 0; i < n; i++) {
       const img = this.add.image(x, y, keys[i % keys.length]);
       img.setDepth(20);
+      img.setScale(scale);
       const ang = Math.random() * Math.PI * 2;
-      const dist = 20 + Math.random() * 70;
+      const dist = 28 + Math.random() * 90;
+      this.tweens.add({
+        targets: img,
+        x: x + Math.cos(ang) * dist,
+        y: y + Math.sin(ang) * dist + fall,
+        alpha: 0,
+        scale: 0.15 * scale,
+        duration: 640 + Math.random() * 420,
+        onComplete: () => img.destroy(),
+      });
+    }
+  }
+
+  private shatterAt(x: number, y: number) {
+    for (let i = 0; i < 4; i++) {
+      const img = this.add.image(x, y, i % 2 === 0 ? 'dot-me' : 'dot-white');
+      img.setDepth(21);
+      img.setScale(2.2);
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 16 + Math.random() * 54;
       this.tweens.add({
         targets: img,
         x: x + Math.cos(ang) * dist,
         y: y + Math.sin(ang) * dist,
+        angle: 180 + Math.random() * 220,
         alpha: 0,
         scale: 0.2,
-        duration: 500 + Math.random() * 280,
+        duration: 420 + Math.random() * 260,
         onComplete: () => img.destroy(),
       });
     }
@@ -776,8 +807,8 @@ class GameScene extends Phaser.Scene {
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
     const guide1 = this.matchState?.player1.trail ?? this.p1TrailCopy;
     const guide2 = this.matchState?.player2.trail ?? [];
-    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.85, { x: 0, y: -1 });
-    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.7, { x: -1, y: 0 });
+    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.95, { x: 0, y: -1 });
+    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.82, { x: -1, y: 0 });
     place(this.p1Sprite, p1, ORB_CELLS);
     place(this.p2Sprite, p2, ORB_CELLS);
     place(this.kkumuli, boss, KK_CELLS);
@@ -806,7 +837,7 @@ class GameScene extends Phaser.Scene {
         }
       }
       for (let k = 1; k <= AFTERIMAGES; k++) {
-        const idx = Math.max(0, best - k * 2);
+        const idx = Math.max(0, best - k * 3);
         pts.push(guide[idx]);
       }
     } else {
@@ -822,7 +853,7 @@ class GameScene extends Phaser.Scene {
       dx /= len;
       dy /= len;
       for (let k = 1; k <= AFTERIMAGES; k++) {
-        pts.push({ x: pos.x - dx * k * 4.5, y: pos.y - dy * k * 4.5 });
+        pts.push({ x: pos.x - dx * k * 6, y: pos.y - dy * k * 6 });
       }
     }
     const scale = this.boardImage?.scaleX ?? 1;
@@ -858,6 +889,10 @@ class GameScene extends Phaser.Scene {
       for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4;
         const cell = grid[y][x];
+        const besideOpen = (xx: number, yy: number) =>
+          xx >= 0 && yy >= 0 && xx < w && yy < h && openish(grid[yy][xx]);
+        const besideCover = (xx: number, yy: number) =>
+          xx >= 0 && yy >= 0 && xx < w && yy < h && grid[yy][xx] === CellType.COVER;
         if (cell === CellType.COVER) {
           if (this.melt > 0) {
             const mixed = mixRgb([cov[i], cov[i + 1], cov[i + 2]], [img[i], img[i + 1], img[i + 2]], this.melt);
@@ -866,9 +901,13 @@ class GameScene extends Phaser.Scene {
             out.data[i + 2] = mixed[2];
             out.data[i + 3] = 255;
           } else {
-            out.data[i] = cov[i];
-            out.data[i + 1] = cov[i + 1];
-            out.data[i + 2] = cov[i + 2];
+            let cr: [number, number, number] = [cov[i], cov[i + 1], cov[i + 2]];
+            if (besideOpen(x - 1, y) || besideOpen(x + 1, y) || besideOpen(x, y - 1) || besideOpen(x, y + 1)) {
+              cr = mixRgb(cr, [255, 214, 80], 0.72);
+            }
+            out.data[i] = cr[0];
+            out.data[i + 1] = cr[1];
+            out.data[i + 2] = cr[2];
             out.data[i + 3] = 255;
           }
         } else {
@@ -881,14 +920,9 @@ class GameScene extends Phaser.Scene {
           } else if (cell === CellType.SAFE_EDGE) {
             tinted = mixRgb(src, [250, 204, 21], 0.1);
           }
-          let edge = false;
-          if (openish(cell)) {
-            if (x > 0 && grid[y][x - 1] === CellType.COVER) edge = true;
-            else if (x + 1 < w && grid[y][x + 1] === CellType.COVER) edge = true;
-            else if (y > 0 && grid[y - 1][x] === CellType.COVER) edge = true;
-            else if (y + 1 < h && grid[y + 1][x] === CellType.COVER) edge = true;
+          if (openish(cell) && (besideCover(x - 1, y) || besideCover(x + 1, y) || besideCover(x, y - 1) || besideCover(x, y + 1))) {
+            tinted = mixRgb(tinted, [255, 230, 120], 0.88);
           }
-          if (edge) tinted = mixRgb(tinted, [250, 204, 21], 0.55);
           out.data[i] = tinted[0];
           out.data[i + 1] = tinted[1];
           out.data[i + 2] = tinted[2];

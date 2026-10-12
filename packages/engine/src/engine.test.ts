@@ -271,6 +271,47 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player1.trail.some((p) => p.x === onto.x && p.y === onto.y)).toBe(true);
   });
 
+  test('closing across an invincible foe line severs it without taking a heart', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 2000 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 3;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(19);
+    state.sparx2.yFp = toFp(0);
+    state.player1.xFp = toFp(5);
+    state.player1.yFp = toFp(19);
+    state.player1.position = { x: 5, y: 19 };
+
+    const walkUntil = (heading: number, done: () => boolean, max = 80) => {
+      for (let i = 0; i < max && !done() && !state.result; i++) {
+        state = step(state, [{ player: 1, heading, thrusting: true }]).state;
+      }
+    };
+    walkUntil(192, () => cellOf(state.player1.yFp) <= 10);
+    const topY = cellOf(state.player1.yFp);
+    const crossX = 9;
+    state.grid[topY][crossX] = CellType.PLAYER2_TRAIL;
+    state.player2.trail = [{ x: crossX, y: topY }, { x: crossX, y: topY + 1 }];
+    state.grid[topY + 1][crossX] = CellType.PLAYER2_TRAIL;
+    state.player2.drawing = true;
+    state.player2.lastHurtTick = state.tick;
+    state.player2.xFp = toFp(crossX);
+    state.player2.yFp = toFp(topY + 1);
+
+    walkUntil(0, () => cellOf(state.player1.xFp) >= 13);
+    walkUntil(64, () => !state.player1.drawing || cellOf(state.player1.yFp) >= 19);
+
+    expect(state.player1.drawing).toBe(false);
+    expect(state.player1.territoryCells).toBeGreaterThan(0);
+    expect(state.player2.hearts).toBe(3);
+    expect(state.player2.drawing).toBe(false);
+    expect(state.player2.trail.length).toBe(0);
+    expect(state.grid[topY][crossX]).not.toBe(CellType.PLAYER2_TRAIL);
+  });
+
   test('simultaneous line steps hurt both and steal the crossed cells', () => {
     const make = () => {
       const state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
