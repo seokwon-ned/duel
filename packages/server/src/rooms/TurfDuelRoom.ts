@@ -205,7 +205,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (!info) return;
 
     info.disconnectCount++;
-    info.currentDisconnectStartTime = Date.now();
+    info.currentDisconnectStartTime = this.now();
 
     const playerState = playerNum === 1 ? this.state.player1 : this.state.player2;
     playerState.connected = false;
@@ -217,15 +217,19 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.updatePauseState();
     this.evaluateDisconnectLimits();
     if (this.matchState.result) {
+      // Keep a short window so the disconnected client can still read the result.
+      try {
+        await this.allowReconnection(client, Math.max(5, this.reconnectionWindowSeconds(info.totalDisconnectedMs)));
+      } catch (e) {
+        console.log(`Player ${playerNum} post-forfeit reconnection window closed:`, e);
+      }
       return;
     }
 
     this.startDisconnectCountdown();
 
-    const remainingMs = Math.max(0, this.maxDisconnectMs - info.totalDisconnectedMs);
-    const windowSec = Math.max(2, Math.ceil(remainingMs / 1000) + 2);
     try {
-      await this.allowReconnection(client, windowSec);
+      await this.allowReconnection(client, this.reconnectionWindowSeconds(info.totalDisconnectedMs));
       console.log(`Player ${playerNum} reconnection window closed`);
     } catch (e) {
       console.log(`Player ${playerNum} reconnection failed:`, e);
@@ -260,7 +264,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   private accrueDisconnectTime(sessionId: string): void {
     const info = this.disconnectInfo.get(sessionId);
     if (!info || info.currentDisconnectStartTime === null) return;
-    info.totalDisconnectedMs += Date.now() - info.currentDisconnectStartTime;
+    info.totalDisconnectedMs += this.now() - info.currentDisconnectStartTime;
     info.currentDisconnectStartTime = null;
   }
 
@@ -268,7 +272,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     const info = this.disconnectInfo.get(sessionId);
     if (!info) return 0;
     const running = info.currentDisconnectStartTime !== null
-      ? Date.now() - info.currentDisconnectStartTime
+      ? this.now() - info.currentDisconnectStartTime
       : 0;
     return info.totalDisconnectedMs + running;
   }
@@ -392,6 +396,16 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.forfeitCleanupTimer = setTimeout(() => {
       this.disconnect().catch((err) => console.error('Failed to dispose room:', err));
     }, delayMs);
+  }
+
+  /** Wall clock for disconnect accounting. Tests may override. */
+  protected now(): number {
+    return Date.now();
+  }
+
+  protected reconnectionWindowSeconds(totalDisconnectedMs: number): number {
+    const remainingMs = Math.max(0, this.maxDisconnectMs - totalDisconnectedMs);
+    return Math.max(2, Math.ceil(remainingMs / 1000) + 2);
   }
 
   /** Test-room hook. Production is a no-op. */
