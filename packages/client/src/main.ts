@@ -343,7 +343,7 @@ const config: Phaser.Types.Core.GameConfig = {
   banner: false,
   scale: {
     mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
+    autoCenter: Phaser.Scale.CENTER_HORIZONTALLY,
     expandParent: false,
     width: BOARD_SIZE,
     height: BOARD_SIZE,
@@ -352,8 +352,25 @@ const config: Phaser.Types.Core.GameConfig = {
 
 const game = new Phaser.Game(config);
 
+function setDebugVisible(visible: boolean) {
+  const app = document.getElementById('app');
+  const toggle = document.getElementById('debugToggle');
+  app?.classList.toggle('debug', visible);
+  toggle?.setAttribute('aria-pressed', String(visible));
+  requestAnimationFrame(() => game.scale.refresh());
+}
+
 window.addEventListener('resize', () => {
   game.scale.refresh();
+});
+
+if (new URLSearchParams(window.location.search).has('debug')) {
+  setDebugVisible(true);
+}
+
+document.getElementById('debugToggle')?.addEventListener('click', () => {
+  const app = document.getElementById('app');
+  setDebugVisible(!app?.classList.contains('debug'));
 });
 
 document.getElementById('connectBtn')?.addEventListener('click', async () => {

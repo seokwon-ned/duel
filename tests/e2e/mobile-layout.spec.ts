@@ -67,15 +67,26 @@ test.describe('P0 mobile 390x844', () => {
       animations: 'disabled',
     });
 
+    await expect(page.locator('#serverUrl')).toBeVisible();
+    await expect(page.locator('#status')).toBeVisible();
+
     await page.click('#botBtn');
     await page.waitForFunction(
       () => Boolean(window.__turfDebug && window.__turfDebug.tick > 5),
       { timeout: 15000 }
     );
 
+    await expect(page.locator('#settings')).toBeHidden();
+    await expect(page.locator('#serverUrl')).toBeHidden();
+    await expect(page.locator('#status')).toBeHidden();
+    await expect(page.locator('#connectBtn')).toBeHidden();
+    await expect(page.locator('#status')).toHaveText(/Playing vs Bot/);
+    await expect(page.locator('#status')).toBeHidden();
+
     const matchCanvas = await page.locator('#game-container canvas').boundingBox();
     expect(matchCanvas).toBeTruthy();
     assertInsideViewport(matchCanvas!);
+    expect(matchCanvas!.width).toBeGreaterThanOrEqual(370);
 
     const matchHud = page.locator('#matchHud');
     await expect(matchHud).toBeVisible();
@@ -83,6 +94,13 @@ test.describe('P0 mobile 390x844', () => {
     const hudBox = await matchHud.boundingBox();
     expect(hudBox).toBeTruthy();
     assertInsideViewport(hudBox!);
+
+    await page.click('#debugToggle');
+    await expect(page.locator('#settings')).toBeVisible();
+    await expect(page.locator('#serverUrl')).toBeVisible();
+    await expect(page.locator('#status')).toBeVisible();
+    await page.click('#debugToggle');
+    await expect(page.locator('#settings')).toBeHidden();
 
     await page.screenshot({
       path: path.join(SCREENSHOT_DIR, 'bot-match.png'),
