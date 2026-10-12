@@ -1,4 +1,4 @@
-import { Schema, type, MapSchema, ArraySchema } from '@colyseus/schema';
+import { Schema, type, ArraySchema } from '@colyseus/schema';
 
 export class Position extends Schema {
   @type('number') x: number = 0;
@@ -8,8 +8,11 @@ export class Position extends Schema {
 export class PlayerSchema extends Schema {
   @type(Position) position = new Position();
   @type('string') direction: string = 'RIGHT';
+  @type('number') heading: number = 0;
   @type('boolean') isAlive: boolean = true;
-  @type('number') territoryCells: number = 9;
+  @type('number') territoryCells: number = 0;
+  @type('number') hearts: number = 3;
+  @type('boolean') drawing: boolean = false;
   @type('boolean') connected: boolean = true;
   @type('number') disconnectCount: number = 0;
   @type('number') totalDisconnectedMs: number = 0;
@@ -35,6 +38,11 @@ export class TurfDuelState extends Schema {
   @type(MatchResultSchema) result?: MatchResultSchema;
   @type([CellUpdate]) cellUpdates = new Array<CellUpdate>();
   @type(['number']) grid = new ArraySchema<number>();
-  @type('number') disconnectedPlayer: number = 0; // 0 = none, 1 = player1, 2 = player2, 3 = both
+  @type('number') gridWidth: number = 200;
+  @type('number') gridHeight: number = 300;
+  @type('number') disconnectedPlayer: number = 0;
   @type('number') disconnectCountdownSeconds: number = 0;
+  @type(Position) boss = new Position();
+  @type(Position) sparx1 = new Position();
+  @type(Position) sparx2 = new Position();
 }

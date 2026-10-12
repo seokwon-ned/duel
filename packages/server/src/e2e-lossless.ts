@@ -4,7 +4,7 @@ import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
-import { Direction, GRID_SIZE } from '@turf-duel/engine';
+import { Direction, GRID_WIDTH, GRID_HEIGHT } from '@turf-duel/engine';
 
 async function testLosslessSync(): Promise<void> {
   console.log('\n=== P1-3: Lossless Sync Under Artificial Latency ===\n');
@@ -111,7 +111,7 @@ async function testLosslessSync(): Promise<void> {
 
     // Compare grids cell by cell
     let differences = 0;
-    const expectedCells = GRID_SIZE * GRID_SIZE;
+    const expectedCells = GRID_WIDTH * GRID_HEIGHT;
     
     if (grid1.length !== expectedCells || grid2.length !== expectedCells) {
       throw new Error(`Grid size mismatch: expected ${expectedCells}, got ${grid1.length}, ${grid2.length}`);
