@@ -279,10 +279,9 @@ function tryMovePlayer(
   if (isTrail(cell, foe)) {
     const foePlayer = foe === 1 ? state.player1 : state.player2;
     if (isInvincible(foePlayer, state.tick)) {
-      // Pass over an invincible opponent line: move, do not overwrite, not our trail.
-      player.xFp = xFp;
-      player.yFp = yFp;
-      snapCell(player);
+      // Pass over: do not overwrite their live cell, but keep our polyline
+      // intact so a later erase of their line cannot punch a hole in ours.
+      passOverInvincibleTrail(state, player, xFp, yFp, cx, cy, fromX, fromY);
       return;
     }
     hurt(state, foe, events);
@@ -337,7 +336,10 @@ function tryMovePlayer(
     return;
   }
 
-  if (isCover(cell) && isOpened(state.grid[fromY][fromX])) {
+  if (
+    isCover(cell) &&
+    (isOpened(state.grid[fromY][fromX]) || isInvincibleFoeTrail(state, num, fromX, fromY))
+  ) {
     if (cellOf(state.boss.xFp) === cx && cellOf(state.boss.yFp) === cy) {
       hurt(state, num, events);
       return;
@@ -419,6 +421,42 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
 
 function isInvincible(player: PlayerState, tick: number): boolean {
   return player.lastHurtTick >= 0 && tick - player.lastHurtTick < HURT_IFRAME_TICKS;
+}
+
+function isInvincibleFoeTrail(state: MatchState, num: 1 | 2, x: number, y: number): boolean {
+  const foe: 1 | 2 = num === 1 ? 2 : 1;
+  if (!isTrail(state.grid[y][x], foe)) return false;
+  const foePlayer = foe === 1 ? state.player1 : state.player2;
+  return isInvincible(foePlayer, state.tick);
+}
+
+/** Walk across an invincible foe line without painting over it. */
+function passOverInvincibleTrail(
+  state: MatchState,
+  player: PlayerState,
+  xFp: number,
+  yFp: number,
+  cx: number,
+  cy: number,
+  fromX: number,
+  fromY: number,
+): void {
+  player.xFp = xFp;
+  player.yFp = yFp;
+  snapCell(player);
+  const fromOpened = isOpened(state.grid[fromY][fromX]);
+  if (!player.drawing && fromOpened) {
+    player.drawing = true;
+    player.trail = [];
+    player.fuseIndex = -1;
+    player.idleTicks = 0;
+  }
+  if (player.drawing && (fromX !== cx || fromY !== cy)) {
+    const last = player.trail[player.trail.length - 1];
+    if (!last || last.x !== cx || last.y !== cy) {
+      player.trail.push({ x: cx, y: cy });
+    }
+  }
 }
 
 function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {

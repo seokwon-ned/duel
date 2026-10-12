@@ -194,6 +194,83 @@ describe('cover engine (Amy ★)', () => {
     expect(cellOf(state.player2.yFp)).toBe(target.y);
   });
 
+  test('erasing an invincible foe line after pass-over does not hole a closing trail', () => {
+    const driveBox = (withFoeLine: boolean) => {
+      let state = createInitialState({ width: 20, height: 20, matchTicks: 2000 });
+      state.player1.hearts = 99;
+      state.player2.hearts = 99;
+      state.boss.xFp = toFp(1);
+      state.boss.yFp = toFp(1);
+      state.sparx1.xFp = toFp(0);
+      state.sparx1.yFp = toFp(0);
+      state.sparx2.xFp = toFp(19);
+      state.sparx2.yFp = toFp(0);
+      state.player1.xFp = toFp(5);
+      state.player1.yFp = toFp(19);
+      state.player1.position = { x: 5, y: 19 };
+
+      const walkUntil = (heading: number, done: () => boolean, max = 80) => {
+        for (let i = 0; i < max && !done() && !state.result; i++) {
+          state = step(state, [{ player: 1, heading, thrusting: true }]).state;
+        }
+      };
+      walkUntil(192, () => cellOf(state.player1.yFp) <= 10);
+      const topY = cellOf(state.player1.yFp);
+      if (withFoeLine) {
+        const crossX = 9;
+        state.grid[topY][crossX] = CellType.PLAYER2_TRAIL;
+        state.player2.trail = [{ x: crossX, y: topY }];
+        state.player2.drawing = true;
+        state.player2.lastHurtTick = state.tick;
+        state.player2.xFp = toFp(crossX);
+        state.player2.yFp = toFp(topY);
+      }
+      walkUntil(0, () => cellOf(state.player1.xFp) >= 13);
+      if (withFoeLine) {
+        for (const p of state.player2.trail) {
+          if (state.grid[p.y][p.x] === CellType.PLAYER2_TRAIL) {
+            state.grid[p.y][p.x] = CellType.COVER;
+          }
+        }
+        state.player2.trail = [];
+        state.player2.drawing = false;
+      }
+      walkUntil(64, () => !state.player1.drawing || cellOf(state.player1.yFp) >= 19);
+      return state.player1.territoryCells;
+    };
+
+    const clean = driveBox(false);
+    const crossed = driveBox(true);
+    expect(clean).toBeGreaterThanOrEqual(56);
+    expect(crossed).toBe(clean);
+  });
+
+  test('stepping onto an invincible foe line from territory does not trap the cutter', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(19);
+    state.sparx2.yFp = toFp(0);
+
+    const from = state.player1.position;
+    const onto = { x: from.x, y: from.y - 1 };
+    state.grid[onto.y][onto.x] = CellType.PLAYER2_TRAIL;
+    state.player2.trail = [onto];
+    state.player2.drawing = true;
+    state.player2.lastHurtTick = 0;
+    state.player2.xFp = toFp(onto.x);
+    state.player2.yFp = toFp(onto.y);
+
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 11);
+    expect(cellOf(state.player1.yFp)).toBeLessThan(onto.y);
+    expect(state.player1.drawing).toBe(true);
+    expect(state.player1.trail.some((p) => p.x === onto.x && p.y === onto.y)).toBe(true);
+  });
+
   test('simultaneous line steps hurt both and steal the crossed cells', () => {
     const make = () => {
       const state = createInitialState({ width: 20, height: 20, matchTicks: 400 });

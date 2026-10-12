@@ -557,23 +557,35 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }
 
     const changedCells = this.getChangedCells();
-    const pending = accumulateCellUpdates(this.pendingCellUpdates, changedCells);
-    if (shouldSnapshotCellUpdates(pending.length)) {
+    accumulateCellUpdates(this.pendingCellUpdates, changedCells);
+    if (shouldSnapshotCellUpdates(this.pendingCellUpdates.size)) {
       this.broadcastGridSnapshot();
       this.pendingCellUpdates.clear();
       state.cellUpdates.length = 0;
+    }
+  }
+
+  /**
+   * Copy pending cell writes into the outgoing schema only when Colyseus is
+   * about to encode a patch. Clearing in syncState (per tick) drops the first
+   * tick when one patch covers two 50ms ticks.
+   */
+  onBeforePatch() {
+    const pending = [...this.pendingCellUpdates.values()];
+    if (shouldSnapshotCellUpdates(pending.length)) {
+      this.broadcastGridSnapshot();
+      this.pendingCellUpdates.clear();
+      this.state.cellUpdates.length = 0;
       return;
     }
-    state.cellUpdates.length = 0;
+    this.state.cellUpdates.length = 0;
     for (const cell of pending) {
       const update = new CellUpdate();
       update.x = cell.x;
       update.y = cell.y;
       update.type = cell.type;
-      state.cellUpdates.push(update);
+      this.state.cellUpdates.push(update);
     }
-    // Each Colyseus patch is a delta since the last send. Holding pending
-    // until the next snapshot re-broadcast every changed cell every tick.
     this.pendingCellUpdates.clear();
   }
 
