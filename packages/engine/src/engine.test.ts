@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
-import { CellType, Direction, PlayerInput, ResultReason } from './types.js';
+import { CellType, Direction, HURT_IFRAME_TICKS, PlayerInput, ResultReason } from './types.js';
 import { claimClosedTrail } from './cover.js';
 import { cellOf, toFp } from './lut.js';
 
@@ -82,8 +82,7 @@ describe('cover engine (Amy ★)', () => {
 
     expect(state.player1.drawing).toBe(false);
     expect(state.player1.territoryCells).toBeGreaterThan(0);
-    const bossCell = state.grid[state.gridHeight >> 1][state.gridWidth >> 1];
-    expect(bossCell).toBe(CellType.COVER);
+    expect(state.grid[cellOf(state.boss.yFp)][cellOf(state.boss.xFp)]).toBe(CellType.COVER);
     expect(state.grid[startY][x] === CellType.SAFE_EDGE || state.grid[startY][x] === CellType.PLAYER1_OPEN).toBe(true);
   });
 
@@ -268,6 +267,38 @@ describe('cover engine (Amy ★)', () => {
     }
   });
 
+  test('idle spawn is off the outer rim and Sparx do not drain hearts while standing still', () => {
+    let state = createInitialState({ width: 24, height: 24, matchTicks: 400 });
+    expect(state.player1.position.y).toBe(22);
+    expect(state.player2.position.y).toBe(1);
+    expect(state.player1.position.y - state.player2.position.y).toBe(21);
+    const start1 = state.player1.hearts;
+    const start2 = state.player2.hearts;
+    state = run(state, [], 40);
+    expect(state.player1.hearts).toBe(start1);
+    expect(state.player2.hearts).toBe(start2);
+  });
+
+  test('after a hit the player is invincible for 1.5 seconds', () => {
+    let state = createInitialState({ width: 24, height: 24, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 3;
+    state.boss.xFp = toFp(12);
+    state.boss.yFp = toFp(12);
+    state.sparx2.xFp = toFp(23);
+    state.sparx2.yFp = toFp(23);
+    const x = 10;
+    state.player2.xFp = toFp(x);
+    state.player2.yFp = toFp(0);
+    state.sparx1.xFp = toFp(x - 1);
+    state.sparx1.yFp = toFp(0);
+    state.sparx1.edgeDir = 0;
+    state = step(state, []).state;
+    expect(state.player2.hearts).toBe(2);
+    state = run(state, [], HURT_IFRAME_TICKS - 1);
+    expect(state.player2.hearts).toBe(2);
+  });
+
   test('sparx walking the edge hits an idle player even mid-burst', () => {
     let state = createInitialState({ width: 24, height: 24, matchTicks: 400 });
     state.player1.hearts = 99;
@@ -276,12 +307,14 @@ describe('cover engine (Amy ★)', () => {
     state.boss.yFp = toFp(12);
     state.sparx2.xFp = toFp(23);
     state.sparx2.yFp = toFp(23);
-    const p2x = state.player2.position.x;
-    state.sparx1.xFp = toFp(p2x - 3);
+    const p2x = 12;
+    state.player2.xFp = toFp(p2x);
+    state.player2.yFp = toFp(0);
+    state.sparx1.xFp = toFp(p2x - 1);
     state.sparx1.yFp = toFp(0);
     state.sparx1.edgeDir = 0;
     const before = state.player2.hearts;
-    state = step(state, []).state;
+    state = run(state, [], 4);
     expect(state.player2.hearts).toBe(before - 1);
   });
 

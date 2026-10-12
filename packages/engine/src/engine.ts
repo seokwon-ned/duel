@@ -23,6 +23,7 @@ import {
   SMALL_TRAP_NUM,
   SMALL_TRAP_DEN,
   SPARX_STEPS,
+  HURT_IFRAME_TICKS,
 } from './types.js';
 import {
   cellOf,
@@ -63,9 +64,11 @@ export function createInitialState(options?: {
   }
 
   const p1x = w >> 1;
-  const p1y = h - 1;
+  const p1y = h - 2;
   const p2x = w >> 1;
-  const p2y = 0;
+  const p2y = 1;
+  grid[p1y][p1x] = CellType.SAFE_EDGE;
+  grid[p2y][p2x] = CellType.SAFE_EDGE;
 
   return {
     grid,
@@ -81,13 +84,13 @@ export function createInitialState(options?: {
     },
     sparx1: {
       xFp: toFp(0),
-      yFp: toFp(h >> 1),
+      yFp: toFp(0),
       heading: 0,
       edgeDir: 0,
     },
     sparx2: {
       xFp: toFp(w - 1),
-      yFp: toFp(h >> 1),
+      yFp: toFp(h - 1),
       heading: 128,
       edgeDir: 2,
     },
@@ -328,7 +331,7 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
 function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   const player = num === 1 ? state.player1 : state.player2;
   if (!player.isAlive) return;
-  if (player.lastHurtTick === state.tick) return;
+  if (player.lastHurtTick >= 0 && state.tick - player.lastHurtTick < HURT_IFRAME_TICKS) return;
   player.lastHurtTick = state.tick;
 
   clearTrail(state, num);

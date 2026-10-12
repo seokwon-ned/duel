@@ -113,7 +113,9 @@ export const FUSE_CELLS_PER_TICK = 2;
 export const SMALL_TRAP_NUM = 5;
 export const SMALL_TRAP_DEN = 100;
 /** Edge cells walked per tick, per spark. Collision is checked after every cell. */
-export const SPARX_STEPS = 8;
+export const SPARX_STEPS = 1;
+/** 1.5s at 20Hz. After a hit the player cannot lose another heart yet. */
+export const HURT_IFRAME_TICKS = 30;
 
 export const PLAYER1_TERRITORY = CellType.PLAYER1_OPEN;
 export const PLAYER2_TERRITORY = CellType.PLAYER2_OPEN;
