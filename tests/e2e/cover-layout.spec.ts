@@ -55,6 +55,13 @@ test.describe('Cover spike 390x844', () => {
       return { areaH: area.height, canvasH: canvas.height };
     });
     expect(first.canvasH).toBeLessThanOrEqual(first.areaH + 2);
+    await page.waitForFunction(() => (window.__turfDebug?.tick ?? 0) >= 8, { timeout: 3000 });
+    const stillFit = await page.evaluate(() => {
+      const area = document.getElementById('game-container')!.getBoundingClientRect();
+      const canvas = document.querySelector('#game-container canvas')!.getBoundingClientRect();
+      return { areaH: area.height, canvasH: canvas.height };
+    });
+    expect(stillFit.canvasH).toBeLessThanOrEqual(stillFit.areaH + 2);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'first-match.png') });
     await page.waitForFunction(
       () => {
