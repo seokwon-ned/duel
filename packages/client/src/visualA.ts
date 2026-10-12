@@ -55,6 +55,11 @@ function hexRgb(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+function hexAlpha(hex: string, a: number): string {
+  const [r, g, b] = hexRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
 /** Closed-cover canvas: purple gradient + 36px checker + faint '?' marks. */
 export function paintCoverSheet(g: CanvasRenderingContext2D, w: number, h: number): void {
   const top = hexRgb(A.coverTop);
@@ -232,73 +237,81 @@ export function paintKkumuli(
 ): void {
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
-  const cy = s * 0.4;
+  const cy = s * 0.34;
   const body = angry ? A.angryBody : A.body;
   const tent = angry ? A.angryTent : A.tentacle;
 
-  g.save();
-  g.shadowColor = angry ? 'rgba(159,18,57,0.95)' : 'rgba(219,39,119,0.9)';
-  g.shadowBlur = s * 0.28;
+  const halo = g.createRadialGradient(cx, cy + s * 0.1, s * 0.06, cx, cy + s * 0.1, s * 0.5);
+  halo.addColorStop(0, angry ? 'rgba(255,77,109,0.5)' : 'rgba(240,171,252,0.58)');
+  halo.addColorStop(0.42, angry ? 'rgba(190,24,93,0.28)' : 'rgba(236,72,153,0.3)');
+  halo.addColorStop(1, 'rgba(240,171,252,0)');
+  g.fillStyle = halo;
+  g.beginPath();
+  g.arc(cx, cy + s * 0.1, s * 0.5, 0, Math.PI * 2);
+  g.fill();
 
   g.lineCap = 'round';
-  g.strokeStyle = tent;
-  g.lineWidth = s * 0.11;
-  const dirs = [-0.55, -0.22, 0.22, 0.55];
+  g.lineJoin = 'round';
+  const dirs = [-0.62, -0.22, 0.22, 0.62];
   for (let i = 0; i < 4; i++) {
-    const sway = Math.sin(time * 3.1 + i * 1.1) * s * 0.14;
+    const sway = Math.sin(time * 3.1 + i * 1.1) * s * 0.11;
     const dx = dirs[i];
-    const x2 = cx + dx * s * 0.48 + sway;
-    const y2 = cy + s * 0.52 + Math.cos(time * 2.4 + i) * s * 0.06;
+    const x0 = cx + dx * s * 0.14;
+    const y0 = cy + s * 0.2;
+    const x1 = cx + dx * s * 0.36 + sway * 0.5;
+    const y1 = cy + s * 0.44;
+    const x2 = cx + dx * s * 0.46 + sway;
+    const y2 = cy + s * 0.58 + Math.cos(time * 2.4 + i) * s * 0.05;
+    g.strokeStyle = tent;
+    g.lineWidth = s * 0.125;
     g.beginPath();
-    g.moveTo(cx + dx * s * 0.1, cy + s * 0.14);
-    g.quadraticCurveTo(cx + dx * s * 0.32 + sway * 0.5, cy + s * 0.34, x2, y2);
+    g.moveTo(x0, y0);
+    g.quadraticCurveTo(x1, y1, x2, y2);
     g.stroke();
     g.fillStyle = A.sucker;
-    g.shadowBlur = 0;
-    for (const t of [0.35, 0.55, 0.78]) {
-      const sx = cx + dx * s * 0.1 * (1 - t) + x2 * t;
-      const sy = cy + s * 0.14 * (1 - t) + y2 * t;
+    for (const t of [0.3, 0.5, 0.7, 0.88]) {
+      const mt = 1 - t;
+      const sx = mt * mt * x0 + 2 * mt * t * x1 + t * t * x2;
+      const sy = mt * mt * y0 + 2 * mt * t * y1 + t * t * y2;
       g.beginPath();
-      g.arc(sx, sy, s * 0.04, 0, Math.PI * 2);
+      g.arc(sx, sy, s * 0.038, 0, Math.PI * 2);
       g.fill();
     }
-    g.shadowBlur = s * 0.28;
   }
 
   g.fillStyle = body;
   g.beginPath();
-  g.ellipse(cx, cy, s * 0.34, s * 0.3, 0, 0, Math.PI * 2);
+  g.ellipse(cx, cy, s * 0.4, s * 0.34, 0, 0, Math.PI * 2);
   g.fill();
-  g.restore();
 
   g.fillStyle = A.sucker;
   g.beginPath();
-  g.ellipse(cx - s * 0.1, cy - s * 0.08, s * 0.12, s * 0.08, -0.4, 0, Math.PI * 2);
+  g.ellipse(cx - s * 0.12, cy - s * 0.1, s * 0.15, s * 0.1, -0.45, 0, Math.PI * 2);
   g.fill();
 
   g.fillStyle = '#fff';
   g.beginPath();
-  g.arc(cx + s * 0.04, cy - s * 0.02, s * 0.16, 0, Math.PI * 2);
+  g.arc(cx + s * 0.05, cy - s * 0.02, s * 0.175, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#0F172A';
   g.beginPath();
-  g.arc(cx + s * 0.07, cy - s * 0.01, s * 0.08, 0, Math.PI * 2);
+  g.arc(cx + s * 0.08, cy - s * 0.01, s * 0.09, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#fff';
   g.beginPath();
-  g.arc(cx + s * 0.1, cy - s * 0.04, s * 0.03, 0, Math.PI * 2);
+  g.arc(cx + s * 0.11, cy - s * 0.04, s * 0.035, 0, Math.PI * 2);
   g.fill();
 
   g.strokeStyle = angry ? '#7F1D1D' : '#831843';
-  g.lineWidth = Math.max(2, s * 0.045);
+  g.lineWidth = Math.max(2, s * 0.05);
   g.lineCap = 'round';
   g.beginPath();
-  g.moveTo(cx - s * 0.08, cy - s * 0.18);
-  g.lineTo(cx + s * 0.02, cy - s * 0.14);
+  g.moveTo(cx - s * 0.1, cy - s * 0.2);
+  g.lineTo(cx + s * 0.02, cy - s * 0.15);
   g.stroke();
   g.beginPath();
-  g.moveTo(cx + s * 0.22, cy - s * 0.18);
-  g.lineTo(cx + s * 0.12, cy - s * 0.14);
+  g.moveTo(cx + s * 0.24, cy - s * 0.2);
+  g.lineTo(cx + s * 0.13, cy - s * 0.15);
   g.stroke();
 }
 
@@ -311,24 +324,30 @@ export function paintOrb(
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  g.save();
-  g.shadowColor = color;
-  g.shadowBlur = s * 0.55;
+  const glow = g.createRadialGradient(cx, cy, s * 0.08, cx, cy, s * 0.5);
+  glow.addColorStop(0, '#ffffff');
+  glow.addColorStop(0.18, color);
+  glow.addColorStop(0.45, hexAlpha(color, 0.7));
+  glow.addColorStop(0.72, hexAlpha(color, 0.22));
+  glow.addColorStop(1, hexAlpha(color, 0));
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(cx, cy, s * 0.5, 0, Math.PI * 2);
+  g.fill();
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.36, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.26, 0, Math.PI * 2);
   g.fill();
-  g.restore();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';
-    g.lineWidth = Math.max(2, s * 0.08);
+    g.lineWidth = Math.max(2, s * 0.07);
     g.beginPath();
-    g.arc(cx, cy, s * 0.34, 0, Math.PI * 2);
+    g.arc(cx, cy, s * 0.3, 0, Math.PI * 2);
     g.stroke();
   }
   g.fillStyle = '#ffffff';
   g.beginPath();
-  g.arc(cx, cy, s * 0.14, 0, Math.PI * 2);
+  g.arc(cx - s * 0.05, cy - s * 0.05, s * 0.1, 0, Math.PI * 2);
   g.fill();
 }
 
@@ -337,14 +356,19 @@ export function paintSpark(g: CanvasRenderingContext2D, s: number): void {
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  g.save();
-  g.shadowColor = A.spark;
-  g.shadowBlur = s * 0.4;
+  const glow = g.createRadialGradient(cx, cy, s * 0.06, cx, cy, s * 0.5);
+  glow.addColorStop(0, 'rgba(255,255,255,0.9)');
+  glow.addColorStop(0.4, hexAlpha(A.spark, 0.7));
+  glow.addColorStop(1, hexAlpha(A.spark, 0));
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(cx, cy, s * 0.5, 0, Math.PI * 2);
+  g.fill();
   g.fillStyle = A.spark;
   g.beginPath();
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2 - Math.PI / 2;
-    const r = i % 2 === 0 ? s * 0.46 : s * 0.2;
+    const r = i % 2 === 0 ? s * 0.42 : s * 0.18;
     const x = cx + Math.cos(a) * r;
     const y = cy + Math.sin(a) * r;
     if (i === 0) g.moveTo(x, y);
@@ -352,10 +376,9 @@ export function paintSpark(g: CanvasRenderingContext2D, s: number): void {
   }
   g.closePath();
   g.fill();
-  g.restore();
   g.fillStyle = '#ffffff';
   g.beginPath();
-  g.arc(cx, cy, s * 0.12, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.11, 0, Math.PI * 2);
   g.fill();
 }
 

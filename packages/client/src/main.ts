@@ -30,11 +30,12 @@ import {
 
 const BOARD_W = GRID_WIDTH;
 const BOARD_H = GRID_HEIGHT;
-const AFTERIMAGES = 8;
+const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** 꾸물이 is ~1/4 of the board width. */
 const KK_CELLS = BOARD_W / 4;
-const ORB_CELLS = 20;
+const ORB_CELLS = 26;
+const ORB_TEX = 128;
 
 function seedMidMatch(state: MatchState): void {
   const w = state.gridWidth;
@@ -64,12 +65,13 @@ function seedMidMatch(state: MatchState): void {
   }
   state.player1.territoryCells = n1;
   state.player2.territoryCells = n2;
-  state.player1.xFp = (36 << 8) + 128;
-  state.player1.yFp = (210 << 8) + 128;
-  state.player1.position = { x: 36, y: 210 };
-  state.player2.xFp = (160 << 8) + 128;
-  state.player2.yFp = (48 << 8) + 128;
-  state.player2.position = { x: 160, y: 48 };
+  // Park orbs on the neon FX trails inside claimed art.
+  state.player1.xFp = (62 << 8) + 128;
+  state.player1.yFp = (236 << 8) + 128;
+  state.player1.position = { x: 62, y: 236 };
+  state.player2.xFp = (176 << 8) + 128;
+  state.player2.yFp = (72 << 8) + 128;
+  state.player2.position = { x: 176, y: 72 };
 }
 
 interface TurfDebug {
@@ -233,10 +235,12 @@ class GameScene extends Phaser.Scene {
 
     this.trailGlow = this.add.graphics();
     this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
+    this.trailGlow.setDepth(1);
     this.trailGfx = this.add.graphics();
-    this.addPaintedTexture('orb-me', 64, (g, s) => paintOrb(g, s, A.me));
-    this.addPaintedTexture('orb-foe', 64, (g, s) => paintOrb(g, s, A.foe, true));
-    this.addPaintedTexture('sparx', 32, paintSpark);
+    this.trailGfx.setDepth(2);
+    this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me));
+    this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true));
+    this.addPaintedTexture('sparx', 48, paintSpark);
     this.addPaintedTexture('dot-me', 8, (g, s) => paintParticleDot(g, s, A.me));
     this.addPaintedTexture('dot-accent', 8, (g, s) => paintParticleDot(g, s, A.accent));
     this.addPaintedTexture('dot-white', 8, (g, s) => paintParticleDot(g, s, A.text));
@@ -249,19 +253,21 @@ class GameScene extends Phaser.Scene {
     paintKkumuli(this.kkCanvas.getContext('2d')!, KK_TEX, 0, false);
     this.kkTexture = this.textures.addCanvas('kkumuli', this.kkCanvas);
 
-    this.p1Sprite = this.add.image(0, 0, 'orb-me');
-    this.p2Sprite = this.add.image(0, 0, 'orb-foe');
-    this.kkumuli = this.add.image(0, 0, 'kkumuli');
-    this.sparkSprites = [this.add.image(0, 0, 'sparx'), this.add.image(0, 0, 'sparx')];
-    addGlow(this.p1Sprite, AH.me, 8);
-    addGlow(this.p2Sprite, AH.foe, 8);
-    addGlow(this.kkumuli, 0xdb2777, 10);
-    for (const s of this.sparkSprites) addGlow(s, AH.spark, 5);
+    this.p1Sprite = this.add.image(0, 0, 'orb-me').setDepth(6);
+    this.p2Sprite = this.add.image(0, 0, 'orb-foe').setDepth(6);
+    this.kkumuli = this.add.image(0, 0, 'kkumuli').setDepth(5);
+    this.sparkSprites = [
+      this.add.image(0, 0, 'sparx').setDepth(7),
+      this.add.image(0, 0, 'sparx').setDepth(7),
+    ];
+    // Canvas-baked circular glow only — Phaser addGlow halos the whole quad as a square.
 
     for (let i = 0; i < AFTERIMAGES; i++) {
-      const ghost = this.add.image(0, 0, 'orb-me').setAlpha(0);
+      const ghost = this.add.image(0, 0, 'orb-me').setAlpha(0).setDepth(4);
+      ghost.setBlendMode(Phaser.BlendModes.ADD);
       this.afterimages.push(ghost);
-      const ghost2 = this.add.image(0, 0, 'orb-foe').setAlpha(0);
+      const ghost2 = this.add.image(0, 0, 'orb-foe').setAlpha(0).setDepth(4);
+      ghost2.setBlendMode(Phaser.BlendModes.ADD);
       this.afterimages2.push(ghost2);
     }
 
@@ -462,7 +468,10 @@ class GameScene extends Phaser.Scene {
         return;
       }
       const heading = this.qaHeading();
-      const botMove = this.bot!.getNextMove(this.matchState);
+      const botMove =
+        this.qaMode && !this.qaHit
+          ? { player: 2 as const, heading: 128, thrusting: false }
+          : this.bot!.getNextMove(this.matchState);
       const prevTrail = this.matchState.player1.trail.slice();
       const autoThrust = this.qaHit || this.qaMode;
       const result = step(this.matchState, [
@@ -472,7 +481,7 @@ class GameScene extends Phaser.Scene {
       this.matchState = result.state;
       this.p1TrailCopy = this.matchState.player1.trail.length ? this.matchState.player1.trail : prevTrail;
       this.handleEvents(result.events, prevTrail);
-      if (this.qaMode && !this.qaHit && this.matchState.tick === 14 && !this.qaClaimed) {
+      if (this.qaMode && !this.qaHit && this.matchState.tick >= 40 && !this.qaClaimed) {
         this.qaClaimed = true;
         this.playCutFx(undefined, 6);
       }
@@ -483,11 +492,11 @@ class GameScene extends Phaser.Scene {
   private qaHeading(): number {
     if (!this.qaMode) return this.heading;
     if (this.qaHit) return 64;
-    const x = this.matchState?.player1.position.x ?? 36;
-    if (x >= 56) return 128;
-    if (x <= 12) return 0;
+    const y = this.matchState?.player1.position.y ?? 236;
+    if (y >= 250) return 192;
+    if (y <= 80) return 64;
     this.qaTick++;
-    return (Math.floor(this.qaTick / 14) % 2 === 0) ? 0 : 128;
+    return Math.floor(this.qaTick / 18) % 2 === 0 ? 192 : 64;
   }
 
   private handleEvents(events: GameEvent[], prevTrail: { x: number; y: number }[]) {
@@ -519,7 +528,7 @@ class GameScene extends Phaser.Scene {
     this.cutTimer = setTimeout(() => {
       stack?.classList.remove('show', 'pop');
       if (window.__turfDebug) window.__turfDebug.cutFx = false;
-    }, 1400);
+    }, 2500);
     this.cameras.main.shake(180, 0.012);
     const pos = this.worldOf(this.matchState?.player1.position ?? { x: BOARD_W / 2, y: BOARD_H - 8 });
     this.burst(this.cutEmitter, pos.x, pos.y, 70, ['dot-me', 'dot-accent', 'dot-white']);
@@ -709,63 +718,47 @@ class GameScene extends Phaser.Scene {
     if (!this.trailGfx || trail.length < 2) return;
     const pts = trail.map((p) => ({ x: ox + (p.x + 0.5) * scale, y: oy + (p.y + 0.5) * scale }));
     const glowGfx = this.trailGlow ?? this.trailGfx;
-    const stroke = (gfx: Phaser.GameObjects.Graphics, width: number, color: number, alpha: number) => {
-      gfx.lineStyle(width, color, alpha);
-      if (dashed) this.drawDashedOn(gfx, pts, Math.max(10, scale * 5), Math.max(6, scale * 3));
-      else this.drawCurveOn(gfx, pts);
-    };
-    stroke(glowGfx, Math.max(22, scale * 14), glow, 0.22);
-    stroke(glowGfx, Math.max(14, scale * 9), glow, 0.45);
-    stroke(this.trailGfx, Math.max(8, scale * 5), glow, 1);
-    stroke(this.trailGfx, Math.max(3, scale * 1.8), core, 1);
-  }
-
-  private drawCurveOn(g: Phaser.GameObjects.Graphics, pts: { x: number; y: number }[]) {
-    g.beginPath();
-    g.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1];
-      const cur = pts[i];
-      const mx = (prev.x + cur.x) / 2;
-      const my = (prev.y + cur.y) / 2;
-      g.lineTo(mx, my);
-    }
-    g.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    g.strokePath();
-  }
-
-  private drawDashedOn(g: Phaser.GameObjects.Graphics, pts: { x: number; y: number }[], on: number, off: number) {
-    let acc = 0;
-    let drawing = true;
-    g.beginPath();
-    g.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      let x0 = pts[i - 1].x;
-      let y0 = pts[i - 1].y;
-      const x1 = pts[i].x;
-      const y1 = pts[i].y;
-      let dx = x1 - x0;
-      let dy = y1 - y0;
-      let dist = Math.hypot(dx, dy);
-      if (dist < 0.001) continue;
-      const ux = dx / dist;
-      const uy = dy / dist;
-      while (dist > 0) {
-        const slice = Math.min(dist, drawing ? on - acc : off - acc);
-        x0 += ux * slice;
-        y0 += uy * slice;
-        dist -= slice;
-        acc += slice;
-        if (drawing) g.lineTo(x0, y0);
-        else g.moveTo(x0, y0);
-        const limit = drawing ? on : off;
-        if (acc >= limit - 0.01) {
-          acc = 0;
-          drawing = !drawing;
+    const dots: { x: number; y: number }[] = [];
+    if (dashed) {
+      const on = Math.max(12, scale * 6);
+      const off = Math.max(8, scale * 4);
+      let acc = 0;
+      let drawing = true;
+      dots.push(pts[0]);
+      for (let i = 1; i < pts.length; i++) {
+        let x0 = pts[i - 1].x;
+        let y0 = pts[i - 1].y;
+        const x1 = pts[i].x;
+        const y1 = pts[i].y;
+        let dist = Math.hypot(x1 - x0, y1 - y0);
+        if (dist < 0.001) continue;
+        const ux = (x1 - x0) / dist;
+        const uy = (y1 - y0) / dist;
+        while (dist > 0) {
+          const slice = Math.min(dist, drawing ? on - acc : off - acc);
+          x0 += ux * slice;
+          y0 += uy * slice;
+          dist -= slice;
+          acc += slice;
+          if (drawing) dots.push({ x: x0, y: y0 });
+          const limit = drawing ? on : off;
+          if (acc >= limit - 0.01) {
+            acc = 0;
+            drawing = !drawing;
+          }
         }
       }
+    } else {
+      dots.push(...pts);
     }
-    g.strokePath();
+    const stamp = (gfx: Phaser.GameObjects.Graphics, radius: number, color: number, alpha: number) => {
+      gfx.fillStyle(color, alpha);
+      for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
+    };
+    stamp(glowGfx, Math.max(11, scale * 7), glow, 0.16);
+    stamp(glowGfx, Math.max(7, scale * 4.6), glow, 0.34);
+    stamp(this.trailGfx, Math.max(5, scale * 3.1), glow, 1);
+    stamp(this.trailGfx, Math.max(2.2, scale * 1.35), core, 1);
   }
 
   private paintActors(
@@ -785,31 +778,78 @@ class GameScene extends Phaser.Scene {
     };
     this.lastP1.push(p1);
     if (this.lastP1.length > AFTERIMAGES) this.lastP1.shift();
-    this.afterimages.forEach((img, i) => {
-      const src = this.lastP1[this.lastP1.length - 1 - i];
-      if (!src) {
-        img.setAlpha(0);
-        return;
-      }
-      place(img, src, ORB_CELLS * (1 - i * 0.08));
-      img.setAlpha(0.7 * (1 - i / AFTERIMAGES));
-    });
     this.lastP2.push(p2);
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
-    this.afterimages2.forEach((img, i) => {
-      const src = this.lastP2[this.lastP2.length - 1 - i];
-      if (!src) {
-        img.setAlpha(0);
-        return;
-      }
-      place(img, src, ORB_CELLS * 0.85 * (1 - i * 0.08));
-      img.setAlpha(0.55 * (1 - i / AFTERIMAGES));
-    });
+    const guide1 =
+      !this.qaHit && this.fxTrail1.length >= 2
+        ? this.fxTrail1
+        : this.matchState?.player1.trail ?? this.p1TrailCopy;
+    const guide2 =
+      !this.qaHit && this.fxTrail2.length >= 2
+        ? this.fxTrail2
+        : this.matchState?.player2.trail ?? [];
+    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.72, { x: 0, y: -1 });
+    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.9, 0.6, { x: -1, y: 0 });
     place(this.p1Sprite, p1, ORB_CELLS);
     place(this.p2Sprite, p2, ORB_CELLS);
     place(this.kkumuli, boss, KK_CELLS);
-    place(this.sparkSprites[0], s1, 10);
-    place(this.sparkSprites[1], s2, 10);
+    place(this.sparkSprites[0], s1, 14);
+    place(this.sparkSprites[1], s2, 14);
+  }
+
+  private stampAfterimages(
+    imgs: Phaser.GameObjects.Image[],
+    pos: { x: number; y: number },
+    guide: { x: number; y: number }[],
+    history: { x: number; y: number }[],
+    size: number,
+    alpha0: number,
+    fallback: { x: number; y: number },
+  ) {
+    const pts: { x: number; y: number }[] = [];
+    if (guide.length >= 2) {
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < guide.length; i++) {
+        const d = (guide[i].x - pos.x) ** 2 + (guide[i].y - pos.y) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      for (let k = 1; k <= AFTERIMAGES; k++) {
+        const idx = Math.max(0, best - k * 4);
+        pts.push(guide[idx]);
+      }
+    } else {
+      let dx = fallback.x;
+      let dy = fallback.y;
+      if (history.length >= 2) {
+        const a = history[history.length - 1];
+        const b = history[history.length - 2];
+        dx = a.x - b.x;
+        dy = a.y - b.y;
+      }
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len;
+      dy /= len;
+      for (let k = 1; k <= AFTERIMAGES; k++) {
+        pts.push({ x: pos.x - dx * k * 4.5, y: pos.y - dy * k * 4.5 });
+      }
+    }
+    const scale = this.boardImage?.scaleX ?? 1;
+    imgs.forEach((img, i) => {
+      const src = pts[i];
+      if (!src) {
+        img.setAlpha(0);
+        return;
+      }
+      const w = this.worldOf(src);
+      img.setPosition(w.x, w.y);
+      const sz = Math.max(10, size * (1 - i * 0.07) * scale);
+      img.setDisplaySize(sz, sz);
+      img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
+    });
   }
 
   private paintGrid(grid: CellType[][]) {
