@@ -134,6 +134,7 @@ class GameScene extends Phaser.Scene {
     this.p2Sprite = this.add.image(0, 0, 'cutter-foe');
     this.kkumuli = this.add.image(0, 0, 'kkumuli');
     this.sparkSprites = [this.add.image(0, 0, 'sparx'), this.add.image(0, 0, 'sparx')];
+    this.setActorsVisible(false);
     this.paintGrid(createInitialState().grid);
     this.layoutBoard();
     this.scale.on('resize', () => this.layoutBoard());
@@ -221,8 +222,16 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  private setActorsVisible(visible: boolean) {
+    this.p1Sprite?.setVisible(visible);
+    this.p2Sprite?.setVisible(visible);
+    this.kkumuli?.setVisible(visible);
+    for (const spark of this.sparkSprites) spark.setVisible(visible);
+  }
+
   startOnlineMode(room: Room) {
     this.room = room;
+    this.setActorsVisible(true);
     setPlaying(true);
     room.onMessage('player', (message: { num: 1 | 2 }) => {
       this.playerNum = message.num;
@@ -241,6 +250,7 @@ class GameScene extends Phaser.Scene {
     this.room = null;
     this.matchState = createInitialState();
     this.bot = new Bot('normal', 2, 11);
+    this.setActorsVisible(true);
     setPlaying(true);
     this.renderState(this.matchState);
     this.botInterval = setInterval(() => {
