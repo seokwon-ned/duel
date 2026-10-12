@@ -14,33 +14,29 @@ export function headingCardinal(from: Waypoint, to: Waypoint): number {
 
 export function p1CaptureWaypoints(): Waypoint[] {
   return [
-    // First closed cut: left-center window so sun / hills / water / cottage show (~26%).
-    { x: 100, y: 268 },
-    { x: 18, y: 268 },
-    { x: 18, y: 72 },
-    { x: 88, y: 72 },
-    { x: 88, y: 298 },
-    { x: 100, y: 298 },
+    // Ride the bottom rim, then a left window that reveals sun / hills / water / cottage.
+    // Close on SAFE_EDGE — never recross the live trail.
+    { x: 100, y: 299 },
+    { x: 76, y: 299 },
+    { x: 76, y: 48 },
+    { x: 16, y: 48 },
+    { x: 16, y: 299 },
     // Second live line (match screenshot: claimed landscape + thick neon + orb).
     { x: 100, y: 250 },
     { x: 100, y: 188 },
     { x: 148, y: 188 },
-    { x: 148, y: 250 },
-    { x: 100, y: 250 },
-    { x: 100, y: 298 },
+    { x: 148, y: 299 },
   ];
 }
 
 export function p1HitWaypoints(): Waypoint[] {
   return [
-    { x: 100, y: 268 },
-    { x: 18, y: 268 },
-    { x: 18, y: 72 },
-    { x: 88, y: 72 },
-    { x: 88, y: 298 },
-    { x: 100, y: 298 },
+    { x: 100, y: 299 },
+    { x: 76, y: 299 },
+    { x: 76, y: 48 },
+    { x: 16, y: 48 },
+    { x: 16, y: 299 },
     { x: 100, y: 250 },
-    { x: 100, y: 298 },
     { x: 100, y: 299 },
   ];
 }

@@ -441,21 +441,26 @@ class GameScene extends Phaser.Scene {
 
   private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
     if (!this.matchState) return { events: [], prevTrail: [] };
-    if (this.qaMode && (this.matchState.player1.territoryCells ?? 0) < 18000) {
-      // Keep 꾸물이 in remaining cover so the scripted left-window cut can finish.
-      this.matchState.boss.xFp = toFp(158);
-      this.matchState.boss.yFp = toFp(132);
+    const claimed = this.matchState.player1.territoryCells ?? 0;
+    if (this.qaMode && claimed < 18000) {
+      // Keep 꾸물이 in remaining cover so the left-window cut can finish, and
+      // so the mid-match shot shows the full ~1/4-width body (not cropped).
+      this.matchState.boss.xFp = toFp(124);
+      this.matchState.boss.yFp = toFp(118);
+      this.matchState.sparx1.xFp = toFp(0);
+      this.matchState.sparx1.yFp = toFp(0);
+      this.matchState.sparx1.edgeDir = 0;
+      this.matchState.sparx2.xFp = toFp(199);
+      this.matchState.sparx2.yFp = toFp(0);
+      this.matchState.sparx2.edgeDir = 2;
     }
-    if (this.qaHit && this.matchState.player1.position.y >= this.matchState.gridHeight - 1) {
-      const x = this.matchState.player1.position.x;
-      const y = this.matchState.gridHeight - 1;
-      const sx = this.matchState.sparx2.xFp >> 8;
-      const sy = this.matchState.sparx2.yFp >> 8;
-      if (Math.abs(sx - x) > 6 || sy !== y) {
-        this.matchState.sparx2.xFp = ((x - 4) << 8) + 128;
-        this.matchState.sparx2.yFp = (y << 8) + 128;
-        this.matchState.sparx2.edgeDir = 0;
-      }
+    if (this.qaHit && claimed >= 15000 && this.matchState.player1.drawing) {
+      const rim = this.matchState.player1.trail.find(
+        (p) => p.x === 0 || p.y === 0 || p.x === BOARD_W - 1 || p.y === BOARD_H - 1,
+      ) ?? this.matchState.player1.position;
+      this.matchState.sparx2.xFp = toFp(rim.x);
+      this.matchState.sparx2.yFp = toFp(rim.y);
+      this.matchState.sparx2.edgeDir = 0;
     }
     let heading = this.heading;
     let thrusting = this.thrusting;

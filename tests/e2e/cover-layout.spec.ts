@@ -85,7 +85,13 @@ test.describe('Cover spike 390x844', () => {
     await page.goto('/?qa=hit');
     await page.waitForSelector('#game-container canvas');
     await page.click('#botBtn');
-    await page.waitForFunction(() => Boolean(window.__turfDebug?.hitFx), { timeout: 50000 });
+    await page.waitForFunction(
+      () => {
+        const d = window.__turfDebug;
+        return Boolean(d?.hitFx && d.ownedCells.p1 >= 15000);
+      },
+      { timeout: 50000 },
+    );
     await expect(page.locator('#hitFlash')).toBeVisible();
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'hit.png') });
   });
