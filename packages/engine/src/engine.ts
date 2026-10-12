@@ -232,6 +232,10 @@ function tryMovePlayer(
       return;
     }
     if (isCover(cell)) {
+      if (cellOf(state.boss.xFp) === cx && cellOf(state.boss.yFp) === cy) {
+        hurt(state, num, events);
+        return;
+      }
       player.xFp = xFp;
       player.yFp = yFp;
       snapCell(player);
@@ -253,6 +257,10 @@ function tryMovePlayer(
   }
 
   if (isCover(cell) && isOpened(state.grid[fromY][fromX])) {
+    if (cellOf(state.boss.xFp) === cx && cellOf(state.boss.yFp) === cy) {
+      hurt(state, num, events);
+      return;
+    }
     player.drawing = true;
     player.trail = [];
     player.fuseIndex = -1;
@@ -273,6 +281,14 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   }
 
   const bossCell = { x: cellOf(state.boss.xFp), y: cellOf(state.boss.yFp) };
+  if (
+    (cellOf(player.xFp) === bossCell.x && cellOf(player.yFp) === bossCell.y) ||
+    player.trail.some((p) => p.x === bossCell.x && p.y === bossCell.y)
+  ) {
+    hurt(state, num, events);
+    return;
+  }
+
   const sparks = [
     { x: cellOf(state.sparx1.xFp), y: cellOf(state.sparx1.yFp) },
     { x: cellOf(state.sparx2.xFp), y: cellOf(state.sparx2.yFp) },
@@ -280,14 +296,15 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   const total = state.gridWidth * state.gridHeight;
   const { claimed, remainingCover } = claimClosedTrail(state.grid, player.trail, num, bossCell);
 
-  let trapped = false;
   const paint = playerOpenType(num);
+  let trapped = false;
   for (const s of sparks) {
     if (inBounds(s.x, s.y, state.gridWidth, state.gridHeight) && state.grid[s.y][s.x] === paint) {
       trapped = true;
     }
   }
-  if (remainingCover * SMALL_TRAP_DEN < total * SMALL_TRAP_NUM) {
+  // Remaining cover 0 means the boss region vanished (do not award +5%).
+  if (remainingCover > 0 && remainingCover * SMALL_TRAP_DEN < total * SMALL_TRAP_NUM) {
     trapped = true;
   }
 
@@ -374,11 +391,13 @@ function moveBoss(state: MatchState, events: GameEvent[]): void {
     const next = stepFixed(state.boss.xFp, state.boss.yFp, heading, speed);
     const cx = cellOf(next.xFp);
     const cy = cellOf(next.yFp);
-    if (inBounds(cx, cy, state.gridWidth, state.gridHeight) && isCover(state.grid[cy][cx])) {
+    if (!inBounds(cx, cy, state.gridWidth, state.gridHeight)) continue;
+    const cell = state.grid[cy][cx];
+    if (isTrail(cell) || isCover(cell)) {
       state.boss.xFp = next.xFp;
       state.boss.yFp = next.yFp;
       state.boss.heading = heading;
-      hitDrawingPlayers(state, cx, cy, events);
+      hitTrailAndDrawer(state, cx, cy, events);
       return;
     }
     heading = wrapAngle(heading + 64);
@@ -417,8 +436,12 @@ function walkSparx(state: MatchState, sparx: MonsterState, turnSign: number): vo
   }
 }
 
-function hitDrawingPlayers(state: MatchState, x: number, y: number, events: GameEvent[]): void {
+function hitTrailAndDrawer(state: MatchState, x: number, y: number, events: GameEvent[]): void {
   for (const num of [1, 2] as const) {
+    if (isTrail(state.grid[y][x], num)) {
+      hurt(state, num, events);
+      continue;
+    }
     const p = num === 1 ? state.player1 : state.player2;
     if (p.drawing && cellOf(p.xFp) === x && cellOf(p.yFp) === y) {
       hurt(state, num, events);

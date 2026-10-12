@@ -30,18 +30,28 @@ export function claimClosedTrail(
   const w = grid[0]?.length ?? 0;
   const paint = playerOpenType(player);
 
+  const visited = Array.from({ length: h }, () => Array(w).fill(false));
+  const queue: Position[] = [];
+
+  const enqueueCover = (x: number, y: number) => {
+    if (!inBounds(x, y, w, h) || visited[y][x] || !isCover(grid[y][x])) return;
+    visited[y][x] = true;
+    queue.push({ x, y });
+  };
+
+  // Seed from the live boss cell before the trail is painted so a boss standing
+  // on the line still belongs to a cover region instead of vanishing.
+  enqueueCover(boss.x, boss.y);
+  if (queue.length === 0) {
+    for (const d of CARDINAL) {
+      enqueueCover(boss.x + d.x, boss.y + d.y);
+    }
+  }
+
   for (const p of trail) {
     if (inBounds(p.x, p.y, w, h)) {
       grid[p.y][p.x] = paint;
     }
-  }
-
-  const visited = Array.from({ length: h }, () => Array(w).fill(false));
-  const queue: Position[] = [];
-
-  if (inBounds(boss.x, boss.y, w, h) && isCover(grid[boss.y][boss.x])) {
-    visited[boss.y][boss.x] = true;
-    queue.push({ x: boss.x, y: boss.y });
   }
 
   while (queue.length > 0) {

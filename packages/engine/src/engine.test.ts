@@ -63,6 +63,14 @@ describe('cover engine (Amy ★)', () => {
 
   test('returning to the edge claims the side without the boss', () => {
     let state = createInitialState({ width: 16, height: 16, matchTicks: 500 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(15);
+    state.sparx2.yFp = toFp(0);
     const startY = state.gridHeight - 1;
     const x = state.gridWidth >> 1;
 
@@ -167,6 +175,49 @@ describe('cover engine (Amy ★)', () => {
     expect(burned.player1.hearts).toBeLessThan(before);
   });
 
+  test('closing while the boss is on the line hurts and does not take the board', () => {
+    let state = createInitialState({ width: 16, height: 16, matchTicks: 400 });
+    state.player1.hearts = 3;
+    state.player2.hearts = 99;
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(15);
+    state.sparx2.yFp = toFp(0);
+    state.boss.xFp = toFp(8);
+    state.boss.yFp = toFp(8);
+    state.player1.drawing = true;
+    state.player1.thrusting = true;
+    state.player1.heading = 0;
+    state.player1.xFp = toFp(8);
+    state.player1.yFp = toFp(15);
+    state.player1.trail = [];
+    for (let y = 14; y >= 8; y--) {
+      state.grid[y][8] = CellType.PLAYER1_TRAIL;
+      state.player1.trail.push({ x: 8, y });
+    }
+    const coverBefore = state.grid.flat().filter((c) => c === CellType.COVER).length;
+    state = step(state, [{ player: 1, heading: 0, thrusting: true }]).state;
+    expect(state.player1.hearts).toBe(2);
+    expect(state.player1.drawing).toBe(false);
+    const coverAfter = state.grid.flat().filter((c) => c === CellType.COVER).length;
+    expect(coverAfter).toBeGreaterThan(coverBefore - 20);
+    expect(state.player1.bonusCells).toBe(0);
+  });
+
+  test('boss moving onto a trail costs the drawer a heart', () => {
+    const state = createInitialState({ width: 16, height: 16, matchTicks: 400 });
+    state.player1.hearts = 3;
+    state.player2.hearts = 99;
+    state.player1.drawing = true;
+    state.grid[8][8] = CellType.PLAYER1_TRAIL;
+    state.player1.trail = [{ x: 8, y: 8 }];
+    state.boss.xFp = (8 << 8) - 40;
+    state.boss.yFp = toFp(8);
+    state.boss.heading = 0;
+    const next = step(state, []).state;
+    expect(next.player1.hearts).toBeLessThan(3);
+  });
+
   test('trapping a monster in a small piece grants +5%', () => {
     const state = createInitialState({ width: 20, height: 20, matchTicks: 200 });
     const total = 20 * 20;
@@ -182,6 +233,19 @@ describe('cover engine (Amy ★)', () => {
     const { remainingCover } = claimClosedTrail(state.grid, trail, 1, { x: 10, y: 10 });
     expect(remainingCover).toBe(1);
     expect(remainingCover * 100 < total * 5).toBe(true);
+  });
+
+  test('claim seeds from boss neighbors so a line cell does not swallow the board', () => {
+    const state = createInitialState({ width: 12, height: 12, matchTicks: 200 });
+    const trail: { x: number; y: number }[] = [];
+    for (let y = 2; y <= 9; y++) {
+      state.grid[y][3] = CellType.PLAYER1_TRAIL;
+      trail.push({ x: 3, y });
+    }
+    state.grid[5][5] = CellType.COVER;
+    const { claimed, remainingCover } = claimClosedTrail(state.grid, trail, 1, { x: 3, y: 5 });
+    expect(remainingCover).toBeGreaterThan(0);
+    expect(claimed).toBeLessThan(10 * 10);
   });
 
   test('sparx stay on the outer board edge, not opened territory boundaries', () => {
