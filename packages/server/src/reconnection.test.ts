@@ -1394,9 +1394,9 @@ async function testStrongerForgedTokenRejected(): Promise<ReconnectionTestResult
     }
 
     const ok = await manualReconnect<TurfDuelState>(client2, real);
-    if (ok.state.paused === undefined) {
+    if (ok.state.result) {
       await shutdown(server);
-      return { passed: false, message: 'Real token should still reconnect' };
+      return { passed: false, message: `Real token reconnect forfeited: ${JSON.stringify(ok.state.result)}` };
     }
 
     await shutdown(server);
