@@ -23,4 +23,12 @@ describe('cellUpdates accumulate (P1-3)', () => {
     expect(shouldSnapshotCellUpdates(257)).toBe(true);
     expect(shouldSnapshotCellUpdates(10)).toBe(false);
   });
+
+  test('clearing after a patch leaves only the next tick\'s cells', () => {
+    const pending = new Map<string, { x: number; y: number; type: number }>();
+    accumulateCellUpdates(pending, [{ x: 1, y: 1, type: 3 }]);
+    pending.clear();
+    const next = accumulateCellUpdates(pending, [{ x: 2, y: 2, type: 1 }]);
+    expect(next).toEqual([{ x: 2, y: 2, type: 1 }]);
+  });
 });

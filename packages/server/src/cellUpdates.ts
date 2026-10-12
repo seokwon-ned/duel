@@ -4,7 +4,7 @@ export function cellKey(x: number, y: number): string {
   return `${x},${y}`;
 }
 
-/** Keep every cell changed since the last full grid snapshot so two ticks in one patch are not lost. */
+/** Merge a batch into pending so two ticks in one schema write are not lost. The room clears pending after copying into the outgoing patch. */
 export function accumulateCellUpdates<T extends { x: number; y: number }>(
   pending: Map<string, T>,
   batch: T[],

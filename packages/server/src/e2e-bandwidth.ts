@@ -307,14 +307,15 @@ async function runE2ETest(): Promise<void> {
     throw error;
   } finally {
     await Promise.race([
-      server.gracefullyShutdown().catch(() => undefined),
+      server.gracefullyShutdown(false).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
-    process.exit(0);
   }
 }
 
-runE2ETest().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+runE2ETest()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });

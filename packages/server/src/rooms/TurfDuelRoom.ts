@@ -572,6 +572,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       update.type = cell.type;
       state.cellUpdates.push(update);
     }
+    // Each Colyseus patch is a delta since the last send. Holding pending
+    // until the next snapshot re-broadcast every changed cell every tick.
+    this.pendingCellUpdates.clear();
   }
 
   private sendGridSnapshot(client: Client) {

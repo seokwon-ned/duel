@@ -203,8 +203,11 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
     const cell = state.grid[intent.cy][intent.cx];
     const foe: 1 | 2 = intent.num === 1 ? 2 : 1;
     if (isTrail(cell, foe)) {
-      willHurt.add(foe);
-      intent.crossedFoe = true;
+      const foePlayer = foe === 1 ? state.player1 : state.player2;
+      if (!isInvincible(foePlayer, state.tick)) {
+        willHurt.add(foe);
+        intent.crossedFoe = true;
+      }
     } else if (isTrail(cell, intent.num)) {
       const last = intent.player.trail[intent.player.trail.length - 1];
       if (!last || last.x !== intent.cx || last.y !== intent.cy) {
@@ -273,7 +276,15 @@ function tryMovePlayer(
   const cell = state.grid[cy][cx];
   const foe = num === 1 ? 2 : 1;
 
-    if (isTrail(cell, foe)) {
+  if (isTrail(cell, foe)) {
+    const foePlayer = foe === 1 ? state.player1 : state.player2;
+    if (isInvincible(foePlayer, state.tick)) {
+      // Pass over an invincible opponent line: move, do not overwrite, not our trail.
+      player.xFp = xFp;
+      player.yFp = yFp;
+      snapCell(player);
+      return;
+    }
     hurt(state, foe, events);
     player.xFp = xFp;
     player.yFp = yFp;
@@ -376,19 +387,27 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
     trapped = true;
   }
 
+  const painted = countCells(state.grid, paint);
   let bonus = 0;
   if (trapped) {
-    bonus = Math.floor((total * TRAP_BONUS_NUM) / TRAP_BONUS_DEN);
-    player.bonusCells += bonus;
-    const percent = Math.round((bonus * 100) / total);
-    events.push({
-      type: 'trap_bonus',
-      player: num,
-      data: { bonus: true, cells: bonus, percent },
-    });
+    const raw = Math.floor((total * TRAP_BONUS_NUM) / TRAP_BONUS_DEN);
+    const room = Math.max(0, total - painted - player.bonusCells);
+    bonus = raw < room ? raw : room;
+    if (bonus > 0) {
+      player.bonusCells += bonus;
+      const percent = Math.round((bonus * 100) / total);
+      events.push({
+        type: 'trap_bonus',
+        player: num,
+        data: { bonus: true, cells: bonus, percent },
+      });
+    }
   }
 
-  player.territoryCells = countCells(state.grid, paint) + player.bonusCells;
+  if (player.bonusCells > total - painted) {
+    player.bonusCells = Math.max(0, total - painted);
+  }
+  player.territoryCells = painted + player.bonusCells;
   player.drawing = false;
   player.trail = [];
   player.fuseIndex = -1;
@@ -398,10 +417,14 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   events.push({ type: 'claim', player: num, data: { cells: claimed } });
 }
 
+function isInvincible(player: PlayerState, tick: number): boolean {
+  return player.lastHurtTick >= 0 && tick - player.lastHurtTick < HURT_IFRAME_TICKS;
+}
+
 function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   const player = num === 1 ? state.player1 : state.player2;
   if (!player.isAlive) return;
-  if (player.lastHurtTick >= 0 && state.tick - player.lastHurtTick < HURT_IFRAME_TICKS) return;
+  if (isInvincible(player, state.tick)) return;
   player.lastHurtTick = state.tick;
 
   clearTrail(state, num);

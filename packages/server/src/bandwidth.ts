@@ -102,7 +102,7 @@ async function measureBandwidth(): Promise<void> {
 
   await room1.leave();
   await room2.leave();
-  await server.gracefullyShutdown();
+  await server.gracefullyShutdown(false);
 }
 
 measureBandwidth().catch((err) => {

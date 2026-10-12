@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
 import { CellType, Direction, HURT_IFRAME_TICKS, PlayerInput, ResultReason } from './types.js';
-import { claimClosedTrail } from './cover.js';
+import { claimClosedTrail, countCells } from './cover.js';
 import { cellOf, toFp } from './lut.js';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
@@ -157,6 +157,41 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player1.hearts).toBe(before - 1);
     expect(state.player1.drawing).toBe(false);
     expect(state.player2.trail.some((p) => p.x === target.x && p.y === target.y)).toBe(true);
+  });
+
+  test('stepping on an invincible opponent line passes over without overwriting', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+    state.boss.xFp = (1 << 8) + 128;
+    state.boss.yFp = (1 << 8) + 128;
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(19);
+    state.sparx2.yFp = toFp(19);
+    state = run(state, [{ player: 1, heading: 192, thrusting: true }], 6);
+    expect(state.player1.drawing).toBe(true);
+    expect(state.player1.trail.length).toBeGreaterThan(0);
+
+    const target = state.player1.trail[Math.floor(state.player1.trail.length / 2)];
+    state.player1.lastHurtTick = state.tick;
+    state.player1.thrusting = false;
+    const beforeHearts = state.player1.hearts;
+    const beforeTrailLen = state.player1.trail.length;
+
+    state.player2.xFp = ((target.x - 1) << 8) + 128;
+    state.player2.yFp = (target.y << 8) + 128;
+    state.player2.drawing = false;
+    state.player2.trail = [];
+    state.player2.heading = 0;
+    state.player2.thrusting = true;
+
+    state = step(state, [{ player: 2, heading: 0, thrusting: true }]).state;
+    expect(state.player1.hearts).toBe(beforeHearts);
+    expect(state.player1.drawing).toBe(true);
+    expect(state.player1.trail.length).toBe(beforeTrailLen);
+    expect(state.grid[target.y][target.x]).toBe(CellType.PLAYER1_TRAIL);
+    expect(state.player2.trail.some((p) => p.x === target.x && p.y === target.y)).toBe(false);
+    expect(cellOf(state.player2.xFp)).toBe(target.x);
+    expect(cellOf(state.player2.yFp)).toBe(target.y);
   });
 
   test('simultaneous line steps hurt both and steal the crossed cells', () => {
@@ -347,6 +382,40 @@ describe('cover engine (Amy ★)', () => {
     expect(state.player1.bonusCells).toBeGreaterThan(0);
   });
 
+  test('trap bonus cannot push territory past 100%', () => {
+    let state = createInitialState({ width: 24, height: 24, matchTicks: 500 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    const total = 24 * 24;
+    for (let y = 1; y < 23; y++) {
+      for (let x = 1; x < 23; x++) {
+        if ((x === 10 && y === 22) || (x === 1 && y === 1)) continue;
+        state.grid[y][x] = CellType.PLAYER1_OPEN;
+      }
+    }
+    state.grid[22][10] = CellType.PLAYER1_TRAIL;
+    state.player1.drawing = true;
+    state.player1.trail = [{ x: 10, y: 22 }];
+    state.player1.xFp = toFp(10);
+    state.player1.yFp = (22 << 8) + 200;
+    state.player1.position = { x: 10, y: 22 };
+    state.sparx2.xFp = toFp(10);
+    state.sparx2.yFp = toFp(23);
+    state.player1.bonusCells = total - 8;
+    const result = step(state, [{ player: 1, heading: 64, thrusting: true }]);
+    const painted = countCells(result.state.grid, CellType.PLAYER1_OPEN);
+    expect(result.events.some((e) => e.type === 'claim')).toBe(true);
+    expect(result.state.player1.territoryCells).toBeLessThanOrEqual(total);
+    expect(result.state.player1.bonusCells).toBeLessThanOrEqual(total);
+    expect(painted + result.state.player1.bonusCells).toBeLessThanOrEqual(total);
+    expect(result.state.player1.territoryCells).toBe(painted + result.state.player1.bonusCells);
+    expect(result.state.player1.territoryCells).toBe(total);
+  });
+
   test('boxing a Sparx against the wall emits trap_bonus', () => {
     let state = createInitialState({ width: 24, height: 24, matchTicks: 500 });
     state.player1.hearts = 99;
@@ -438,7 +507,7 @@ describe('cover engine (Amy ★)', () => {
     }
   });
 
-  test('after a hit the player is invincible for 1.5 seconds', () => {
+  test('after a hit the player is invincible for 1.5 seconds then can be hit again', () => {
     let state = createInitialState({ width: 24, height: 24, matchTicks: 400 });
     state.player1.hearts = 99;
     state.player2.hearts = 3;
@@ -447,15 +516,41 @@ describe('cover engine (Amy ★)', () => {
     state.sparx2.xFp = toFp(23);
     state.sparx2.yFp = toFp(23);
     const x = 10;
-    state.player2.xFp = toFp(x);
-    state.player2.yFp = toFp(0);
-    state.sparx1.xFp = toFp(x - 1);
-    state.sparx1.yFp = toFp(0);
-    state.sparx1.edgeDir = 0;
+    const parkSparxHit = () => {
+      state.player2.xFp = toFp(x);
+      state.player2.yFp = toFp(0);
+      state.player2.position = { x, y: 0 };
+      state.sparx1.xFp = toFp(x - 1);
+      state.sparx1.yFp = toFp(0);
+      state.sparx1.edgeDir = 0;
+      state.sparx2.xFp = toFp(23);
+      state.sparx2.yFp = toFp(23);
+      state.boss.xFp = toFp(12);
+      state.boss.yFp = toFp(12);
+    };
+    parkSparxHit();
     state = step(state, []).state;
     expect(state.player2.hearts).toBe(2);
-    state = run(state, [], HURT_IFRAME_TICKS - 1);
+    const hurtAt = state.player2.lastHurtTick;
+
+    parkSparxHit();
+    state = step(state, []).state;
     expect(state.player2.hearts).toBe(2);
+
+    state.player2.xFp = toFp(12);
+    state.player2.yFp = toFp(1);
+    state.player2.position = { x: 12, y: 1 };
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx1.edgeDir = 0;
+    const remaining = HURT_IFRAME_TICKS - (state.tick - hurtAt);
+    state = run(state, [], Math.max(0, remaining));
+    expect(state.tick - state.player2.lastHurtTick).toBeGreaterThanOrEqual(HURT_IFRAME_TICKS);
+    expect(state.player2.hearts).toBe(2);
+
+    parkSparxHit();
+    state = step(state, []).state;
+    expect(state.player2.hearts).toBe(1);
   });
 
   test('sparx walking the edge hits an idle player even mid-burst', () => {
@@ -499,8 +594,39 @@ describe('cover engine (Amy ★)', () => {
 
   test('null inputs do not throw', () => {
     const state = createInitialState({ width: 12, height: 12 });
-    expect(() => step(state, null as unknown as PlayerInput[])).not.toThrow();
-    expect(() => step(state, [undefined as unknown as PlayerInput]).state.tick).not.toBeUndefined();
+    const before = state.tick;
+    const result = step(state, null as unknown as PlayerInput[]);
+    expect(result.state.tick).toBe(before + 1);
+    const result2 = step(state, [undefined as unknown as PlayerInput]);
+    expect(result2.state.tick).toBe(before + 2);
+  });
+
+  test('entering the boss cell while drawing costs a heart', () => {
+    let state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(19);
+    state.sparx2.yFp = toFp(19);
+    const bx = 10;
+    const by = 10;
+    state.boss.xFp = toFp(bx);
+    state.boss.yFp = toFp(by);
+    state.player1.drawing = true;
+    state.player1.trail = [
+      { x: bx, y: by + 2 },
+      { x: bx, y: by + 1 },
+    ];
+    state.grid[by + 2][bx] = CellType.PLAYER1_TRAIL;
+    state.grid[by + 1][bx] = CellType.PLAYER1_TRAIL;
+    state.player1.xFp = (bx << 8) + 128;
+    state.player1.yFp = ((by + 1) << 8) + 128;
+    state.player1.position = { x: bx, y: by + 1 };
+    const before = state.player1.hearts;
+    const result = step(state, [{ player: 1, heading: 192, thrusting: true }]);
+    expect(result.state.player1.hearts).toBe(before - 1);
+    expect(result.state.grid[by][bx]).not.toBe(CellType.PLAYER1_TRAIL);
   });
 
   test('cardinal direction inputs still apply on the same tick', () => {

@@ -145,7 +145,7 @@ async function testLosslessSync(): Promise<void> {
     throw error;
   } finally {
     await Promise.race([
-      server.gracefullyShutdown().catch(() => undefined),
+      server.gracefullyShutdown(false).catch(() => undefined),
       new Promise((r) => setTimeout(r, 1500)),
     ]);
   }
