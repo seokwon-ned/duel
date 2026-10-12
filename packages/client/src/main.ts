@@ -380,6 +380,16 @@ class GameScene extends Phaser.Scene {
     this.matchState = createInitialState(
       this.qaHit ? { matchTicks: 400 } : this.qaMode ? { matchTicks: 80 } : undefined,
     );
+    if (this.qaHit) {
+      const x = this.matchState.player1.position.x;
+      const y = this.matchState.gridHeight - 1;
+      this.matchState.player1.xFp = (x << 8) + 128;
+      this.matchState.player1.yFp = (y << 8) + 128;
+      this.matchState.player1.position = { x, y };
+      this.matchState.sparx2.xFp = ((x - 3) << 8) + 128;
+      this.matchState.sparx2.yFp = (y << 8) + 128;
+      this.matchState.sparx2.edgeDir = 0;
+    }
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);
@@ -393,7 +403,7 @@ class GameScene extends Phaser.Scene {
       const heading = this.qaHeading();
       const botMove = this.bot!.getNextMove(this.matchState);
       const prevTrail = this.matchState.player1.trail.slice();
-      const autoThrust = this.qaMode && (this.qaHit || !this.qaClaimed);
+      const autoThrust = this.qaHit || (this.qaMode && !this.qaClaimed);
       const result = step(this.matchState, [
         { player: 1, heading, thrusting: autoThrust ? true : this.thrusting },
         botMove,
