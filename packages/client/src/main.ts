@@ -234,7 +234,7 @@ class GameScene extends Phaser.Scene {
       if (spark.visible) spark.rotation += 0.04;
     }
     if (this.melting && this.localGrid) {
-      this.melt = Math.min(1, this.melt + 0.02);
+      this.melt = Math.min(1, this.melt + 0.05);
       this.paintGrid(this.localGrid);
       if (this.melt >= 1) this.melting = false;
     }

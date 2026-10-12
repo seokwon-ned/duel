@@ -52,6 +52,7 @@ test.describe('Cover spike 390x844', () => {
 
     await page.waitForFunction(() => Boolean(window.__turfDebug?.result), { timeout: 60000 });
     await expect(page.locator('#matchHud')).toBeVisible();
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'results.png'), animations: 'disabled' });
+    await page.waitForTimeout(420);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'results.png') });
   });
 });
