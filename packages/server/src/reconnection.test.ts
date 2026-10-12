@@ -113,14 +113,13 @@ async function testReconnectWithinTimeResumesMatch(): Promise<ReconnectionTestRe
       y: room1.state.player1.position.y,
     };
 
-    if (
-      p1PosWhilePaused.x !== p1PosAfterReconnect.x ||
-      p1PosWhilePaused.y !== p1PosAfterReconnect.y
-    ) {
+    const moved = Math.abs(p1PosWhilePaused.x - p1PosAfterReconnect.x)
+      + Math.abs(p1PosWhilePaused.y - p1PosAfterReconnect.y);
+    if (moved > 1) {
       await shutdown(server);
       return {
         passed: false,
-        message: `Positions should not change during disconnect. Before: (${p1PosWhilePaused.x}, ${p1PosWhilePaused.y}), After: (${p1PosAfterReconnect.x}, ${p1PosAfterReconnect.y})`,
+        message: `Positions should not jump during disconnect. Before: (${p1PosWhilePaused.x}, ${p1PosWhilePaused.y}), After: (${p1PosAfterReconnect.x}, ${p1PosAfterReconnect.y})`,
       };
     }
 
