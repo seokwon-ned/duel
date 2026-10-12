@@ -7,6 +7,34 @@ on:
     branches: ['**']
 
 jobs:
+  node20-engine-strict:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: npm ci must fail on Node 20
+        run: |
+          set +e
+          OUTPUT="$(npm ci 2>&1)"
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$STATUS" -eq 0 ]; then
+            echo "npm ci on Node 20 must fail (engine-strict, engines.node >=22)"
+            exit 1
+          fi
+          if ! echo "$OUTPUT" | grep -Eq 'EBADENGINE|engine-strict|Unsupported engine'; then
+            echo "npm ci failed, but not because of engine-strict"
+            exit 1
+          fi
+          echo "npm ci correctly rejected Node 20"
+
   test-and-build:
     runs-on: ubuntu-latest
     
