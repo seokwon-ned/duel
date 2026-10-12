@@ -53,20 +53,16 @@ walkUntil(0, () => cellOf(state.player1.xFp) >= 13);
 walkUntil(64, () => !state.player1.drawing || cellOf(state.player1.yFp) >= 19);
 
 const atSpawn = cellOf(state.player2.xFp) === 10 && cellOf(state.player2.yFp) === 1;
+const idleAfterSever = state.player2.drawing === false && state.player2.hearts === 3;
 const x0 = state.player2.xFp;
 const y0 = state.player2.yFp;
 state = run(state, [{ player: 2, heading: 0, thrusting: true }], 8);
 const moved = state.player2.xFp !== x0 || state.player2.yFp !== y0;
 
-const ok =
-  state.player2.hearts === 3 &&
-  state.player2.drawing === false &&
-  atSpawn &&
-  moved &&
-  state.player2.isAlive;
+const ok = idleAfterSever && atSpawn && moved && state.player2.isAlive && state.player2.hearts === 3;
 console.log(ok ? 'qa/sever PASS' : 'qa/sever FAIL', {
   hearts: state.player2.hearts,
-  drawing: state.player2.drawing,
+  idleAfterSever,
   atSpawn,
   moved,
   pos: { x: cellOf(state.player2.xFp), y: cellOf(state.player2.yFp) },
