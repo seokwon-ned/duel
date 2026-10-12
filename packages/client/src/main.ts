@@ -39,6 +39,7 @@ interface TurfDebug {
   direction: Direction;
   result: string | null;
   cutFx: boolean;
+  hitFx: boolean;
 }
 
 declare global {
@@ -55,6 +56,7 @@ if (typeof window !== 'undefined') {
     direction: Direction.UP,
     result: null,
     cutFx: false,
+    hitFx: false,
   };
 }
 
@@ -150,6 +152,7 @@ class GameScene extends Phaser.Scene {
   private botInterval: ReturnType<typeof setInterval> | null = null;
   private localGrid: CellType[][] = createInitialState().grid;
   private qaMode = false;
+  private qaHit = false;
   private qaTick = 0;
   private qaClaimed = false;
   private melt = 0;
@@ -303,14 +306,14 @@ class GameScene extends Phaser.Scene {
       return wrapAngle(Math.round((ang / (Math.PI * 2)) * 256) & 255);
     };
     pad.addEventListener('pointerdown', (e) => {
-      if (this.qaMode && !this.qaClaimed) return;
+      if ((this.qaMode || this.qaHit) && !this.qaClaimed) return;
       last = { x: e.clientX, y: e.clientY };
       this.thrusting = true;
       pad.setPointerCapture(e.pointerId);
       this.sendInput();
     });
     pad.addEventListener('pointermove', (e) => {
-      if (this.qaMode && !this.qaClaimed) return;
+      if ((this.qaMode || this.qaHit) && !this.qaClaimed) return;
       if (!last) return;
       const dx = e.clientX - last.x;
       const dy = e.clientY - last.y;
@@ -367,12 +370,16 @@ class GameScene extends Phaser.Scene {
 
   startBotMode() {
     this.room = null;
-    this.qaMode = new URLSearchParams(window.location.search).has('qa');
+    const qa = new URLSearchParams(window.location.search).get('qa');
+    this.qaHit = qa === 'hit';
+    this.qaMode = qa === '1' || qa === 'cut' || this.qaHit;
     this.qaTick = 0;
     this.qaClaimed = false;
     this.melt = 0;
     this.melting = false;
-    this.matchState = createInitialState(this.qaMode ? { matchTicks: 80 } : undefined);
+    this.matchState = createInitialState(
+      this.qaHit ? { matchTicks: 400 } : this.qaMode ? { matchTicks: 80 } : undefined,
+    );
     this.bot = new Bot('normal', 2, 11);
     this.setActorsVisible(true);
     setPlaying(true);
@@ -386,8 +393,9 @@ class GameScene extends Phaser.Scene {
       const heading = this.qaHeading();
       const botMove = this.bot!.getNextMove(this.matchState);
       const prevTrail = this.matchState.player1.trail.slice();
+      const autoThrust = this.qaMode && (this.qaHit || !this.qaClaimed);
       const result = step(this.matchState, [
-        { player: 1, heading, thrusting: this.qaMode && !this.qaClaimed ? true : this.thrusting },
+        { player: 1, heading, thrusting: autoThrust ? true : this.thrusting },
         botMove,
       ]);
       this.matchState = result.state;
@@ -398,7 +406,9 @@ class GameScene extends Phaser.Scene {
   }
 
   private qaHeading(): number {
-    if (!this.qaMode || this.qaClaimed) return this.heading;
+    if (!this.qaMode) return this.heading;
+    if (this.qaHit) return 64;
+    if (this.qaClaimed) return this.heading;
     this.qaTick++;
     if (this.qaTick <= 16) return 192;
     if (this.qaTick <= 30) return 0;
@@ -406,8 +416,13 @@ class GameScene extends Phaser.Scene {
   }
 
   private handleEvents(events: GameEvent[], prevTrail: { x: number; y: number }[]) {
+    const bonus = events.find((e) => e.type === 'trap_bonus');
     for (const ev of events) {
-      if (ev.type === 'claim') {
+      if (ev.type === 'trap_bonus') {
+        if (ev.player === 1) this.qaClaimed = true;
+        this.playCutFx(undefined, ev.data?.percent ?? 5);
+      }
+      if (ev.type === 'claim' && !bonus) {
         if (ev.player === 1) this.qaClaimed = true;
         this.playCutFx(ev.data?.cells ?? 0);
       }
@@ -416,8 +431,8 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  private playCutFx(cells: number) {
-    const pct = Math.max(6, Math.round((cells / TOTAL_CELLS) * 100) || 6);
+  private playCutFx(cells?: number, percent?: number) {
+    const pct = percent ?? Math.max(1, Math.round(((cells ?? 0) / TOTAL_CELLS) * 100) || 6);
     const popup = document.getElementById('cutPopup');
     const stack = document.getElementById('cutStack');
     if (popup) popup.textContent = `+${pct}%`;
@@ -438,7 +453,11 @@ class GameScene extends Phaser.Scene {
   private playHitFx(trail: { x: number; y: number }[]) {
     const flash = document.getElementById('hitFlash');
     flash?.classList.add('on');
-    setTimeout(() => flash?.classList.remove('on'), 180);
+    if (window.__turfDebug) window.__turfDebug.hitFx = true;
+    setTimeout(() => {
+      flash?.classList.remove('on');
+      if (window.__turfDebug) window.__turfDebug.hitFx = false;
+    }, 900);
     for (const p of trail.slice(0, 40)) {
       const w = this.worldOf(p);
       this.burst(this.hitEmitter, w.x, w.y, 3, ['dot-me', 'dot-white']);
