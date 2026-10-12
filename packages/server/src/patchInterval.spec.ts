@@ -60,11 +60,26 @@ describe('100ms patch interval keeps a lossless grid', () => {
 
       await new Promise((r) => setTimeout(r, 2500));
       clearInterval(inputs);
-      await new Promise((r) => setTimeout(r, 250));
 
-      const authority = testRooms.get(room1.roomId)?.getAuthorityState();
-      expect(authority).toBeTruthy();
-      const authFlat = flattenGrid(authority!.grid);
+      const testRoom = testRooms.get(room1.roomId);
+      expect(testRoom).toBeTruthy();
+      testRoom!.stopSimulationAndFlush();
+
+      const authority = testRoom!.getAuthorityState();
+      const deadline = Date.now() + 1500;
+      while (Date.now() < deadline) {
+        if (
+          room1.state.tick === authority.tick &&
+          room2.state.tick === authority.tick &&
+          gridDiff(grid1, flattenGrid(authority.grid)) === 0 &&
+          gridDiff(grid2, flattenGrid(authority.grid)) === 0
+        ) {
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      const authFlat = flattenGrid(authority.grid);
       expect(authFlat.length).toBe(GRID_WIDTH * GRID_HEIGHT);
       expect(gridDiff(grid1, authFlat)).toBe(0);
       expect(gridDiff(grid2, authFlat)).toBe(0);
