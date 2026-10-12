@@ -164,6 +164,16 @@ function applyInputs(state: MatchState, inputs: PlayerInput[]): void {
 }
 
 function movePlayers(state: MatchState, events: GameEvent[]): void {
+  const intents: Array<{
+    num: 1 | 2;
+    player: PlayerState;
+    xFp: number;
+    yFp: number;
+    cx: number;
+    cy: number;
+    crossedFoe: boolean;
+  }> = [];
+
   for (const num of [1, 2] as const) {
     const player = num === 1 ? state.player1 : state.player2;
     if (!player.isAlive) continue;
@@ -181,7 +191,63 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
 
     player.idleTicks = 0;
     const next = stepFixed(player.xFp, player.yFp, player.heading, PLAYER_SPEED_FP);
-    tryMovePlayer(state, num, player, next.xFp, next.yFp, events);
+    const cx = cellOf(next.xFp);
+    const cy = cellOf(next.yFp);
+    if (!inBounds(cx, cy, state.gridWidth, state.gridHeight)) continue;
+    intents.push({ num, player, xFp: next.xFp, yFp: next.yFp, cx, cy, crossedFoe: false });
+  }
+
+  const willHurt = new Set<1 | 2>();
+  for (const intent of intents) {
+    const cell = state.grid[intent.cy][intent.cx];
+    const foe: 1 | 2 = intent.num === 1 ? 2 : 1;
+    if (isTrail(cell, foe)) {
+      willHurt.add(foe);
+      intent.crossedFoe = true;
+    } else if (isTrail(cell, intent.num)) {
+      const last = intent.player.trail[intent.player.trail.length - 1];
+      if (!last || last.x !== intent.cx || last.y !== intent.cy) {
+        willHurt.add(intent.num);
+      }
+    }
+  }
+
+  for (const num of willHurt) {
+    hurt(state, num, events);
+  }
+
+  for (const intent of intents) {
+    if (!intent.player.isAlive || willHurt.has(intent.num)) continue;
+    if (intent.crossedFoe) {
+      paintCrossedTrail(state, intent.num, intent.player, intent.xFp, intent.yFp, intent.cx, intent.cy);
+    } else {
+      tryMovePlayer(state, intent.num, intent.player, intent.xFp, intent.yFp, events);
+    }
+  }
+}
+
+function paintCrossedTrail(
+  state: MatchState,
+  num: 1 | 2,
+  player: PlayerState,
+  xFp: number,
+  yFp: number,
+  cx: number,
+  cy: number,
+): void {
+  player.xFp = xFp;
+  player.yFp = yFp;
+  snapCell(player);
+  if (!player.drawing) {
+    player.drawing = true;
+    player.trail = [];
+    player.fuseIndex = -1;
+    player.idleTicks = 0;
+  }
+  const last = player.trail[player.trail.length - 1];
+  if (!last || last.x !== cx || last.y !== cy) {
+    state.grid[cy][cx] = playerTrailType(num);
+    player.trail.push({ x: cx, y: cy });
   }
 }
 

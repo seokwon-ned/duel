@@ -105,6 +105,42 @@ describe('cover engine (Amy ★)', () => {
     state = step(state, [{ player: 2, heading: 0, thrusting: true }]).state;
     expect(state.player1.hearts).toBe(before - 1);
     expect(state.player1.drawing).toBe(false);
+    expect(state.player2.trail.some((p) => p.x === target.x && p.y === target.y)).toBe(true);
+  });
+
+  test('simultaneous line steps hurt both and steal the crossed cells', () => {
+    const make = () => {
+      const state = createInitialState({ width: 20, height: 20, matchTicks: 400 });
+      state.player1.hearts = 3;
+      state.player2.hearts = 3;
+      state.boss.xFp = toFp(1);
+      state.boss.yFp = toFp(1);
+      state.sparx1.xFp = toFp(0);
+      state.sparx1.yFp = toFp(0);
+      state.sparx2.xFp = toFp(19);
+      state.sparx2.yFp = toFp(0);
+      state.player1.drawing = true;
+      state.player2.drawing = true;
+      state.grid[5][8] = CellType.PLAYER1_TRAIL;
+      state.player1.trail = [{ x: 8, y: 5 }];
+      state.grid[9][8] = CellType.PLAYER2_TRAIL;
+      state.player2.trail = [{ x: 8, y: 9 }];
+      state.player2.xFp = (7 << 8) + 128;
+      state.player2.yFp = (5 << 8) + 128;
+      state.player2.heading = 0;
+      state.player2.thrusting = true;
+      state.player1.xFp = (7 << 8) + 128;
+      state.player1.yFp = (9 << 8) + 128;
+      state.player1.heading = 0;
+      state.player1.thrusting = true;
+      return state;
+    };
+    const done = step(make(), [
+      { player: 1, heading: 0, thrusting: true },
+      { player: 2, heading: 0, thrusting: true },
+    ]).state;
+    expect(done.player1.hearts).toBe(2);
+    expect(done.player2.hearts).toBe(2);
   });
 
   test('first to open 50% wins immediately', () => {
