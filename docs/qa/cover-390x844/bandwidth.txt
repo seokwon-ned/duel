@@ -1,0 +1,23 @@
+Cover-engine bandwidth
+Command: TURF_DUEL_BANDWIDTH_SECONDS=6 npm run bandwidth --workspace=packages/server
+
+SDK WebSocket frames (hooks attached immediately after each join):
+  P1 total 62454 bytes  avg 12423 B/s  peak 60641 B/s
+  P2 total 62454 bytes  avg 12423 B/s  peak 60641 B/s
+  Per-player avg 12423 B/s
+
+Server intercept of bytes sent to each client:
+  Each player 63270 bytes (61.79 KB) over ~6s
+  Average 10634 bytes/sec (~10.38 KB/s)
+  Peak 61457 bytes/sec (~60.02 KB/s)
+
+Notes:
+  Peak is one packed 200x300 grid snapshot (~60 KB) on a large claim.
+  After join, cellUpdates are hundreds of bytes per second.
+  Join/reconnect send a binary `grid` snapshot instead of a 60k Colyseus ArraySchema.
+
+Determinism:
+  Engine tests 11/11 (identical fingerprints, no runtime trig).
+  Bot tests 2/2 (server step() and bot replay match).
+  Reconnection 30/30.
+  Playwright cover-layout + rendering 2/2 at 390x844.
