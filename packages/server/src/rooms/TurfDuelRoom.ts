@@ -186,7 +186,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
     // Every close code is a leave (immediate loss) or a disconnect (pause + reconnect).
     if (this.isImmediateLeave(resolved)) {
-      this.handleImmediateLeave(playerNum, resolved);
+      this.handleImmediateLeave(playerNum, resolved, client.sessionId);
       return;
     }
 
@@ -207,9 +207,21 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   }
 
   /** Voluntary/normal leave: opponent wins now. Do not hold allowReconnection. */
-  private handleImmediateLeave(playerNum: 1 | 2, code: number): void {
+  private handleImmediateLeave(playerNum: 1 | 2, code: number, sessionId: string): void {
     if (this.matchState.result) {
       console.log(`Player ${playerNum} leave ${code} after match end`);
+      return;
+    }
+    // Late rematch consume that immediately leave()s must not walkover the other seat.
+    if (this.rematchLobby && this.matchState.tick <= 1) {
+      console.log(`Player ${playerNum} leave ${code} at rematch start — no forfeit`);
+      this.freeWaitingSeat(sessionId);
+      if (this.gameLoop) {
+        clearInterval(this.gameLoop);
+        this.gameLoop = null;
+      }
+      this.matchStarted = false;
+      void this.openRematchToMatchmaking();
       return;
     }
     const winner = playerNum === 1 ? 2 : 1;
@@ -453,6 +465,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   private async openRematchToMatchmaking(): Promise<void> {
     if (this.matchStarted) return;
     try {
+      this.cancelUnusedSeatReservations();
       await this.setPrivate(false);
       if (this.locked) {
         await this.unlock();
@@ -460,6 +473,26 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       console.log(`Rematch lobby ${this.roomId} opened to matchmaking after seat expiry`);
     } catch (err) {
       console.error('Failed to open rematch lobby:', err);
+    }
+  }
+
+  /** Fire Colyseus unused-seat timers now so a late consumeSeatReservation fails instead of joining. */
+  private cancelUnusedSeatReservations(): void {
+    const room = this as unknown as {
+      _reservedSeats?: Record<string, [unknown, unknown, boolean?, boolean?]>;
+      _reservedSeatTimeouts?: Record<string, NodeJS.Timeout>;
+    };
+    const seats = room._reservedSeats;
+    const timeouts = room._reservedSeatTimeouts;
+    if (!seats || !timeouts) return;
+    for (const [sessionId, timer] of Object.entries(timeouts)) {
+      const reserved = seats[sessionId];
+      if (!reserved || reserved[2]) continue;
+      clearTimeout(timer);
+      const fire = (timer as NodeJS.Timeout & { _onTimeout?: () => void })._onTimeout;
+      if (typeof fire === 'function') {
+        fire.call(timer);
+      }
     }
   }
 

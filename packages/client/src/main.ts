@@ -72,7 +72,6 @@ interface TurfDebug {
   drawing: { p1: boolean; p2: boolean };
   trails: { p1: number; p2: number };
   youHearts: number;
-  trailPx: { core: number; glow: number; scale: number };
 }
 
 declare global {
@@ -94,7 +93,6 @@ if (typeof window !== 'undefined') {
     drawing: { p1: false, p2: false },
     trails: { p1: 0, p2: 0 },
     youHearts: 3,
-    trailPx: { core: 0, glow: 0, scale: 0 },
   };
 }
 
@@ -275,7 +273,7 @@ class GameScene extends Phaser.Scene {
     this.canvas.height = BOARD_H;
     this.texture = this.textures.addCanvas('cover-board', this.canvas);
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
-    addGlow(this.boardImage, AH.purple, 3);
+    addGlow(this.boardImage, AH.purple, 1.6);
 
     this.trailGlow = this.add.graphics();
     this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
@@ -928,7 +926,8 @@ class GameScene extends Phaser.Scene {
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
     this.trailGlow?.clear();
-    this.trailGfx.lineStyle(4, AH.purple, 0.85);
+    const frameW = Math.max(1.2, scale * 1.2);
+    this.trailGfx.lineStyle(frameW, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
     const mine = trail1;
     const foe = trail2 ?? [];
@@ -985,26 +984,15 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // 390×844: drop Math.max floors. 2.8/5.6 cells → ~4–5 / ~8–10 CSS px.
-    const glowR = scale * 5.6;
-    const midR = scale * 4.0;
-    const coreR = scale * 2.8;
-    const hiR = scale * 1.3;
+    // Stamp RADIUS in cells (width ≈ 2×radius×cssScale). 1.2 / 2.5 → ~4–8px width at 390×844.
+    const glowR = scale * 2.5;
+    const midR = scale * 1.8;
+    const coreR = scale * 1.2;
+    const hiR = scale * 0.55;
     stamp(glowGfx, glowR, glow, 0.22);
     stamp(glowGfx, midR, glow, 0.42);
     stamp(this.trailGfx, coreR, glow, 1);
     stamp(this.trailGfx, hiR, core, 1);
-    if (window.__turfDebug) {
-      const gameW = Math.max(1, this.scale.width);
-      const css = this.game.canvas
-        ? this.game.canvas.getBoundingClientRect().width / gameW
-        : (this.scale.displayScale?.x ?? 1);
-      window.__turfDebug.trailPx = {
-        core: Math.round(coreR * css * 10) / 10,
-        glow: Math.round(glowR * css * 10) / 10,
-        scale: Math.round(scale * css * 1000) / 1000,
-      };
-    }
   }
 
   private paintActors(
@@ -1170,10 +1158,17 @@ class GameScene extends Phaser.Scene {
             let r = cov[i];
             let g = cov[i + 1];
             let b = cov[i + 2];
-            if (left > 0 || right > 0 || up > 0 || down > 0) {
-              r = r + (((255 - r) * 0.72) + 0.5) | 0;
-              g = g + (((214 - g) * 0.72) + 0.5) | 0;
-              b = b + (((80 - b) * 0.72) + 0.5) | 0;
+            const near = (left > 0 ? 1 : 0) + (right > 0 ? 1 : 0) + (up > 0 ? 1 : 0) + (down > 0 ? 1 : 0);
+            const farL = x > 1 ? row[x - 2] : -1;
+            const farR = x + 2 < w ? row[x + 2] : -1;
+            const farU = y > 1 ? grid[y - 2][x] : -1;
+            const farD = y + 2 < h ? grid[y + 2][x] : -1;
+            const far = (farL > 0 ? 1 : 0) + (farR > 0 ? 1 : 0) + (farU > 0 ? 1 : 0) + (farD > 0 ? 1 : 0);
+            const edgeA = near ? 0.82 : far ? 0.4 : 0;
+            if (edgeA > 0) {
+              r = r + (((255 - r) * edgeA) + 0.5) | 0;
+              g = g + (((230 - g) * edgeA) + 0.5) | 0;
+              b = b + (((120 - b) * edgeA) + 0.5) | 0;
             }
             out[i] = r;
             out[i + 1] = g;

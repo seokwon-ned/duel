@@ -1,8 +1,102 @@
 import { test, expect, Page } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const VIEWPORT = { width: 390, height: 844 };
 const SCREENSHOT_DIR = path.join(process.cwd(), 'docs/qa/cover-390x844');
+
+type TrailMeasure = {
+  solidWidth: number;
+  glowWidth: number;
+  backing: { w: number; h: number };
+  css: { w: number; h: number };
+};
+
+async function waitMidDraw(page: Page) {
+  await page.goto('/?qa=1');
+  await page.waitForSelector('#game-container canvas');
+  await page.click('#botBtn');
+  await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
+  await page.waitForFunction(
+    () => {
+      const d = window.__turfDebug;
+      return Boolean(d && d.ownedCells.p1 >= 15000 && d.drawing.p1 && d.trails.p1 >= 55);
+    },
+    { timeout: 45000 },
+  );
+}
+
+/** Rendered WIDTH in CSS px from canvas pixels — not stamp radius constants. */
+async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
+  return page.evaluate(() => {
+    const src = document.querySelector('#game-container canvas') as HTMLCanvasElement;
+    const box = src.getBoundingClientRect();
+    const tmp = document.createElement('canvas');
+    tmp.width = src.width;
+    tmp.height = src.height;
+    const ctx = tmp.getContext('2d')!;
+    ctx.drawImage(src, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
+    const scale = box.width / width;
+    const isSolid = (i: number) => {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      return r >= 200 && g >= 60 && g <= 180 && b <= 90 && r > g + 50 && r > b + 80;
+    };
+    const isGlow = (i: number) => {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      return r >= 120 && g >= 30 && b <= 160 && r > g && r > b + 15;
+    };
+    const index = (x: number, y: number) => (y * width + x) * 4;
+    const collect = (major: number, minor: number, swap: boolean) => {
+      const solids: number[] = [];
+      const glows: number[] = [];
+      for (let a = 0; a < major; a++) {
+        let sRun = 0;
+        let gRun = 0;
+        const push = () => {
+          if (sRun >= 2 && sRun <= 12) solids.push(sRun);
+          if (gRun >= 2 && gRun <= 20) glows.push(gRun);
+          sRun = 0;
+          gRun = 0;
+        };
+        for (let b = 0; b < minor; b++) {
+          const i = swap ? index(a, b) : index(b, a);
+          if (isSolid(i)) {
+            sRun++;
+            gRun++;
+          } else if (isGlow(i)) {
+            if (sRun >= 2 && sRun <= 12) solids.push(sRun);
+            sRun = 0;
+            gRun++;
+          } else {
+            push();
+          }
+        }
+        push();
+      }
+      return { solids, glows };
+    };
+    const hz = collect(height, width, false);
+    const vt = collect(width, height, true);
+    const solids = hz.solids.concat(vt.solids);
+    const glows = hz.glows.concat(vt.glows);
+    const pick = (arr: number[]) => {
+      if (!arr.length) return 0;
+      const sorted = arr.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length * 0.85)];
+    };
+    return {
+      solidWidth: Math.round(pick(solids) * scale * 10) / 10,
+      glowWidth: Math.round(pick(glows) * scale * 10) / 10,
+      backing: { w: width, h: height },
+      css: { w: Math.round(box.width * 10) / 10, h: Math.round(box.height * 10) / 10 },
+    };
+  });
+}
 
 test.use({
   viewport: VIEWPORT,
@@ -108,29 +202,35 @@ test.describe('Cover spike 390x844', () => {
 
   test('player orb is small enough to show the line tip mid-draw', async ({ page }) => {
     test.setTimeout(60000);
-    await page.goto('/?qa=1');
-    await page.waitForSelector('#game-container canvas');
-    await page.click('#botBtn');
-    await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
-    await page.waitForFunction(
-      () => {
-        const d = window.__turfDebug;
-        return Boolean(
-          d &&
-            d.ownedCells.p1 >= 15000 &&
-            d.drawing.p1 &&
-            d.trails.p1 >= 55,
-        );
-      },
-      { timeout: 45000 },
-    );
-    const trailPx = await page.evaluate(() => window.__turfDebug?.trailPx);
-    console.log('trailPx', trailPx);
-    expect(trailPx?.core).toBeGreaterThanOrEqual(4);
-    expect(trailPx?.core).toBeLessThanOrEqual(5);
-    expect(trailPx?.glow).toBeGreaterThanOrEqual(8);
-    expect(trailPx?.glow).toBeLessThanOrEqual(10);
+    await waitMidDraw(page);
+    const measured = await measureRenderedTrail(page);
+    console.log('rendered trail WIDTH (not radius) 390x844', measured);
+    expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
+    expect(measured.solidWidth).toBeLessThanOrEqual(8);
+    expect(measured.glowWidth).toBeGreaterThanOrEqual(4);
+    expect(measured.glowWidth).toBeLessThanOrEqual(12);
+    expect(measured.glowWidth).toBeGreaterThanOrEqual(measured.solidWidth);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
+  });
+
+  test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
+    test.setTimeout(120000);
+    const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 8 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 3, maxSolid: 9 },
+    ];
+    for (const shot of shots) {
+      await page.setViewportSize(shot.size);
+      await waitMidDraw(page);
+      const measured = await measureRenderedTrail(page);
+      console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
+      expect(measured.solidWidth, shot.label).toBeGreaterThanOrEqual(shot.minSolid);
+      expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
+      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(measured.solidWidth);
+      expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(14);
+      fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
+      await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });
+    }
   });
 
   test('loss result is from my perspective and keeps board width', async ({ page }) => {

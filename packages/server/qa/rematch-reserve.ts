@@ -181,11 +181,44 @@ async function testProductionIgnoresMatchTicks(): Promise<void> {
   }
 }
 
+/** A consume that joins then immediately leave()s must not walkover the other rematch seat. */
+async function testLateSeatLeaveDoesNotForfeit(): Promise<void> {
+  const { server, client1, client2, room1, room2 } = await startPair(12635);
+  try {
+    await waitForResult(room1, room2);
+    let offer1: RematchOffer | null = null;
+    let offer2: RematchOffer | null = null;
+    room1.onMessage('rematch_room', (message: RematchOffer) => {
+      offer1 = message;
+    });
+    room2.onMessage('rematch_room', (message: RematchOffer) => {
+      offer2 = message;
+    });
+    room1.send('rematch', {});
+    room2.send('rematch', {});
+    await waitUntil(() => Boolean(offer1?.seat && offer2?.seat), 4000, 'reserved rematch seats');
+    await room1.leave();
+    await room2.leave();
+    const kept = await client1.consumeSeatReservation(offer1!.seat!);
+    const late = await client2.consumeSeatReservation(offer2!.seat!);
+    await late.leave();
+    await sleep(120);
+    if (kept.state.result) {
+      throw new Error(`Late seat leave forfeited at tick ${kept.state.tick}: ${JSON.stringify(kept.state.result)}`);
+    }
+    await Promise.race([kept.leave().catch(() => undefined), sleep(400)]);
+    console.log('✓ late rematch seat leave does not forfeit the remaining player');
+  } finally {
+    await shutdown(server);
+  }
+}
+
 async function main(): Promise<void> {
   console.log('\n=== rematch-reserve: clear votes + reserved seats ===\n');
   await testLateRematchDoesNotUseStaleVote();
   await testRematchRoomIsReserved();
   await testClientRematchFlagIsIgnored();
+  await testLateSeatLeaveDoesNotForfeit();
   await testProductionIgnoresMatchTicks();
   console.log('\n✅ rematch-reserve PASSED\n');
 }
