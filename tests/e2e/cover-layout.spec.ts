@@ -26,18 +26,20 @@ async function waitMidDraw(page: Page) {
   );
 }
 
-/** Rendered WIDTH in CSS px from canvas pixels — not stamp radius constants. */
+/** Rendered WIDTH in CSS px from a composited screenshot — not stamp radius constants. */
 async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
-  return page.evaluate(() => {
-    const src = document.querySelector('#game-container canvas') as HTMLCanvasElement;
-    const box = src.getBoundingClientRect();
+  const png = await page.locator('#game-container canvas').screenshot();
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
     const tmp = document.createElement('canvas');
-    tmp.width = src.width;
-    tmp.height = src.height;
+    tmp.width = img.width;
+    tmp.height = img.height;
     const ctx = tmp.getContext('2d')!;
-    ctx.drawImage(src, 0, 0);
+    ctx.drawImage(img, 0, 0);
     const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
-    const scale = box.width / width;
+    const scale = 1;
     const isSolid = (i: number) => {
       const r = data[i];
       const g = data[i + 1];
@@ -93,9 +95,9 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
       solidWidth: Math.round(pick(solids) * scale * 10) / 10,
       glowWidth: Math.round(pick(glows) * scale * 10) / 10,
       backing: { w: width, h: height },
-      css: { w: Math.round(box.width * 10) / 10, h: Math.round(box.height * 10) / 10 },
+      css: { w: width, h: height },
     };
-  });
+  }, png.toString('base64'));
 }
 
 test.use({
