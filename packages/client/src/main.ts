@@ -40,6 +40,24 @@ const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
 
+interface RematchOffer {
+  roomId: string;
+  seat?: {
+    name: string;
+    sessionId: string;
+    roomId: string;
+    processId?: string;
+    publicAddress?: string;
+  };
+}
+
+function clearConnectedStatus() {
+  const statusEl = document.getElementById('status');
+  if (statusEl && /^Connected!/.test(statusEl.textContent ?? '')) {
+    statusEl.textContent = '';
+  }
+}
+
 interface TurfDebug {
   tick: number;
   ownedCells: { p1: number; p2: number };
@@ -189,6 +207,7 @@ class GameScene extends Phaser.Scene {
   private winEmitter: BurstEmitter | null = null;
   private room: Room | null = null;
   private playedOnline = false;
+  private rematchWaiter: ((offer: RematchOffer | null) => void) | null = null;
   private matchState: MatchState | null = null;
   private playerNum: 1 | 2 = 1;
   private heading = 192;
@@ -454,34 +473,30 @@ class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Stay in the finished room so both rematch votes can share a new room id.
+   * Stay in the finished room so both rematch votes can share a reserved seat.
    * Falls back to joinOrCreate when the opponent never votes (old room is locked).
+   * Wait matches the server 15s pairing window; leave is handled once in startOnlineMode.
    */
-  requestOnlineRematch(): Promise<string | null> {
+  requestOnlineRematch(): Promise<RematchOffer | null> {
     const room = this.room;
     if (!room) return Promise.resolve(null);
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (roomId: string | null) => {
+      const finish = (offer: RematchOffer | null) => {
         if (settled) return;
         settled = true;
+        this.rematchWaiter = null;
         clearTimeout(timer);
         try {
           room.leave();
         } catch {
           /* already gone */
         }
-        this.room = null;
-        resolve(roomId);
-      };
-      const timer = setTimeout(() => finish(null), 8000);
-      room.onMessage('rematch_room', (message: { roomId?: string }) => {
-        finish(typeof message?.roomId === 'string' ? message.roomId : null);
-      });
-      room.onLeave(() => {
         if (this.room === room) this.room = null;
-        finish(null);
-      });
+        resolve(offer);
+      };
+      const timer = setTimeout(() => finish(null), 15000);
+      this.rematchWaiter = finish;
       try {
         room.send('rematch', {});
       } catch {
@@ -493,6 +508,7 @@ class GameScene extends Phaser.Scene {
   startOnlineMode(room: Room) {
     this.room = room;
     this.playedOnline = true;
+    this.rematchWaiter = null;
     this.qaMode = false;
     this.qaLose = false;
     this.resultShown = false;
@@ -513,8 +529,14 @@ class GameScene extends Phaser.Scene {
         sub.textContent = `${sub.textContent ? `${sub.textContent} · ` : ''}상대가 다시 한 판을 골랐어요`;
       }
     });
+    room.onMessage('rematch_room', (message: RematchOffer) => {
+      this.rematchWaiter?.(message);
+    });
     room.onLeave(() => {
       if (this.room === room) this.room = null;
+      clearConnectedStatus();
+      this.rematchWaiter?.(null);
+      this.rematchWaiter = null;
     });
     room.onMessage('grid', (payload: ArrayLike<number> | ArrayBuffer) => {
       const buf = payload instanceof ArrayBuffer ? new Uint8Array(payload) : payload;
@@ -533,6 +555,8 @@ class GameScene extends Phaser.Scene {
     }
     this.room = null;
     this.playedOnline = false;
+    this.rematchWaiter = null;
+    clearConnectedStatus();
     const qa = new URLSearchParams(window.location.search).get('qa');
     this.qaHit = qa === 'hit';
     this.qaLose = qa === 'lose';
@@ -990,8 +1014,8 @@ class GameScene extends Phaser.Scene {
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
     const guide1 = this.matchState?.player1.trail ?? this.p1TrailCopy;
     const guide2 = this.matchState?.player2.trail ?? [];
-    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.95, { x: 0, y: -1 });
-    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.82, { x: -1, y: 0 });
+    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.40, { x: 0, y: -1 });
+    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.32, { x: -1, y: 0 });
     this.placeShownActors();
   }
 
@@ -1244,11 +1268,13 @@ document.getElementById('rematchBtn')?.addEventListener('click', async () => {
   if (scene.isOnline() || scene.hasPlayedOnline()) {
     try {
       const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
-      const rematchRoomId = await scene.requestOnlineRematch();
+      const offer = await scene.requestOnlineRematch();
       const client = new Client(serverUrl);
-      const room = rematchRoomId
-        ? await client.joinById(rematchRoomId)
-        : await client.joinOrCreate('turf_duel');
+      const room = offer?.seat
+        ? await client.consumeSeatReservation(offer.seat)
+        : offer?.roomId
+          ? await client.joinById(offer.roomId)
+          : await client.joinOrCreate('turf_duel');
       if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
       scene.startOnlineMode(room);
     } catch (error) {

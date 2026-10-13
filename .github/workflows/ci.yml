@@ -71,6 +71,9 @@ jobs:
 
       - name: Run rematch pairing tests
         run: npm run test:rematch --workspace=packages/server
+
+      - name: Run rematch vote/reserve tests
+        run: npm run test:my-rematch --workspace=packages/server
       
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

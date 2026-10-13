@@ -9,6 +9,10 @@ export const testRooms = new Map<string, TurfDuelTestRoom>();
  * Never registered by the production server.
  */
 export class TurfDuelTestRoom extends TurfDuelRoom {
+  protected override allowClientMatchTicks(): boolean {
+    return true;
+  }
+
   onCreate(options: any) {
     super.onCreate(options);
     if (this.roomId) {

@@ -3,7 +3,7 @@
 import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client, Room } from '@colyseus/sdk';
-import { TurfDuelRoom } from '../src/rooms/TurfDuelRoom.js';
+import { TurfDuelQaRoom } from '../src/rooms/TurfDuelQaRoom.js';
 
 const SHORT_MATCH = { matchTicks: 40 };
 
@@ -33,7 +33,7 @@ async function startPair(port: number) {
   const server = new Server({
     transport: new WebSocketTransport({}),
   });
-  server.define('turf_duel', TurfDuelRoom);
+  server.define('turf_duel', TurfDuelQaRoom);
   await server.listen(port);
   const client1 = new Client(`ws://localhost:${port}`);
   const client2 = new Client(`ws://localhost:${port}`);
@@ -90,29 +90,29 @@ async function testBothRematchShareNewRoom(): Promise<void> {
     const oldId = room1.roomId;
     await waitForResult(room1, room2);
 
-    let id1: string | null = null;
-    let id2: string | null = null;
-    room1.onMessage('rematch_room', (message: { roomId?: string }) => {
-      id1 = typeof message?.roomId === 'string' ? message.roomId : null;
+    let offer1: { roomId?: string; seat?: { roomId: string; sessionId: string; name: string } } | null = null;
+    let offer2: { roomId?: string; seat?: { roomId: string; sessionId: string; name: string } } | null = null;
+    room1.onMessage('rematch_room', (message) => {
+      offer1 = message;
     });
-    room2.onMessage('rematch_room', (message: { roomId?: string }) => {
-      id2 = typeof message?.roomId === 'string' ? message.roomId : null;
+    room2.onMessage('rematch_room', (message) => {
+      offer2 = message;
     });
     room1.send('rematch', {});
     room2.send('rematch', {});
 
-    await waitUntil(() => Boolean(id1) && Boolean(id2), 4000, 'rematch_room for both');
-    if (id1 !== id2) {
-      throw new Error(`Rematch ids diverged: ${id1} vs ${id2}`);
+    await waitUntil(() => Boolean(offer1?.seat && offer2?.seat), 4000, 'rematch_room for both');
+    if (offer1!.roomId !== offer2!.roomId) {
+      throw new Error(`Rematch ids diverged: ${offer1!.roomId} vs ${offer2!.roomId}`);
     }
-    if (id1 === oldId) {
+    if (offer1!.roomId === oldId) {
       throw new Error(`Rematch reused finished room ${oldId}`);
     }
 
     await room1.leave();
     await room2.leave();
-    const next1 = await client1.joinById(id1!);
-    const next2 = await client2.joinById(id2!);
+    const next1 = await client1.consumeSeatReservation(offer1!.seat!);
+    const next2 = await client2.consumeSeatReservation(offer2!.seat!);
     if (next1.roomId !== next2.roomId || next1.roomId === oldId) {
       throw new Error(`Paired rematch landed in ${next1.roomId} / ${next2.roomId} (old ${oldId})`);
     }

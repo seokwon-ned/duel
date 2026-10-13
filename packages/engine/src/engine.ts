@@ -242,8 +242,8 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
     .map((intent) => intent.num);
   const skipSever = closers.length > 1;
   const pendingClose: Array<1 | 2> = [];
-  // Apply every intent, then flush. Closer-first was observationally the same
-  // after the tick (sever + spawn) and only reordered same-tick writes.
+  // Apply every intent, then flush. A foe trail cell painted this tick is a
+  // wall: the closer keeps COVER the boss cannot reach through that line.
   for (const intent of intents) applyIntent(intent, pendingClose);
   flushCloses(state, pendingClose, events, skipSever);
 }

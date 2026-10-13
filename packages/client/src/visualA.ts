@@ -335,6 +335,16 @@ export function paintOrb(
   g.beginPath();
   g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
   g.fill();
+  g.strokeStyle = '#0F172A';
+  g.lineWidth = Math.max(2, s * 0.07);
+  g.beginPath();
+  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
+  g.stroke();
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = Math.max(1.5, s * 0.045);
+  g.beginPath();
+  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
+  g.stroke();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';
     g.lineWidth = Math.max(2, s * 0.08);

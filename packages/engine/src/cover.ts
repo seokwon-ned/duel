@@ -19,6 +19,8 @@ export function countCover(grid: CellType[][]): number {
 /**
  * Convert the closed trail to the player's color, then claim every COVER
  * region that does not contain the boss. Integer BFS, 4-connected.
+ * A foe's live trail is not COVER, so it seals pockets: the closer keeps
+ * those cells. That is intended (seed-28 claim 41 → 47 after apply-all).
  */
 export function claimClosedTrail(
   grid: CellType[][],

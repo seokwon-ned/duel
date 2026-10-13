@@ -49,7 +49,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   onCreate(options: any) {
     const state = new TurfDuelState();
     this.setState(state);
-    const matchTicks = typeof options?.matchTicks === 'number' && options.matchTicks > 0
+    const matchTicks = this.allowClientMatchTicks()
+      && typeof options?.matchTicks === 'number'
+      && options.matchTicks > 0
       ? options.matchTicks
       : undefined;
     this.matchState = createInitialState(matchTicks !== undefined ? { matchTicks } : undefined);
@@ -170,6 +172,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       console.log(`Leave with no seat mapping (code ${resolved})`);
       return;
     }
+
+    this.rematchVotes.delete(playerNum);
 
     // Waiting room: just free the seat. No disconnect count, no walkover.
     if (!this.matchStarted) {
@@ -406,19 +410,40 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.lock().catch((err) => console.error('Failed to lock finished room:', err));
   }
 
+  /** Client rematch wait and server pairing window stay aligned. */
+  static readonly REMATCH_PAIR_MS = 15000;
+
+  /** Production ignores client matchTicks so a stranger cannot shorten a live match. */
+  protected allowClientMatchTicks(): boolean {
+    return false;
+  }
+
   private async handleRematch(client: Client): Promise<void> {
     const from = this.playerMapping.get(client.sessionId);
     if (!from || !this.matchState.result) return;
     this.broadcast('rematch', { from }, { except: client });
     this.rematchVotes.add(from);
     // Pairing needs more than the 3s nobody-rematch dispose window.
-    this.scheduleRoomDispose(15000);
+    this.scheduleRoomDispose(TurfDuelRoom.REMATCH_PAIR_MS);
     if (this.rematchVotes.size < 2 || this.rematchRoomId || this.rematchCreating) return;
     this.rematchCreating = true;
     try {
       const created = await matchMaker.createRoom('turf_duel', {});
+      const fresh = matchMaker.getLocalRoomById(created.roomId);
+      if (fresh) {
+        await fresh.setPrivate(true);
+      }
       this.rematchRoomId = created.roomId;
-      this.broadcast('rematch_room', { roomId: created.roomId });
+      const seats = new Map<1 | 2, ReturnType<typeof matchMaker.buildSeatReservation>>();
+      for (const num of this.rematchVotes) {
+        seats.set(num, await matchMaker.reserveSeatFor(created, {}));
+      }
+      for (const seated of this.clients) {
+        const num = this.playerMapping.get(seated.sessionId);
+        if (!num) continue;
+        const seat = seats.get(num);
+        if (seat) seated.send('rematch_room', { roomId: created.roomId, seat });
+      }
       this.scheduleRoomDispose(3000);
     } catch (err) {
       console.error('Failed to create rematch room:', err);

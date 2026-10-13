@@ -1047,6 +1047,53 @@ describe('cover engine (Amy ★)', () => {
     expect(result.state.grid[by][bx]).not.toBe(CellType.PLAYER1_TRAIL);
   });
 
+  test('closer keeps COVER sealed off by the foe in-progress line', () => {
+    // Intended: apply-all then flush. A foe trail cell painted this tick is a
+    // wall, so the closer keeps the pocket the boss cannot reach (seed 28
+    // claim 41 → 47 is this rule, not a regression).
+    let state = createInitialState({ width: 10, height: 10, matchTicks: 400 });
+    state.player1.hearts = 99;
+    state.player2.hearts = 99;
+    state.boss.xFp = toFp(1);
+    state.boss.yFp = toFp(1);
+    state.sparx1.xFp = toFp(0);
+    state.sparx1.yFp = toFp(0);
+    state.sparx2.xFp = toFp(9);
+    state.sparx2.yFp = toFp(9);
+
+    for (let y = 1; y <= 8; y++) {
+      state.grid[y][5] = CellType.PLAYER2_TRAIL;
+    }
+    state.player2.drawing = true;
+    state.player2.trail = Array.from({ length: 8 }, (_, i) => ({ x: 5, y: i + 1 }));
+    state.player2.xFp = toFp(5);
+    state.player2.yFp = toFp(8);
+    state.player2.position = { x: 5, y: 8 };
+
+    state.player1.drawing = true;
+    state.player1.xFp = toFp(3);
+    state.player1.yFp = toFp(1);
+    state.player1.position = { x: 3, y: 1 };
+    state.player1.trail = [
+      { x: 3, y: 8 },
+      { x: 3, y: 4 },
+      { x: 3, y: 2 },
+    ];
+    for (const p of state.player1.trail) state.grid[p.y][p.x] = CellType.PLAYER1_TRAIL;
+
+    state = step(state, [
+      { player: 1, heading: 192, thrusting: true },
+      { player: 2, heading: 64, thrusting: true },
+    ]).state;
+
+    expect(state.player1.drawing).toBe(false);
+    expect(state.grid[1][1]).toBe(CellType.COVER);
+    expect(state.grid[4][7]).toBe(CellType.PLAYER1_OPEN);
+    expect(state.grid[4][8]).toBe(CellType.PLAYER1_OPEN);
+    expect(state.player1.territoryCells).toBe(27);
+    expect(fingerprint(state)).toBe(1538652305);
+  });
+
   test('cardinal direction inputs still apply on the same tick', () => {
     let state = createInitialState({ width: 16, height: 16 });
     state = step(state, [
