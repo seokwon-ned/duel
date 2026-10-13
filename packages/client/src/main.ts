@@ -39,6 +39,8 @@ const ORB_CELLS = 15;
 const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
+/** Give up on a reserved rematch seat and fall back to joinOrCreate. */
+const SEAT_CONSUME_MS = 8000;
 
 interface RematchOffer {
   roomId: string;
@@ -1252,6 +1254,29 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
   }
 });
 
+async function joinOnlineRematch(client: Client, offer: RematchOffer | null) {
+  if (offer?.seat) {
+    try {
+      return await new Promise<Room>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('rematch seat timeout')), SEAT_CONSUME_MS);
+        client.consumeSeatReservation(offer.seat!).then(
+          (room) => {
+            clearTimeout(timer);
+            resolve(room);
+          },
+          (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        );
+      });
+    } catch {
+      /* reservation expired or hung — room is public after seat timeout */
+    }
+  }
+  return client.joinOrCreate('turf_duel');
+}
+
 function startBotMatch() {
   const statusEl = document.getElementById('status');
   if (statusEl) statusEl.textContent = 'Playing vs Bot (offline)';
@@ -1270,11 +1295,7 @@ document.getElementById('rematchBtn')?.addEventListener('click', async () => {
       const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
       const offer = await scene.requestOnlineRematch();
       const client = new Client(serverUrl);
-      const room = offer?.seat
-        ? await client.consumeSeatReservation(offer.seat)
-        : offer?.roomId
-          ? await client.joinById(offer.roomId)
-          : await client.joinOrCreate('turf_duel');
+      const room = await joinOnlineRematch(client, offer);
       if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
       scene.startOnlineMode(room);
     } catch (error) {

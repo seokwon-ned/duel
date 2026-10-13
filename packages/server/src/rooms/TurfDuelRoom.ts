@@ -41,6 +41,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected rematchVotes = new Set<1 | 2>();
   protected rematchRoomId: string | null = null;
   protected rematchCreating = false;
+  protected rematchLobby = false;
+  protected rematchNoShowTimer: NodeJS.Timeout | null = null;
   protected readonly maxDisconnects = 2;
   protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
 
@@ -93,6 +95,12 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.onMessage('rematch', (client) => {
       void this.handleRematch(client);
     });
+
+    // Server-only: handleRematch passes { rematch: true } via createRoom so the
+    // new room can setPrivate itself (works across processes; no getLocalRoomById).
+    if (options?.rematch === true) {
+      this.configureRematchLobby();
+    }
   }
 
   onJoin(client: Client, options: any) {
@@ -302,6 +310,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (this.forfeitCleanupTimer) {
       clearTimeout(this.forfeitCleanupTimer);
     }
+    if (this.rematchNoShowTimer) {
+      clearTimeout(this.rematchNoShowTimer);
+      this.rematchNoShowTimer = null;
+    }
 
     // Log bandwidth when room is disposed (match ended or players left)
     if (this.matchState && this.matchState.tick > 0) {
@@ -418,6 +430,41 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     return false;
   }
 
+  /** Private until reserved seats expire, then public matchmaking can fill a no-show. */
+  protected configureRematchLobby(): void {
+    this.rematchLobby = true;
+    const seatS = Number(process.env.TURF_DUEL_REMATCH_SEAT_S);
+    if (Number.isFinite(seatS) && seatS > 0) {
+      this.seatReservationTimeout = seatS;
+    }
+    void this.setPrivate(true);
+    this.armRematchNoShow();
+  }
+
+  private armRematchNoShow(): void {
+    if (this.rematchNoShowTimer) {
+      clearTimeout(this.rematchNoShowTimer);
+    }
+    this.rematchNoShowTimer = setTimeout(() => {
+      this.rematchNoShowTimer = null;
+      if (this.matchStarted) return;
+      void this.openRematchToMatchmaking();
+    }, this.seatReservationTimeout * 1000 + 80);
+  }
+
+  private async openRematchToMatchmaking(): Promise<void> {
+    if (this.matchStarted) return;
+    try {
+      await this.setPrivate(false);
+      if (this.locked) {
+        await this.unlock();
+      }
+      console.log(`Rematch lobby ${this.roomId} opened to matchmaking after seat expiry`);
+    } catch (err) {
+      console.error('Failed to open rematch lobby:', err);
+    }
+  }
+
   private async handleRematch(client: Client): Promise<void> {
     const from = this.playerMapping.get(client.sessionId);
     if (!from || !this.matchState.result) return;
@@ -428,11 +475,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (this.rematchVotes.size < 2 || this.rematchRoomId || this.rematchCreating) return;
     this.rematchCreating = true;
     try {
-      const created = await matchMaker.createRoom('turf_duel', {});
-      const fresh = matchMaker.getLocalRoomById(created.roomId);
-      if (fresh) {
-        await fresh.setPrivate(true);
-      }
+      const created = await matchMaker.createRoom('turf_duel', { rematch: true });
       this.rematchRoomId = created.roomId;
       const seats = new Map<1 | 2, ReturnType<typeof matchMaker.buildSeatReservation>>();
       for (const num of this.rematchVotes) {
@@ -478,6 +521,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected startGame() {
     console.log('Starting game loop at 20Hz');
     this.matchStarted = true;
+    if (this.rematchNoShowTimer) {
+      clearTimeout(this.rematchNoShowTimer);
+      this.rematchNoShowTimer = null;
+    }
 
     const tickInterval = 1000 / TICKS_PER_SECOND;
 

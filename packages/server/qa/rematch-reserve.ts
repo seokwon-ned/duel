@@ -167,16 +167,16 @@ async function testProductionIgnoresMatchTicks(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log('\n=== P1 rematch: clear votes + reserved seats ===\n');
+  console.log('\n=== rematch-reserve: clear votes + reserved seats ===\n');
   await testLateRematchDoesNotUseStaleVote();
   await testRematchRoomIsReserved();
   await testProductionIgnoresMatchTicks();
-  console.log('\n✅ my-rematch PASSED\n');
+  console.log('\n✅ rematch-reserve PASSED\n');
 }
 
 main()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error('\n❌ my-rematch FAILED:', error);
+    console.error('\n❌ rematch-reserve FAILED:', error);
     process.exit(1);
   });

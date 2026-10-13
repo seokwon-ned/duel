@@ -14,7 +14,8 @@
     "test:fault": "tsx src/e2e-fault-isolation.ts",
     "test:reconnection": "tsx src/reconnection.test.ts",
     "test:rematch": "tsx qa/rematch.ts",
-    "test:my-rematch": "tsx qa/my-rematch.ts"
+    "test:rematch-reserve": "tsx qa/rematch-reserve.ts",
+    "test:rematch-expiry": "tsx qa/own-expiry.ts"
   },
   "dependencies": {
     "@colyseus/core": "0.18.18",
