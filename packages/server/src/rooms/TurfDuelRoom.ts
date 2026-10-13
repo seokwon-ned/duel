@@ -96,11 +96,6 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       void this.handleRematch(client);
     });
 
-    // Server-only: handleRematch passes { rematch: true } via createRoom so the
-    // new room can setPrivate itself (works across processes; no getLocalRoomById).
-    if (options?.rematch === true) {
-      this.configureRematchLobby();
-    }
   }
 
   onJoin(client: Client, options: any) {
@@ -430,14 +425,17 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     return false;
   }
 
-  /** Private until reserved seats expire, then public matchmaking can fill a no-show. */
-  protected configureRematchLobby(): void {
+  /**
+   * Server-internal only (remoteRoomCall from handleRematch).
+   * Client create/join options must not trigger this — ignore options.rematch.
+   */
+  async configureRematchLobby(): Promise<void> {
     this.rematchLobby = true;
     const seatS = Number(process.env.TURF_DUEL_REMATCH_SEAT_S);
     if (Number.isFinite(seatS) && seatS > 0) {
       this.seatReservationTimeout = seatS;
     }
-    void this.setPrivate(true);
+    await this.setPrivate(true);
     this.armRematchNoShow();
   }
 
@@ -475,7 +473,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     if (this.rematchVotes.size < 2 || this.rematchRoomId || this.rematchCreating) return;
     this.rematchCreating = true;
     try {
-      const created = await matchMaker.createRoom('turf_duel', { rematch: true });
+      const created = await matchMaker.createRoom('turf_duel', {});
+      await matchMaker.remoteRoomCall(created.roomId, 'configureRematchLobby');
       this.rematchRoomId = created.roomId;
       const seats = new Map<1 | 2, ReturnType<typeof matchMaker.buildSeatReservation>>();
       for (const num of this.rematchVotes) {

@@ -72,6 +72,7 @@ interface TurfDebug {
   drawing: { p1: boolean; p2: boolean };
   trails: { p1: number; p2: number };
   youHearts: number;
+  trailPx: { core: number; glow: number; scale: number };
 }
 
 declare global {
@@ -93,6 +94,7 @@ if (typeof window !== 'undefined') {
     drawing: { p1: false, p2: false },
     trails: { p1: 0, p2: 0 },
     youHearts: 3,
+    trailPx: { core: 0, glow: 0, scale: 0 },
   };
 }
 
@@ -983,10 +985,26 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    stamp(glowGfx, Math.max(16, scale * 10), glow, 0.22);
-    stamp(glowGfx, Math.max(12, scale * 7.2), glow, 0.42);
-    stamp(this.trailGfx, Math.max(8, scale * 5.2), glow, 1);
-    stamp(this.trailGfx, Math.max(3.6, scale * 2.4), core, 1);
+    // 390×844: drop Math.max floors. 2.8/5.6 cells → ~4–5 / ~8–10 CSS px.
+    const glowR = scale * 5.6;
+    const midR = scale * 4.0;
+    const coreR = scale * 2.8;
+    const hiR = scale * 1.3;
+    stamp(glowGfx, glowR, glow, 0.22);
+    stamp(glowGfx, midR, glow, 0.42);
+    stamp(this.trailGfx, coreR, glow, 1);
+    stamp(this.trailGfx, hiR, core, 1);
+    if (window.__turfDebug) {
+      const gameW = Math.max(1, this.scale.width);
+      const css = this.game.canvas
+        ? this.game.canvas.getBoundingClientRect().width / gameW
+        : (this.scale.displayScale?.x ?? 1);
+      window.__turfDebug.trailPx = {
+        core: Math.round(coreR * css * 10) / 10,
+        glow: Math.round(glowR * css * 10) / 10,
+        scale: Math.round(scale * css * 1000) / 1000,
+      };
+    }
   }
 
   private paintActors(
@@ -1258,14 +1276,26 @@ async function joinOnlineRematch(client: Client, offer: RematchOffer | null) {
   if (offer?.seat) {
     try {
       return await new Promise<Room>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('rematch seat timeout')), SEAT_CONSUME_MS);
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('rematch seat timeout'));
+        }, SEAT_CONSUME_MS);
         client.consumeSeatReservation(offer.seat!).then(
           (room) => {
             clearTimeout(timer);
+            if (settled) {
+              void room.leave();
+              return;
+            }
+            settled = true;
             resolve(room);
           },
           (err) => {
             clearTimeout(timer);
+            if (settled) return;
+            settled = true;
             reject(err);
           },
         );

@@ -124,6 +124,11 @@ test.describe('Cover spike 390x844', () => {
       },
       { timeout: 45000 },
     );
+    const trailPx = await page.evaluate(() => window.__turfDebug?.trailPx);
+    expect(trailPx?.core).toBeGreaterThanOrEqual(4);
+    expect(trailPx?.core).toBeLessThanOrEqual(5);
+    expect(trailPx?.glow).toBeGreaterThanOrEqual(8);
+    expect(trailPx?.glow).toBeLessThanOrEqual(10);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
   });
 

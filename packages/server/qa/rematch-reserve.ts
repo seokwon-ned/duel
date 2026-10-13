@@ -147,6 +147,21 @@ async function testRematchRoomIsReserved(): Promise<void> {
   }
 }
 
+/** Client { rematch: true } must not privatize a room the way handleRematch does. */
+async function testClientRematchFlagIsIgnored(): Promise<void> {
+  const { server, room1, room2 } = await startPair(12634, TurfDuelRoom, { rematch: true });
+  try {
+    if (room1.roomId !== room2.roomId) {
+      throw new Error('Client rematch:true made a private lobby; second join created another room');
+    }
+    await Promise.race([room1.leave().catch(() => undefined), sleep(400)]);
+    await Promise.race([room2.leave().catch(() => undefined), sleep(400)]);
+    console.log('✓ client rematch:true is ignored (pair still shares one public room)');
+  } finally {
+    await shutdown(server);
+  }
+}
+
 /** Production rooms ignore client matchTicks. */
 async function testProductionIgnoresMatchTicks(): Promise<void> {
   const { server, room1, room2 } = await startPair(12633, TurfDuelRoom, { matchTicks: 8 });
@@ -170,6 +185,7 @@ async function main(): Promise<void> {
   console.log('\n=== rematch-reserve: clear votes + reserved seats ===\n');
   await testLateRematchDoesNotUseStaleVote();
   await testRematchRoomIsReserved();
+  await testClientRematchFlagIsIgnored();
   await testProductionIgnoresMatchTicks();
   console.log('\n✅ rematch-reserve PASSED\n');
 }
