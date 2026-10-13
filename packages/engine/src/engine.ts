@@ -220,13 +220,56 @@ function movePlayers(state: MatchState, events: GameEvent[]): void {
     hurt(state, num, events);
   }
 
-  for (const intent of intents) {
-    if (!intent.player.isAlive || willHurt.has(intent.num)) continue;
+  const applyIntent = (
+    intent: (typeof intents)[number],
+    pendingClose: Array<1 | 2>,
+  ): void => {
+    if (!intent.player.isAlive || willHurt.has(intent.num)) return;
+    if (intent.player.lastHurtTick === state.tick || !intent.player.thrusting) return;
     if (intent.crossedFoe) {
       paintCrossedTrail(state, intent.num, intent.player, intent.xFp, intent.yFp, intent.cx, intent.cy);
-    } else {
-      tryMovePlayer(state, intent.num, intent.player, intent.xFp, intent.yFp, events);
+    } else if (tryMovePlayer(state, intent.num, intent.player, intent.xFp, intent.yFp, events)) {
+      pendingClose.push(intent.num);
     }
+  };
+
+  const closers = intents
+    .filter((intent) => {
+      if (!intent.player.isAlive || willHurt.has(intent.num)) return false;
+      if (intent.player.lastHurtTick === state.tick || intent.crossedFoe) return false;
+      return intentWouldClose(state, intent);
+    })
+    .map((intent) => intent.num);
+  const skipSever = closers.length > 1;
+  const pendingClose: Array<1 | 2> = [];
+  // Apply every intent, then flush. A foe trail cell painted this tick is a
+  // wall: the closer keeps COVER the boss cannot reach through that line.
+  for (const intent of intents) applyIntent(intent, pendingClose);
+  flushCloses(state, pendingClose, events, skipSever);
+}
+
+function intentWouldClose(
+  state: MatchState,
+  intent: { player: PlayerState; num: 1 | 2; cx: number; cy: number },
+): boolean {
+  if (!intent.player.drawing) return false;
+  if (!inBounds(intent.cx, intent.cy, state.gridWidth, state.gridHeight)) return false;
+  const cell = state.grid[intent.cy][intent.cx];
+  const foe: 1 | 2 = intent.num === 1 ? 2 : 1;
+  if (isTrail(cell, foe) || isTrail(cell, intent.num)) return false;
+  return isOpened(cell);
+}
+
+function flushCloses(
+  state: MatchState,
+  pendingClose: Array<1 | 2>,
+  events: GameEvent[],
+  skipSever: boolean,
+): void {
+  for (const num of pendingClose) {
+    const player = num === 1 ? state.player1 : state.player2;
+    if (!player.isAlive || player.lastHurtTick === state.tick) continue;
+    closeTrail(state, num, events, skipSever);
   }
 }
 
@@ -262,13 +305,13 @@ function tryMovePlayer(
   xFp: number,
   yFp: number,
   events: GameEvent[],
-): void {
+): boolean {
   const w = state.gridWidth;
   const h = state.gridHeight;
   let cx = cellOf(xFp);
   let cy = cellOf(yFp);
   if (!inBounds(cx, cy, w, h)) {
-    return;
+    return false;
   }
 
   const fromX = cellOf(player.xFp);
@@ -282,13 +325,13 @@ function tryMovePlayer(
       // Pass over: do not overwrite their live cell, but keep our polyline
       // intact so a later erase of their line cannot punch a hole in ours.
       passOverInvincibleTrail(state, player, xFp, yFp, cx, cy, fromX, fromY);
-      return;
+      return false;
     }
     hurt(state, foe, events);
     player.xFp = xFp;
     player.yFp = yFp;
     snapCell(player);
-    return;
+    return false;
   }
 
   if (isTrail(cell, num)) {
@@ -297,10 +340,10 @@ function tryMovePlayer(
       player.xFp = xFp;
       player.yFp = yFp;
       snapCell(player);
-      return;
+      return false;
     }
     hurt(state, num, events);
-    return;
+    return false;
   }
 
   if (player.drawing) {
@@ -308,13 +351,12 @@ function tryMovePlayer(
       player.xFp = xFp;
       player.yFp = yFp;
       snapCell(player);
-      closeTrail(state, num, events);
-      return;
+      return true;
     }
     if (isCover(cell)) {
       if (cellOf(state.boss.xFp) === cx && cellOf(state.boss.yFp) === cy) {
         hurt(state, num, events);
-        return;
+        return false;
       }
       player.xFp = xFp;
       player.yFp = yFp;
@@ -324,7 +366,7 @@ function tryMovePlayer(
         player.trail.push({ x: cx, y: cy });
       }
     }
-    return;
+    return false;
   }
 
   if (isOpened(cell)) {
@@ -333,16 +375,13 @@ function tryMovePlayer(
     snapCell(player);
     player.spawnX = cx;
     player.spawnY = cy;
-    return;
+    return false;
   }
 
-  if (
-    isCover(cell) &&
-    (isOpened(state.grid[fromY][fromX]) || isInvincibleFoeTrail(state, num, fromX, fromY))
-  ) {
+  if (isCover(cell) && isOpened(state.grid[fromY][fromX])) {
     if (cellOf(state.boss.xFp) === cx && cellOf(state.boss.yFp) === cy) {
       hurt(state, num, events);
-      return;
+      return false;
     }
     player.drawing = true;
     player.trail = [];
@@ -354,9 +393,10 @@ function tryMovePlayer(
     state.grid[cy][cx] = playerTrailType(num);
     player.trail.push({ x: cx, y: cy });
   }
+  return false;
 }
 
-function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
+function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[], skipSever = false): void {
   const player = num === 1 ? state.player1 : state.player2;
   if (player.trail.length === 0) {
     player.drawing = false;
@@ -377,6 +417,11 @@ function closeTrail(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
     { x: cellOf(state.sparx2.xFp), y: cellOf(state.sparx2.yFp) },
   ];
   const total = state.gridWidth * state.gridHeight;
+  // Closing across a live foe line severs it. Invincible: line only, no heart.
+  // Same-tick double close skips sever so order cannot cancel the other claim.
+  if (!skipSever) {
+    severOverlappingFoeLine(state, num, player.trail, events);
+  }
   const { claimed, remainingCover } = claimClosedTrail(state.grid, player.trail, num, bossCell);
 
   const paint = playerOpenType(num);
@@ -423,13 +468,6 @@ function isInvincible(player: PlayerState, tick: number): boolean {
   return player.lastHurtTick >= 0 && tick - player.lastHurtTick < HURT_IFRAME_TICKS;
 }
 
-function isInvincibleFoeTrail(state: MatchState, num: 1 | 2, x: number, y: number): boolean {
-  const foe: 1 | 2 = num === 1 ? 2 : 1;
-  if (!isTrail(state.grid[y][x], foe)) return false;
-  const foePlayer = foe === 1 ? state.player1 : state.player2;
-  return isInvincible(foePlayer, state.tick);
-}
-
 /** Walk across an invincible foe line without painting over it. */
 function passOverInvincibleTrail(
   state: MatchState,
@@ -459,6 +497,44 @@ function passOverInvincibleTrail(
   }
 }
 
+function severOverlappingFoeLine(
+  state: MatchState,
+  num: 1 | 2,
+  trail: Position[],
+  events: GameEvent[],
+): void {
+  const foe: 1 | 2 = num === 1 ? 2 : 1;
+  const foePlayer = foe === 1 ? state.player1 : state.player2;
+  if (!foePlayer.drawing || foePlayer.trail.length === 0) return;
+  let crossed = false;
+  for (const p of trail) {
+    if (inBounds(p.x, p.y, state.gridWidth, state.gridHeight) && isTrail(state.grid[p.y][p.x], foe)) {
+      crossed = true;
+      break;
+    }
+  }
+  if (!crossed) return;
+  if (isInvincible(foePlayer, state.tick)) {
+    clearTrail(state, foe);
+    returnToSpawn(foePlayer);
+    // Keep the original iframe expiry. returnToSpawn clears thrusting so
+    // this tick's precomputed intent cannot start a new mid-cover line.
+    return;
+  }
+  hurt(state, foe, events);
+}
+
+function returnToSpawn(player: PlayerState): void {
+  player.drawing = false;
+  player.trail = [];
+  player.fuseIndex = -1;
+  player.idleTicks = 0;
+  player.thrusting = false;
+  player.xFp = toFp(player.spawnX);
+  player.yFp = toFp(player.spawnY);
+  snapCell(player);
+}
+
 function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
   const player = num === 1 ? state.player1 : state.player2;
   if (!player.isAlive) return;
@@ -467,14 +543,7 @@ function hurt(state: MatchState, num: 1 | 2, events: GameEvent[]): void {
 
   clearTrail(state, num);
   player.hearts -= 1;
-  player.drawing = false;
-  player.idleTicks = 0;
-  player.fuseIndex = -1;
-  player.trail = [];
-  player.thrusting = false;
-  player.xFp = toFp(player.spawnX);
-  player.yFp = toFp(player.spawnY);
-  snapCell(player);
+  returnToSpawn(player);
   events.push({ type: 'heart', player: num });
 
   if (player.hearts <= 0) {

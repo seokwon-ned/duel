@@ -1,4 +1,4 @@
-import { Room, Client } from '@colyseus/core';
+import { Room, Client, matchMaker } from '@colyseus/core';
 import { TurfDuelState, CellUpdate, MatchResultSchema } from '../schema/TurfDuelState.js';
 import {
   createInitialState,
@@ -38,6 +38,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected previousGrid: CellType[][] | null = null;
   protected pendingCellUpdates = new Map<string, { x: number; y: number; type: CellType }>();
   protected matchStarted = false;
+  protected rematchVotes = new Set<1 | 2>();
+  protected rematchRoomId: string | null = null;
+  protected rematchCreating = false;
   protected readonly maxDisconnects = 2;
   protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
 
@@ -46,7 +49,12 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   onCreate(options: any) {
     const state = new TurfDuelState();
     this.setState(state);
-    this.matchState = createInitialState();
+    const matchTicks = this.allowClientMatchTicks()
+      && typeof options?.matchTicks === 'number'
+      && options.matchTicks > 0
+      ? options.matchTicks
+      : undefined;
+    this.matchState = createInitialState(matchTicks !== undefined ? { matchTicks } : undefined);
     state.gridWidth = this.matchState.gridWidth;
     state.gridHeight = this.matchState.gridHeight;
     
@@ -81,6 +89,9 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     
     this.onMessage('input', (client, message) => {
       this.handleInput(client, message);
+    });
+    this.onMessage('rematch', (client) => {
+      void this.handleRematch(client);
     });
   }
 
@@ -161,6 +172,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       console.log(`Leave with no seat mapping (code ${resolved})`);
       return;
     }
+
+    this.rematchVotes.delete(playerNum);
 
     // Waiting room: just free the seat. No disconnect count, no walkover.
     if (!this.matchStarted) {
@@ -380,6 +393,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     };
     this.matchState.paused = true;
     this.syncState();
+    this.lockFinishedRoom();
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
@@ -389,6 +403,52 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       this.gameLoop = null;
     }
     this.scheduleRoomDispose(3000);
+  }
+
+  /** Explicit lock so a later leave does not unlock the finished room for joinOrCreate. */
+  private lockFinishedRoom(): void {
+    this.lock().catch((err) => console.error('Failed to lock finished room:', err));
+  }
+
+  /** Client rematch wait and server pairing window stay aligned. */
+  static readonly REMATCH_PAIR_MS = 15000;
+
+  /** Production ignores client matchTicks so a stranger cannot shorten a live match. */
+  protected allowClientMatchTicks(): boolean {
+    return false;
+  }
+
+  private async handleRematch(client: Client): Promise<void> {
+    const from = this.playerMapping.get(client.sessionId);
+    if (!from || !this.matchState.result) return;
+    this.broadcast('rematch', { from }, { except: client });
+    this.rematchVotes.add(from);
+    // Pairing needs more than the 3s nobody-rematch dispose window.
+    this.scheduleRoomDispose(TurfDuelRoom.REMATCH_PAIR_MS);
+    if (this.rematchVotes.size < 2 || this.rematchRoomId || this.rematchCreating) return;
+    this.rematchCreating = true;
+    try {
+      const created = await matchMaker.createRoom('turf_duel', {});
+      const fresh = matchMaker.getLocalRoomById(created.roomId);
+      if (fresh) {
+        await fresh.setPrivate(true);
+      }
+      this.rematchRoomId = created.roomId;
+      const seats = new Map<1 | 2, ReturnType<typeof matchMaker.buildSeatReservation>>();
+      for (const num of this.rematchVotes) {
+        seats.set(num, await matchMaker.reserveSeatFor(created, {}));
+      }
+      for (const seated of this.clients) {
+        const num = this.playerMapping.get(seated.sessionId);
+        if (!num) continue;
+        const seat = seats.get(num);
+        if (seat) seated.send('rematch_room', { roomId: created.roomId, seat });
+      }
+      this.scheduleRoomDispose(3000);
+    } catch (err) {
+      console.error('Failed to create rematch room:', err);
+      this.rematchCreating = false;
+    }
   }
 
   private scheduleRoomDispose(delayMs: number): void {
@@ -480,6 +540,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
             clearInterval(bandwidthInterval);
             console.log('Match ended:', this.matchState.result);
             this.logBandwidth();
+            this.lockFinishedRoom();
             this.scheduleRoomDispose(3000);
           }
         } catch (error) {
