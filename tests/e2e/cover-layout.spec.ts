@@ -125,6 +125,7 @@ test.describe('Cover spike 390x844', () => {
       { timeout: 45000 },
     );
     const trailPx = await page.evaluate(() => window.__turfDebug?.trailPx);
+    console.log('trailPx', trailPx);
     expect(trailPx?.core).toBeGreaterThanOrEqual(4);
     expect(trailPx?.core).toBeLessThanOrEqual(5);
     expect(trailPx?.glow).toBeGreaterThanOrEqual(8);
