@@ -1180,10 +1180,32 @@ class GameScene extends Phaser.Scene {
     gfx.clear();
     const orangeW = TRAIL_ORANGE_CSS;
     const whiteW = TRAIL_WHITE_CSS;
-    this.strokeTrailGfx(gfx, trail1, orangeW, AH.me, false);
+    this.strokeTrailGfx(gfx, this.trimTrailTip(trail1, 10), orangeW, AH.me, false);
     this.strokeTrailGfx(gfx, trail2, orangeW, AH.foe, true);
-    this.strokeTrailGfx(gfx, trail1, whiteW, 0xffffff, false);
+    this.strokeTrailGfx(gfx, this.trimTrailTip(trail1, 10), whiteW, 0xffffff, false);
     this.strokeTrailGfx(gfx, trail2, whiteW, 0xffffff, true);
+  }
+
+  /** Stop the core just short of the cutter so the orb ring stays measurable. */
+  private trimTrailTip(trail: { x: number; y: number }[], cssCut: number): { x: number; y: number }[] {
+    if (trail.length < 2) return trail;
+    const unit = this.boardImage?.scaleX || 1;
+    let remain = cssCut / unit;
+    const out = trail.map((p) => ({ x: p.x, y: p.y }));
+    while (out.length >= 2 && remain > 0) {
+      const a = out[out.length - 2];
+      const b = out[out.length - 1];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len <= remain) {
+        remain -= len;
+        out.pop();
+      } else {
+        const t = (len - remain) / len;
+        out[out.length - 1] = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        remain = 0;
+      }
+    }
+    return out;
   }
 
   private strokeTrailGfx(

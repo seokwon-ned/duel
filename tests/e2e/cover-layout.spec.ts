@@ -440,11 +440,15 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         cands.push({ solid, glow: best.glow, white, rgb, orange });
       }
       cands.sort((a, b) => {
+        const aGood =
+          a.glow >= 14 && a.glow <= 36 && a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
+        const bGood =
+          b.glow >= 14 && b.glow <= 36 && b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
         const aGlow = a.glow >= 14 && a.glow <= 36 ? 0 : 1;
         const bGlow = b.glow >= 14 && b.glow <= 36 ? 0 : 1;
         const aOk = a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
         const bOk = b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
-        return aGlow - bGlow || aOk - bOk || Math.abs(a.solid - 4) - Math.abs(b.solid - 4);
+        return aGood - bGood || aGlow - bGlow || aOk - bOk || Math.abs(a.solid - 4) - Math.abs(b.solid - 4);
       });
       const chosen = cands[0];
       if (chosen) {
