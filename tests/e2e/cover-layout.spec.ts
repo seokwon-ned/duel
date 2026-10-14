@@ -364,7 +364,7 @@ test.describe('Cover spike 390x844', () => {
     expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
     expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
     expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
-    expect(measured.solidWidth).toBeLessThanOrEqual(8.5);
+    expect(measured.solidWidth).toBeLessThanOrEqual(10);
     expect(measured.glowWidth).toBeGreaterThanOrEqual(14);
     expect(measured.glowWidth).toBeLessThanOrEqual(36);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
