@@ -29,6 +29,41 @@ async function waitTrailRedraw(page: Page) {
   );
 }
 
+/** Next paint must be an incremental append (not a full sheet redraw). */
+async function waitTrailAppend(page: Page) {
+  const gen = await page.evaluate(() => window.__turfDebug?.trailPaintGen ?? 0);
+  await page.waitForFunction(
+    (g) => {
+      const d = window.__turfDebug;
+      return Boolean(d && d.trailPaintKind === 'append' && d.trailPaintGen > g);
+    },
+    gen,
+    { timeout: 8000 },
+  );
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
+
+function expect390Trail(measured: TrailMeasure) {
+  expect(measured.hasWhiteCenter, `center ${measured.centerRgb}`).toBe(true);
+  expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
+  expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
+  expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
+  expect(measured.solidWidth).toBeLessThanOrEqual(8.5);
+  expect(measured.glowWidth).toBeGreaterThanOrEqual(14);
+  expect(measured.glowWidth).toBeLessThanOrEqual(36);
+  expect(measured.orangeRgb, 'orange band').toBeTruthy();
+  expect(measured.orangeRgb![0]).toBeGreaterThanOrEqual(210);
+  expect(measured.orangeRgb![1]).toBeLessThanOrEqual(170);
+  expect(measured.orangeRgb![2]).toBeLessThanOrEqual(70);
+  expect(measured.ringPx).toBeGreaterThanOrEqual(16);
+  expect(measured.ringPx).toBeLessThanOrEqual(24);
+}
+
 async function waitMidDraw(page: Page) {
   await page.goto('/?qa=1');
   await page.waitForSelector('#game-container canvas');
@@ -423,19 +458,31 @@ test.describe('Cover spike 390x844', () => {
       dpr: window.__turfDebug?.trailDpr,
     }));
     console.log('rendered trail WIDTH (not radius) 390x844', measured, { dpr1: perf1, dpr2: perf2 });
-    expect(measured.hasWhiteCenter, `center ${measured.centerRgb}`).toBe(true);
-    expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
-    expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
-    expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
-    expect(measured.solidWidth).toBeLessThanOrEqual(8.5);
-    expect(measured.glowWidth).toBeGreaterThanOrEqual(14);
-    expect(measured.glowWidth).toBeLessThanOrEqual(36);
-    expect(measured.orangeRgb, 'orange band').toBeTruthy();
-    expect(measured.orangeRgb![0]).toBeGreaterThanOrEqual(210);
-    expect(measured.orangeRgb![1]).toBeLessThanOrEqual(170);
-    expect(measured.orangeRgb![2]).toBeLessThanOrEqual(70);
-    expect(measured.ringPx).toBeGreaterThanOrEqual(16);
-    expect(measured.ringPx).toBeLessThanOrEqual(24);
+    expect390Trail(measured);
+  });
+
+  test('incremental trail append keeps a white core', async ({ page }) => {
+    test.setTimeout(60000);
+    await waitMidDraw(page);
+    await waitTrailAppend(page);
+    await waitTrailAppend(page);
+    const kind = await page.evaluate(() => ({
+      kind: window.__turfDebug?.trailPaintKind,
+      appends: window.__turfDebug?.trailPaintAppends,
+      ms: window.__turfDebug?.trailPaintMs,
+      avg: window.__turfDebug?.trailPaintAvg,
+      dpr: window.__turfDebug?.trailDpr,
+    }));
+    expect(kind.kind, `paint ${JSON.stringify(kind)}`).toBe('append');
+    expect(kind.appends ?? 0).toBeGreaterThanOrEqual(2);
+    const measured = await measureRenderedTrail(page);
+    console.log('incremental append trail 390x844', measured, kind);
+    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw-append.png') });
+    expect390Trail(measured);
+    // Cream 255,202,167 is glow/orange over white — require a real core.
+    expect(measured.centerRgb![1], `append center ${measured.centerRgb}`).toBeGreaterThanOrEqual(200);
+    expect(measured.centerRgb![2], `append center ${measured.centerRgb}`).toBeGreaterThanOrEqual(180);
+    expect(kind.ms ?? 99).toBeLessThanOrEqual(15);
   });
 
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {

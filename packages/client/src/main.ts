@@ -48,8 +48,8 @@ const ORB_BLOOM_TEX = 64;
 /** Trail sheet is CSS size × DPR (capped at 2) so a 2px white core survives WebGL. */
 const TRAIL_DPR_CAP = 2;
 const TRAIL_ORANGE_CSS = 4;
-/** 3 CSS px so LINEAR→200px FB still reads a ~2px white core at DPR1. */
-const TRAIL_WHITE_CSS = 3;
+/** ~2 CSS px; restroked last after glow so FIT downsample still reads ~2px. */
+const TRAIL_WHITE_CSS = 2.5;
 /** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
   [26, 0.14],
@@ -97,6 +97,8 @@ interface TurfDebug {
   trailPaintMs: number;
   trailPaintAvg: number;
   trailDpr: number;
+  trailPaintKind: 'append' | 'full';
+  trailPaintAppends: number;
 }
 
 declare global {
@@ -123,6 +125,8 @@ if (typeof window !== 'undefined') {
     trailPaintMs: 0,
     trailPaintAvg: 0,
     trailDpr: 1,
+    trailPaintKind: 'full',
+    trailPaintAppends: 0,
   };
 }
 
@@ -232,6 +236,7 @@ class GameScene extends Phaser.Scene {
   private lastPts2: { x: number; y: number }[] = [];
   private trailPaintGen = 0;
   private trailPaintSum = 0;
+  private trailPaintAppends = 0;
   private trailScratch: HTMLCanvasElement | null = null;
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
@@ -1060,8 +1065,11 @@ class GameScene extends Phaser.Scene {
     const hold1 = sameHead(this.lastPts1, trail1);
     const hold2 = sameHead(this.lastPts2, trail2);
     let dirty: { x: number; y: number; w: number; h: number } | null = null;
+    let kind: 'append' | 'full' = 'full';
     if ((inc1 || hold1) && (inc2 || hold2) && (inc1 || inc2)) {
+      kind = 'append';
       const pad = TRAIL_GLOW_PAD_CSS * dpr;
+      const lookback = this.trailLookback(cell, dpr);
       const box = { x0: tw, y0: th, x1: 0, y1: 0 };
       const mark = (t: { x: number; y: number }[], from: number) => {
         for (let i = Math.max(0, from); i < t.length; i++) {
@@ -1073,26 +1081,35 @@ class GameScene extends Phaser.Scene {
           if (y > box.y1) box.y1 = y;
         }
       };
-      if (inc1) {
-        const from = this.lastPts1.length - 2;
-        this.strokeTrailCss(ctx, trail1, from, cell, dpr, A.me, false);
-        mark(trail1, from);
-      }
-      if (inc2) {
-        const from = this.lastPts2.length - 2;
-        this.strokeTrailCss(ctx, trail2, from, cell, dpr, A.foe, true);
-        mark(trail2, from);
-      }
+      // Halo on the new tip, then orange + white over glow-radius lookback so
+      // round-cap glow cannot bury the prior white core.
+      const fromHalo1 = Math.max(0, this.lastPts1.length - 2);
+      const fromHalo2 = Math.max(0, this.lastPts2.length - 2);
+      const fromBody1 = Math.max(0, this.lastPts1.length - 1 - lookback);
+      const fromBody2 = Math.max(0, this.lastPts2.length - 1 - lookback);
+      if (inc1) this.strokeTrailCss(ctx, trail1, fromHalo1, cell, dpr, A.me, false, 'halo');
+      if (inc2) this.strokeTrailCss(ctx, trail2, fromHalo2, cell, dpr, A.foe, true, 'halo');
+      if (inc1) this.strokeTrailCss(ctx, trail1, fromBody1, cell, dpr, A.me, false, 'body');
+      if (inc2) this.strokeTrailCss(ctx, trail2, fromBody2, cell, dpr, A.foe, true, 'body');
+      if (inc1) this.strokeTrailCss(ctx, trail1, fromBody1, cell, dpr, A.me, false, 'core');
+      if (inc2) this.strokeTrailCss(ctx, trail2, fromBody2, cell, dpr, A.foe, true, 'core');
+      if (inc1) mark(trail1, Math.min(fromHalo1, fromBody1));
+      if (inc2) mark(trail2, Math.min(fromHalo2, fromBody2));
       dirty = {
         x: Math.max(0, box.x0 - pad),
         y: Math.max(0, box.y0 - pad),
         w: Math.min(tw, box.x1 + pad) - Math.max(0, box.x0 - pad),
         h: Math.min(th, box.y1 + pad) - Math.max(0, box.y0 - pad),
       };
+      this.trailPaintAppends += 1;
     } else {
       ctx.clearRect(0, 0, tw, th);
-      this.strokeTrailCss(ctx, trail1, 0, cell, dpr, A.me, false);
-      this.strokeTrailCss(ctx, trail2, 0, cell, dpr, A.foe, true);
+      this.strokeTrailCss(ctx, trail1, 0, cell, dpr, A.me, false, 'halo');
+      this.strokeTrailCss(ctx, trail2, 0, cell, dpr, A.foe, true, 'halo');
+      this.strokeTrailCss(ctx, trail1, 0, cell, dpr, A.me, false, 'body');
+      this.strokeTrailCss(ctx, trail2, 0, cell, dpr, A.foe, true, 'body');
+      this.strokeTrailCss(ctx, trail1, 0, cell, dpr, A.me, false, 'core');
+      this.strokeTrailCss(ctx, trail2, 0, cell, dpr, A.foe, true, 'core');
     }
     this.lastPts1 = trail1.map((p) => ({ x: p.x, y: p.y }));
     this.lastPts2 = trail2.map((p) => ({ x: p.x, y: p.y }));
@@ -1105,7 +1122,15 @@ class GameScene extends Phaser.Scene {
       window.__turfDebug.trailPaintMs = Math.round(ms * 10) / 10;
       window.__turfDebug.trailPaintAvg = Math.round((this.trailPaintSum / this.trailPaintGen) * 10) / 10;
       window.__turfDebug.trailDpr = dpr;
+      window.__turfDebug.trailPaintKind = kind;
+      window.__turfDebug.trailPaintAppends = this.trailPaintAppends;
     }
+  }
+
+  /** Cells of history glow round-caps can stomp; restroke orange+white that far. */
+  private trailLookback(cell: number, dpr: number): number {
+    const glowR = (TRAIL_GLOW_LAYERS[0][0] * dpr) / 2;
+    return Math.max(2, Math.ceil(glowR / Math.max(1, cell)) + 1);
   }
 
   /** Upload only the new segment. Phaser stores canvas textures Y-flipped. */
@@ -1153,6 +1178,7 @@ class GameScene extends Phaser.Scene {
     dpr: number,
     color: string,
     dashed: boolean,
+    pass: 'halo' | 'body' | 'core' | 'all' = 'all',
   ) {
     if (trail.length < 2) return;
     const start = Math.max(0, Math.min(from, trail.length - 2));
@@ -1168,19 +1194,26 @@ class GameScene extends Phaser.Scene {
     const b = n & 255;
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
     const px = (css: number) => Math.max(1, css * dpr);
+    ctx.globalCompositeOperation = 'source-over';
     ctx.lineDashOffset = dashed ? -(start * cell) : 0;
     ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
-    for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
-      ctx.strokeStyle = rgba(alpha);
-      ctx.lineWidth = px(width);
+    if (pass === 'halo' || pass === 'all') {
+      for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
+        ctx.strokeStyle = rgba(alpha);
+        ctx.lineWidth = px(width);
+        ctx.stroke(path);
+      }
+    }
+    if (pass === 'body' || pass === 'all') {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = px(TRAIL_ORANGE_CSS);
       ctx.stroke(path);
     }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = px(TRAIL_ORANGE_CSS);
-    ctx.stroke(path);
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = px(TRAIL_WHITE_CSS);
-    ctx.stroke(path);
+    if (pass === 'core' || pass === 'all') {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = px(TRAIL_WHITE_CSS);
+      ctx.stroke(path);
+    }
     ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
   }
