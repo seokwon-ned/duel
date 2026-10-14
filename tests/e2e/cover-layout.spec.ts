@@ -226,9 +226,9 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             g0 = -1;
           }
         }
-        const glowing = runs.filter((r) => r.glow >= 6 && r.glow <= 48);
+        const glowing = runs.filter((r) => r.glow >= 14 && r.glow <= 36);
         for (const r of glowing) maxGlow = Math.max(maxGlow, r.glow);
-        const near = glowing.filter((r) => r.whites >= 1);
+        const near = runs.filter((r) => r.glow >= 6 && r.glow <= 48 && r.whites >= 1);
         const best = near.sort((a, b) => Math.abs(a.glow - 26) - Math.abs(b.glow - 26) || b.whites - a.whites)[0];
         if (!best) continue;
         let wRun = 0;
