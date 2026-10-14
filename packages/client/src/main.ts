@@ -1125,11 +1125,8 @@ class GameScene extends Phaser.Scene {
     this.placeShownActors();
   }
 
-  /** CSS pixels per board cell. Under RESIZE, game pixels are CSS pixels and the board sprite scale is the cell size. */
+  /** CSS pixels per game unit (Phaser FIT). ORB_MIN_CSS is CSS px, not world units. */
   private cssPerUnit(): number {
-    if (this.scale.scaleMode === Phaser.Scale.RESIZE && this.boardImage && this.boardImage.scaleX > 0) {
-      return this.boardImage.scaleX;
-    }
     const disp = this.scale.displaySize?.width ?? BOARD_W;
     return disp / BOARD_W;
   }
@@ -1338,15 +1335,13 @@ const game = new Phaser.Game({
   banner: false,
   scene: [GameScene],
   scale: {
-    // RESIZE so 1 game pixel = 1 CSS pixel. FIT left a 200×300 framebuffer that
-    // crushed the DPR trail sheet and upscaled it blurry (Lee P1).
-    mode: Phaser.Scale.RESIZE,
+    mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_HORIZONTALLY,
     expandParent: false,
     width: BOARD_W,
     height: BOARD_H,
   },
-  render: { antialias: true, antialiasGL: true, transparent: false, mipmapFilter: 'LINEAR' },
+  render: { antialias: true, antialiasGL: true, transparent: false, mipmapFilter: 'LINEAR_MIPMAP_LINEAR' },
 });
 
 window.addEventListener('resize', () => game.scale.refresh());
