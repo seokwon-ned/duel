@@ -47,15 +47,14 @@ const ORB_BLOOM_CSS = 56;
 const ORB_BLOOM_TEX = 64;
 /** Glow sheet is CSS size (dpr 1). Orange+white core is Phaser Graphics, full redraw. */
 const TRAIL_DPR_CAP = 2;
-/** Target ~4 CSS px after FIT (Graphics lineStyle in game units). */
-const TRAIL_ORANGE_CSS = 4;
-/** Target ~2 CSS px white spine. */
-const TRAIL_WHITE_CSS = 2.2;
+/** ~4–6 CSS px opaque band (Graphics lineStyle in canvas pixels). */
+const TRAIL_ORANGE_CSS = 6;
+/** Target ~2 CSS px white spine. Slightly over 2 so AA still leaves >=1.5px. */
+const TRAIL_WHITE_CSS = 2.8;
 /** 3 low-alpha halo layers (~27px). Outer alpha high enough that isPixGlow still sees 26px. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
-  [26, 0.22],
-  [12, 0.16],
-  [8, 0.22],
+  [26, 0.28],
+  [18, 0.50],
 ];
 /** Full-redraw the glow sheet every N appends so translucent alpha cannot pile up. */
 const TRAIL_GLOW_BATCH = 8;
@@ -339,9 +338,9 @@ class GameScene extends Phaser.Scene {
     this.trailGlowSheet.height = BOARD_H;
     this.trailGlowTexture = this.textures.addCanvas('trail-glow', this.trailGlowSheet);
     this.trailGlowTexture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
-    this.trailGlowSprite = this.add.image(0, 0, 'trail-glow').setOrigin(0).setDepth(3);
+    this.trailGlowSprite = this.add.image(0, 0, 'trail-glow').setOrigin(0).setDepth(5.2);
     this.trailCoreGfx = this.add.graphics();
-    this.trailCoreGfx.setDepth(3.5);
+    this.trailCoreGfx.setDepth(6.5);
     this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me), true);
     this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true), true);
     this.addPaintedTexture('orb-bloom-me', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.me), true);
@@ -1266,6 +1265,13 @@ class GameScene extends Phaser.Scene {
       ctx.stroke(path);
     }
     ctx.setLineDash([]);
+    const tip = trail[trail.length - 1];
+    const tx = snap((tip.x + 0.5) * cell);
+    const ty = snap((tip.y + 0.5) * cell);
+    ctx.fillStyle = rgba(0.40);
+    ctx.beginPath();
+    ctx.arc(tx, ty, px(18), 0, Math.PI * 2);
+    ctx.fill();
   }
 
   private paintActors(
