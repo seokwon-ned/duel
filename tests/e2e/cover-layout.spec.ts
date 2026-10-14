@@ -287,7 +287,7 @@ test.describe('Cover spike 390x844', () => {
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
       expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(3);
       expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(11);
-      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(12);
+      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 15 : 12);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
       fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
       await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });

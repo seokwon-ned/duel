@@ -24,6 +24,7 @@ import {
   paintHiddenIllustration,
   paintKkumuli,
   paintOrb,
+  paintOrbBloom,
   paintSpark,
   paintParticleDot,
 } from './visualA.js';
@@ -35,10 +36,15 @@ const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
-/** Mockup A visible ring ~20px at 390×844 (6% of board). Floor keeps 360×640 ~18px. */
+/** Mockup A visible ring ~20px at 390×844 (6% of board). */
 const ORB_CELLS = 16;
-const ORB_MIN_PX = 18;
-const ORB_TEX = 128;
+/** Floor 25px so visible ring (2 × 0.38 × display) is ~18px at 360×640. */
+const ORB_MIN_PX = 25;
+/** ~2× display; LINEAR downscale stays smooth (128→26px aliased). */
+const ORB_TEX = 64;
+/** Soft bloom diameter ~40px at 390. Independent of the disc floor. */
+const ORB_BLOOM_CELLS = 25;
+const ORB_BLOOM_TEX = 64;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
 /** Give up on a reserved rematch seat and fall back to joinOrCreate. */
@@ -197,12 +203,15 @@ class GameScene extends Phaser.Scene {
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
   private trailGlow: Phaser.GameObjects.Graphics | null = null;
+  private trailBloom: Phaser.GameObjects.Graphics | null = null;
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
   private qaP2: QaPilot | null = null;
   private lastP2: { x: number; y: number }[] = [];
   private p1Sprite: Phaser.GameObjects.Image | null = null;
   private p2Sprite: Phaser.GameObjects.Image | null = null;
+  private p1Bloom: Phaser.GameObjects.Image | null = null;
+  private p2Bloom: Phaser.GameObjects.Image | null = null;
   private kkumuli: Phaser.GameObjects.Image | null = null;
   private sparkSprites: Phaser.GameObjects.Image[] = [];
   private afterimages: Phaser.GameObjects.Image[] = [];
@@ -277,13 +286,17 @@ class GameScene extends Phaser.Scene {
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
     addGlow(this.boardImage, AH.purple, 1.6);
 
+    this.trailBloom = this.add.graphics();
+    this.trailBloom.setDepth(1);
     this.trailGlow = this.add.graphics();
     this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
     this.trailGlow.setDepth(1);
     this.trailGfx = this.add.graphics();
     this.trailGfx.setDepth(2);
-    this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me));
-    this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true));
+    this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me), true);
+    this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true), true);
+    this.addPaintedTexture('orb-bloom-me', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.me), true);
+    this.addPaintedTexture('orb-bloom-foe', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.foe), true);
     this.addPaintedTexture('sparx', 48, paintSpark);
     this.addPaintedTexture('dot-me', 8, (g, s) => paintParticleDot(g, s, A.me));
     this.addPaintedTexture('dot-accent', 8, (g, s) => paintParticleDot(g, s, A.accent));
@@ -297,6 +310,10 @@ class GameScene extends Phaser.Scene {
     paintKkumuli(this.kkCanvas.getContext('2d')!, KK_TEX, 0, false);
     this.kkTexture = this.textures.addCanvas('kkumuli', this.kkCanvas);
 
+    this.p1Bloom = this.add.image(0, 0, 'orb-bloom-me').setDepth(5);
+    this.p1Bloom.setBlendMode(Phaser.BlendModes.ADD);
+    this.p2Bloom = this.add.image(0, 0, 'orb-bloom-foe').setDepth(5);
+    this.p2Bloom.setBlendMode(Phaser.BlendModes.ADD);
     this.p1Sprite = this.add.image(0, 0, 'orb-me').setDepth(6);
     this.p2Sprite = this.add.image(0, 0, 'orb-foe').setDepth(6);
     this.kkumuli = this.add.image(0, 0, 'kkumuli').setDepth(5);
@@ -363,12 +380,24 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  private addPaintedTexture(key: string, size: number, paint: (g: CanvasRenderingContext2D, s: number) => void) {
+  private addPaintedTexture(
+    key: string,
+    size: number,
+    paint: (g: CanvasRenderingContext2D, s: number) => void,
+    linear = false,
+  ) {
     const c = document.createElement('canvas');
     c.width = size;
     c.height = size;
-    paint(c.getContext('2d')!, size);
-    this.textures.addCanvas(key, c);
+    const ctx = c.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    paint(ctx, size);
+    const tex = this.textures.addCanvas(key, c);
+    if (linear) {
+      tex?.setFilter(Phaser.Textures.FilterMode.LINEAR);
+      tex?.setSmoothPixelArt(true);
+    }
   }
 
   relayoutMatch() {
@@ -457,6 +486,8 @@ class GameScene extends Phaser.Scene {
   private setActorsVisible(visible: boolean) {
     this.p1Sprite?.setVisible(visible);
     this.p2Sprite?.setVisible(visible);
+    this.p1Bloom?.setVisible(visible);
+    this.p2Bloom?.setVisible(visible);
     this.kkumuli?.setVisible(visible);
     for (const spark of this.sparkSprites) spark.setVisible(visible);
     for (const g of this.afterimages) g.setVisible(visible);
@@ -928,6 +959,7 @@ class GameScene extends Phaser.Scene {
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
     this.trailGlow?.clear();
+    this.trailBloom?.clear();
     const frameW = Math.max(1, scale * 1.0);
     this.trailGfx.lineStyle(frameW, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
@@ -986,11 +1018,30 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390; outer glow is wider/softer like mockup A.
+    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390. Wide bloom is a single stroke so stamps do not stack.
     const glowR = scale * 2.4;
     const midR = scale * 1.05;
     const coreR = scale * 0.85;
     const hiR = scale * 0.32;
+    const bloomW = scale * 24.8;
+    if (this.trailBloom && dots.length >= 2) {
+      if (dashed) {
+        this.trailBloom.fillStyle(glow, 0.14);
+        const bloomR = bloomW / 2;
+        for (let i = 0; i < dots.length; i += 3) {
+          this.trailBloom.fillCircle(dots[i].x, dots[i].y, bloomR);
+        }
+      } else {
+        this.trailBloom.lineStyle(bloomW, glow, 0.16);
+        this.trailBloom.beginPath();
+        this.trailBloom.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) this.trailBloom.lineTo(pts[i].x, pts[i].y);
+        this.trailBloom.strokePath();
+        this.trailBloom.fillStyle(glow, 0.16);
+        this.trailBloom.fillCircle(pts[0].x, pts[0].y, bloomW / 2);
+        this.trailBloom.fillCircle(pts[pts.length - 1].x, pts[pts.length - 1].y, bloomW / 2);
+      }
+    }
     stamp(glowGfx, glowR, glow, 0.16);
     stamp(glowGfx, midR, glow, 0.28);
     stamp(this.trailGfx, coreR, glow, 1);
@@ -1049,6 +1100,8 @@ class GameScene extends Phaser.Scene {
       const px = Math.max(minPx, size * scale);
       sprite.setDisplaySize(px, px);
     };
+    place(this.p1Bloom, this.shown.p1, ORB_BLOOM_CELLS, 0);
+    place(this.p2Bloom, this.shown.p2, ORB_BLOOM_CELLS, 0);
     place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_PX);
     place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_PX);
     place(this.kkumuli, this.shown.boss, KK_CELLS);
@@ -1247,7 +1300,7 @@ const game = new Phaser.Game({
     width: BOARD_W,
     height: BOARD_H,
   },
-  render: { antialias: true, transparent: false },
+  render: { antialias: true, antialiasGL: true, transparent: false, mipmapFilter: 'LINEAR_MIPMAP_LINEAR' },
 });
 
 window.addEventListener('resize', () => game.scale.refresh());
