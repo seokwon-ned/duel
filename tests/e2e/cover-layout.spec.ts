@@ -77,6 +77,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
   whiteMin: number;
   orangeMedian: number;
   sampleMins: number[];
+  missAt: { i: number; dTip: number; dStart: number; min: number }[];
   backing: { w: number; h: number };
 }> {
   const png = await page.locator('#game-container canvas').screenshot();
@@ -107,6 +108,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
       const sampleMins: number[] = [];
       const whiteWidths: number[] = [];
       const orangeWidths: number[] = [];
+      const missAt: { i: number; dTip: number; dStart: number; min: number }[] = [];
       let missing = 0;
       let sections = 0;
       const isWhite = (p: [number, number, number]) => Math.min(p[0], p[1], p[2]) > 225;
@@ -136,12 +138,12 @@ async function measureWholeTrailWhite(page: Page): Promise<{
           prev = b;
           continue;
         }
-        // Orb disc covers the tip; origin stub is still on territory. Not a scan-axis cheat.
+        // Cutter disc + lerp: far ring sits ~25px from the last trail cell, not a H/V scan.
         if (start && Math.hypot(cx - start.x, cy - start.y) < 8) {
           prev = b;
           continue;
         }
-        if (tip && Math.hypot(cx - tip.x, cy - tip.y) < 16) {
+        if (tip && Math.hypot(cx - tip.x, cy - tip.y) < 28) {
           prev = b;
           continue;
         }
@@ -175,7 +177,15 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         sampleMins.push(best);
         whiteWidths.push(maxWhite);
         orangeWidths.push(maxSolid);
-        if (maxWhite < 1) missing++;
+        if (maxWhite < 1) {
+          missing++;
+          missAt.push({
+            i: sections,
+            dTip: tip ? Math.round(Math.hypot(cx - tip.x, cy - tip.y) * 10) / 10 : -1,
+            dStart: start ? Math.round(Math.hypot(cx - start.x, cy - start.y) * 10) / 10 : -1,
+            min: best,
+          });
+        }
         prev = b;
       }
       const median = (arr: number[]) => {
@@ -191,6 +201,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         whiteMin: whiteWidths.length ? Math.min(...whiteWidths) : 0,
         orangeMedian: median(orangeWidths),
         sampleMins,
+        missAt,
         backing: { w: width, h: height },
       };
     },

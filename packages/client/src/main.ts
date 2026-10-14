@@ -340,8 +340,8 @@ class GameScene extends Phaser.Scene {
     this.trailGlowTexture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
     this.trailGlowSprite = this.add.image(0, 0, 'trail-glow').setOrigin(0).setDepth(5.2);
     this.trailCoreGfx = this.add.graphics();
-    // Above glow (5.2), below the cutter (6) so the ring stays visible without trimming the spine.
-    this.trailCoreGfx.setDepth(5.5);
+    // Above glow (5.2) and the cutter (6): the spine must stay visible through the disc.
+    this.trailCoreGfx.setDepth(6.5);
     this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me), true);
     this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true), true);
     this.addPaintedTexture('orb-bloom-me', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.me), true);
