@@ -80,7 +80,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
   backing: { w: number; h: number };
 }> {
   const png = await page.locator('#game-container canvas').screenshot();
-  const pts = await page.evaluate(() => window.__turfDebug?.trailPts ?? []);
+  const pts = await page.evaluate(() => window.__turfDebug?.trailPtsCss ?? window.__turfDebug?.trailPts ?? []);
   return page.evaluate(
     async ({ b64, pts }) => {
       const img = new Image();
@@ -97,16 +97,13 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         const i = (y * width + x) * 4;
         return [data[i], data[i + 1], data[i + 2]] as [number, number, number];
       };
-      const toPx = (p: { x: number; y: number }) => ({
-        x: ((p.x + 0.5) / 200) * width,
-        y: ((p.y + 0.5) / 300) * height,
-      });
       const uniq: { x: number; y: number }[] = [];
       for (const p of pts) {
         const last = uniq[uniq.length - 1];
-        if (!last || last.x !== p.x || last.y !== p.y) uniq.push(p);
+        if (last && Math.hypot(p.x - last.x, p.y - last.y) < 0.2) continue;
+        uniq.push(p);
       }
-      const mapped = uniq.map(toPx);
+      const mapped = uniq;
       const sampleMins: number[] = [];
       const whiteWidths: number[] = [];
       const orangeWidths: number[] = [];

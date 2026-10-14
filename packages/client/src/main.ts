@@ -1174,14 +1174,13 @@ class GameScene extends Phaser.Scene {
     }));
   }
 
-  /** Opaque orange + white, full polyline every update. Widths are CSS px / FIT unit. */
+  /** Opaque orange + white, full polyline every update. Widths are canvas/CSS pixels. */
   private drawTrailCore(trail1: { x: number; y: number }[], trail2: { x: number; y: number }[]) {
     const gfx = this.trailCoreGfx;
     if (!gfx || !this.boardImage) return;
     gfx.clear();
-    const unit = this.cssPerUnit() || 1;
-    const orangeW = Math.max(2.8, TRAIL_ORANGE_CSS / unit);
-    const whiteW = Math.max(1.8, TRAIL_WHITE_CSS / unit);
+    const orangeW = TRAIL_ORANGE_CSS;
+    const whiteW = TRAIL_WHITE_CSS;
     this.strokeTrailGfx(gfx, trail1, orangeW, AH.me, false);
     this.strokeTrailGfx(gfx, trail2, orangeW, AH.foe, true);
     this.strokeTrailGfx(gfx, trail1, whiteW, 0xffffff, false);
@@ -1312,8 +1311,9 @@ class GameScene extends Phaser.Scene {
     this.placeShownActors();
   }
 
-  /** CSS pixels per game unit (Phaser FIT). ORB_MIN_CSS is CSS px, not world units. */
+  /** CSS pixels per board cell. Prefer the laid-out board scale (RESIZE or FIT). */
   private cssPerUnit(): number {
+    if (this.boardImage && this.boardImage.scaleX > 0) return this.boardImage.scaleX;
     const disp = this.scale.displaySize?.width ?? BOARD_W;
     return disp / BOARD_W;
   }
@@ -1522,7 +1522,7 @@ const game = new Phaser.Game({
   banner: false,
   scene: [GameScene],
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_HORIZONTALLY,
     expandParent: false,
     width: BOARD_W,
