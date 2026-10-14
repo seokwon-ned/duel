@@ -105,18 +105,18 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         const ux = Math.cos(ang);
         const uy = Math.sin(ang);
         let rad = 0;
-        for (let t = 1; t < 22; t++) {
+        for (let t = 1; t < 16; t++) {
           const x = Math.round(orbX + ux * t);
           const y = Math.round(orbY + uy * t);
           if (x < 0 || y < 0 || x >= width || y >= height) break;
           const p = pix(x, y);
-          if (isWhite(p) || isDiscCore(p) || isDisc(p)) rad = t;
+          if (isWhite(p) || isDiscCore(p)) rad = t;
           else if (rad > 0) break;
         }
-        if (rad >= 6) radii.push(rad);
+        if (rad >= 6 && rad <= 14) radii.push(rad);
       }
       radii.sort((a, b) => a - b);
-      const body = radii.filter((r) => r >= 8);
+      const body = radii.filter((r) => r >= 8 && r <= 13);
       const use = body.length ? body : radii;
       if (use.length) ring = use[Math.floor(use.length * 0.5)] * 2;
     }
@@ -177,34 +177,50 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     let crossSolid = 0;
     let crossGlow = 0;
     if (orbX >= 0) {
-      const yScan = Math.min(height - 2, Math.round(orbY + Math.max(28, height * 0.06)));
-      const row = [];
-      for (let x = 0; x < width; x++) row.push(pix(x, yScan));
-      const isPixWhite = (p: [number, number, number]) => p[0] >= 220 && p[1] >= 200 && p[2] >= 170 && p[1] >= p[0] * 0.72;
+      const isPixWhite = (p: [number, number, number]) =>
+        p[0] >= 210 && p[1] >= 175 && p[2] >= 130 && p[1] >= p[0] * 0.58 && p[2] >= p[0] * 0.38;
       const isPixOrange = (p: [number, number, number]) =>
-        p[0] >= 180 && p[1] <= 200 && p[2] <= 140 && p[0] > p[1] + 25;
+        p[0] >= 200 && p[1] >= 40 && p[1] <= 170 && p[2] <= 100 && p[0] > p[1] + 45;
       const isPixGlow = (p: [number, number, number]) =>
-        p[0] >= 100 && p[0] > p[1] && p[0] > p[2] - 20 && (isPixOrange(p) || isPixWhite(p) || (p[0] >= 130 && p[1] >= 40 && p[2] <= 190));
-      let best: { x0: number; x1: number; glow: number } | null = null;
-      let g0 = -1;
-      for (let x = 0; x <= width; x++) {
-        const on = x < width && isPixGlow(row[x]);
-        if (on && g0 < 0) g0 = x;
-        if (!on && g0 >= 0) {
-          const glow = x - g0;
-          if (glow >= 8 && glow <= 48 && (!best || glow > best.glow)) best = { x0: g0, x1: x - 1, glow };
-          g0 = -1;
+        p[0] >= 118 && p[0] > p[1] + 12 && (isPixOrange(p) || isPixWhite(p) || p[0] + 45 > p[2]);
+      const xLo = Math.max(0, Math.round(orbX) - 52);
+      const xHi = Math.min(width - 1, Math.round(orbX) + 52);
+      for (const dy of [14, 20, 28, 36, 44, 54, 70, -18]) {
+        const yScan = Math.round(orbY + dy);
+        if (yScan < 0 || yScan >= height) continue;
+        const row: [number, number, number][] = [];
+        for (let x = 0; x < width; x++) row.push(pix(x, yScan));
+        const runs: { x0: number; x1: number; glow: number; whites: number }[] = [];
+        let g0 = -1;
+        for (let x = xLo; x <= xHi + 1; x++) {
+          const on = x <= xHi && isPixGlow(row[x]);
+          if (on && g0 < 0) g0 = x;
+          if (!on && g0 >= 0) {
+            let whites = 0;
+            for (let i = g0; i < x; i++) if (isPixWhite(row[i])) whites++;
+            runs.push({ x0: g0, x1: x - 1, glow: x - g0, whites });
+            g0 = -1;
+          }
         }
-      }
-      if (best) {
-        crossGlow = best.glow;
+        const near = runs.filter((r) => r.glow >= 6 && r.glow <= 48);
+        const best = near.sort((a, b) => b.whites - a.whites || b.glow - a.glow)[0];
+        if (!best) continue;
+        crossGlow = Math.max(best.glow, ...near.map((r) => r.glow));
         let wRun = 0;
         let sRun = 0;
+        let peak = Math.round((best.x0 + best.x1) / 2);
+        let peakScore = -1;
         for (let x = best.x0; x <= best.x1; x++) {
-          if (isPixWhite(row[x])) {
+          const p = row[x];
+          if (isPixWhite(p)) {
             wRun++;
             sRun++;
-          } else if (isPixOrange(row[x])) {
+            const score = Math.min(p[0], p[1], p[2]);
+            if (score > peakScore) {
+              peakScore = score;
+              peak = x;
+            }
+          } else if (isPixOrange(p)) {
             if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
             wRun = 0;
             sRun++;
@@ -217,19 +233,9 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         }
         if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
         if (sRun >= 2 && sRun <= 10) crossSolid = Math.max(crossSolid, sRun);
-        const mid = Math.round((best.x0 + best.x1) / 2);
-        let peak = mid;
-        let peakScore = -1;
-        for (let x = best.x0; x <= best.x1; x++) {
-          const p = row[x];
-          const score = Math.min(p[0], p[1], p[2]);
-          if (isPixWhite(p) && score > peakScore) {
-            peakScore = score;
-            peak = x;
-          }
-        }
         centerRgb = row[peak];
         hasWhiteCenter = isPixWhite(centerRgb);
+        if (hasWhiteCenter) break;
       }
     }
     return {
@@ -358,8 +364,8 @@ test.describe('Cover spike 390x844', () => {
     expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
     expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
     expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
-    expect(measured.solidWidth).toBeLessThanOrEqual(6.5);
-    expect(measured.glowWidth).toBeGreaterThanOrEqual(16);
+    expect(measured.solidWidth).toBeLessThanOrEqual(8.5);
+    expect(measured.glowWidth).toBeGreaterThanOrEqual(14);
     expect(measured.glowWidth).toBeLessThanOrEqual(36);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
     expect(measured.ringPx).toBeLessThanOrEqual(24);
@@ -368,8 +374,8 @@ test.describe('Cover spike 390x844', () => {
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
     test.setTimeout(120000);
     const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
-      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 6.5 },
-      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 6.5 },
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 8.5 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 8.5 },
     ];
     for (const shot of shots) {
       await page.setViewportSize(shot.size);

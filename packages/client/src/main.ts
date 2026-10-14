@@ -1026,11 +1026,11 @@ class GameScene extends Phaser.Scene {
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
     };
-    stroke(25, rgba(0.22));
-    stroke(14, rgba(0.28));
+    stroke(28, rgba(0.36));
+    stroke(16, rgba(0.3));
     stroke(4, rgba(1));
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.4;
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
