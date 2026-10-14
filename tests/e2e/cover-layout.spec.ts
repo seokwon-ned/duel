@@ -44,29 +44,6 @@ async function waitMidDraw(page: Page) {
   await waitTrailRedraw(page);
 }
 
-function trailInBand(m: TrailMeasure, minSolid: number, maxSolid: number): boolean {
-  return (
-    m.hasWhiteCenter &&
-    m.whiteCore >= 1 &&
-    m.whiteCore <= 3.5 &&
-    m.solidWidth >= minSolid &&
-    m.solidWidth <= maxSolid &&
-    m.glowWidth >= 14 &&
-    m.glowWidth <= 36 &&
-    m.ringPx >= 16 &&
-    Boolean(m.orangeRgb)
-  );
-}
-
-async function measureTrailStable(page: Page, minSolid: number, maxSolid: number): Promise<TrailMeasure> {
-  let measured = await measureRenderedTrail(page);
-  for (let i = 0; i < 3 && !trailInBand(measured, minSolid, maxSolid); i++) {
-    await waitTrailRedraw(page);
-    measured = await measureRenderedTrail(page);
-  }
-  return measured;
-}
-
 /** Rendered WIDTH in CSS px from a composited screenshot — not stamp radius constants. */
 async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
   const png = await page.locator('#game-container canvas').screenshot();
@@ -231,7 +208,6 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         orange: [number, number, number] | null;
       };
       const cands: Cand[] = [];
-      let maxGlow = 0;
       for (const dy of [8, 12, 14, 16, 20, 24, 28, 32, 36, 44, 54, 70, -12, -18]) {
         const yScan = Math.round(orbY + dy);
         if (yScan < 0 || yScan >= height) continue;
@@ -249,10 +225,8 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             g0 = -1;
           }
         }
-        const glowing = runs.filter((r) => r.glow >= 14 && r.glow <= 36);
-        for (const r of glowing) maxGlow = Math.max(maxGlow, r.glow);
-        const near = runs.filter((r) => r.glow >= 6 && r.glow <= 48 && r.whites >= 1);
-        const best = near.sort((a, b) => Math.abs(a.glow - 26) - Math.abs(b.glow - 26) || b.whites - a.whites)[0];
+        const near = runs.filter((r) => r.glow >= 6 && r.whites >= 1);
+        const best = near.sort((a, b) => a.glow - b.glow || b.whites - a.whites)[0];
         if (!best) continue;
         let wRun = 0;
         let sRun = 0;
@@ -308,13 +282,12 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         orangeRgb = chosen.orange;
         crossWhite = chosen.white;
         crossSolid = chosen.solid;
-        // Only 14–36px halo runs; joins (45px+) are ignored.
-        crossGlow = maxGlow || (chosen.glow >= 14 && chosen.glow <= 36 ? chosen.glow : 0);
+        crossGlow = chosen.glow;
       }
     }
     return {
       solidWidth: Math.round((crossSolid || pick(solids)) * scale * 10) / 10,
-      glowWidth: Math.round((crossGlow || (pick(glows) >= 14 && pick(glows) <= 36 ? pick(glows) : 0)) * scale * 10) / 10,
+      glowWidth: Math.round((crossGlow || pick(glows)) * scale * 10) / 10,
       whiteCore: Math.round((crossWhite || pick(cores, 0.5)) * scale * 10) / 10,
       ringPx: Math.round(ring * scale * 10) / 10,
       hasWhiteCenter,
@@ -432,8 +405,13 @@ test.describe('Cover spike 390x844', () => {
   test('player orb is small enough to show the line tip mid-draw', async ({ page }) => {
     test.setTimeout(60000);
     await waitMidDraw(page);
-    const measured = await measureTrailStable(page, 3, 8.5);
-    console.log('rendered trail WIDTH (not radius) 390x844', measured);
+    const measured = await measureRenderedTrail(page);
+    const perf = await page.evaluate(() => ({
+      ms: window.__turfDebug?.trailPaintMs,
+      avg: window.__turfDebug?.trailPaintAvg,
+      dpr: window.__turfDebug?.trailDpr,
+    }));
+    console.log('rendered trail WIDTH (not radius) 390x844', measured, perf);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
     expect(measured.hasWhiteCenter, `center ${measured.centerRgb}`).toBe(true);
     expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
@@ -459,7 +437,7 @@ test.describe('Cover spike 390x844', () => {
     for (const shot of shots) {
       await page.setViewportSize(shot.size);
       await waitMidDraw(page);
-      const measured = await measureTrailStable(page, shot.minSolid, shot.maxSolid);
+      const measured = await measureRenderedTrail(page);
       console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
       fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
       await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });

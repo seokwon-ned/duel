@@ -45,19 +45,18 @@ const ORB_TEX = 64;
 /** Soft bloom sprite in CSS px. Falloff stays visible out to ~40px. */
 const ORB_BLOOM_CSS = 56;
 const ORB_BLOOM_TEX = 64;
-/** Trail sheet is CSS size × DPR (capped) so a 2px white core survives WebGL. */
-const TRAIL_DPR_CAP = 3;
+/** Trail sheet is CSS size × DPR (capped at 2) so a 2px white core survives WebGL. */
+const TRAIL_DPR_CAP = 2;
 const TRAIL_ORANGE_CSS = 4;
-const TRAIL_WHITE_CSS = 2;
-/** Soft orange halo in CSS px, low-alpha steps — no hard 16px pink band. */
+/** Slightly over 2 CSS px so LINEAR downsample still reads ~2px on screen. */
+const TRAIL_WHITE_CSS = 2.6;
+/** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
-  [27, 0.12],
-  [22, 0.07],
-  [17, 0.06],
-  [13, 0.06],
-  [9, 0.08],
-  [6, 0.14],
+  [26, 0.14],
+  [12, 0.10],
+  [7, 0.16],
 ];
+const TRAIL_GLOW_PAD_CSS = 16;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
 /** Give up on a reserved rematch seat and fall back to joinOrCreate. */
@@ -95,6 +94,7 @@ interface TurfDebug {
   youHearts: number;
   trailPaintGen: number;
   trailPaintMs: number;
+  trailPaintAvg: number;
   trailDpr: number;
 }
 
@@ -119,6 +119,7 @@ if (typeof window !== 'undefined') {
     youHearts: 3,
     trailPaintGen: 0,
     trailPaintMs: 0,
+    trailPaintAvg: 0,
     trailDpr: 1,
   };
 }
@@ -225,7 +226,11 @@ class GameScene extends Phaser.Scene {
   private trailSheetTexture: Phaser.Textures.CanvasTexture | null = null;
   private trailSprite: Phaser.GameObjects.Image | null = null;
   private lastTrailKey = '';
+  private lastPts1: { x: number; y: number }[] = [];
+  private lastPts2: { x: number; y: number }[] = [];
   private trailPaintGen = 0;
+  private trailPaintSum = 0;
+  private trailScratch: HTMLCanvasElement | null = null;
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
   private qaP2: QaPilot | null = null;
@@ -992,11 +997,20 @@ class GameScene extends Phaser.Scene {
     this.paintTrailSheet(trail1, trail2 ?? []);
   }
 
-  /** Device-pixel trail sheet, displayed at CSS size so 2px white / 4px orange stay crisp. */
+  /** Device-pixel trail sheet, displayed at CSS size so a 2px white core stays crisp. */
   private trailDpr(): number {
     const raw = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    const floor = this.qaMode ? 2 : 1;
-    return Math.min(TRAIL_DPR_CAP, Math.max(floor, raw));
+    return Math.min(TRAIL_DPR_CAP, Math.max(1, raw));
+  }
+
+  private trailCanAppend(prev: { x: number; y: number }[], next: { x: number; y: number }[]): boolean {
+    if (prev.length < 2 || next.length <= prev.length) return false;
+    const a = prev[0];
+    const b = next[0];
+    if (a.x !== b.x || a.y !== b.y) return false;
+    const p = prev[prev.length - 1];
+    const q = next[prev.length - 1];
+    return p.x === q.x && p.y === q.y;
   }
 
   private paintTrailSheet(
@@ -1025,40 +1039,118 @@ class GameScene extends Phaser.Scene {
     if (this.trailSheetTexture.width !== tw || this.trailSheetTexture.height !== th) {
       this.trailSheetTexture.setSize(tw, th);
       this.trailSheetTexture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+      this.lastPts1 = [];
+      this.lastPts2 = [];
     }
     const ctx = this.trailSheet.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, tw, th);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.imageSmoothingEnabled = true;
     const cell = tw / BOARD_W;
-    this.strokeTrailCss(ctx, trail1, cell, dpr, A.me, false);
-    this.strokeTrailCss(ctx, trail2, cell, dpr, A.foe, true);
-    this.trailSheetTexture.refresh();
+    const sameHead = (a: { x: number; y: number }[], b: { x: number; y: number }[]) =>
+      a.length === b.length &&
+      (a.length < 2 || (a[0].x === b[0].x && a[0].y === b[0].y && a[a.length - 1].x === b[b.length - 1].x && a[a.length - 1].y === b[b.length - 1].y));
+    const inc1 = this.trailCanAppend(this.lastPts1, trail1);
+    const inc2 = this.trailCanAppend(this.lastPts2, trail2);
+    const hold1 = sameHead(this.lastPts1, trail1);
+    const hold2 = sameHead(this.lastPts2, trail2);
+    let dirty: { x: number; y: number; w: number; h: number } | null = null;
+    if ((inc1 || hold1) && (inc2 || hold2) && (inc1 || inc2)) {
+      const pad = TRAIL_GLOW_PAD_CSS * dpr;
+      const box = { x0: tw, y0: th, x1: 0, y1: 0 };
+      const mark = (t: { x: number; y: number }[], from: number) => {
+        for (let i = Math.max(0, from); i < t.length; i++) {
+          const x = (t[i].x + 0.5) * cell;
+          const y = (t[i].y + 0.5) * cell;
+          if (x < box.x0) box.x0 = x;
+          if (y < box.y0) box.y0 = y;
+          if (x > box.x1) box.x1 = x;
+          if (y > box.y1) box.y1 = y;
+        }
+      };
+      if (inc1) {
+        this.strokeTrailCss(ctx, trail1, this.lastPts1.length - 1, cell, dpr, A.me, false);
+        mark(trail1, this.lastPts1.length - 1);
+      }
+      if (inc2) {
+        this.strokeTrailCss(ctx, trail2, this.lastPts2.length - 1, cell, dpr, A.foe, true);
+        mark(trail2, this.lastPts2.length - 1);
+      }
+      dirty = {
+        x: Math.max(0, box.x0 - pad),
+        y: Math.max(0, box.y0 - pad),
+        w: Math.min(tw, box.x1 + pad) - Math.max(0, box.x0 - pad),
+        h: Math.min(th, box.y1 + pad) - Math.max(0, box.y0 - pad),
+      };
+    } else {
+      ctx.clearRect(0, 0, tw, th);
+      this.strokeTrailCss(ctx, trail1, 0, cell, dpr, A.me, false);
+      this.strokeTrailCss(ctx, trail2, 0, cell, dpr, A.foe, true);
+    }
+    this.lastPts1 = trail1.map((p) => ({ x: p.x, y: p.y }));
+    this.lastPts2 = trail2.map((p) => ({ x: p.x, y: p.y }));
+    this.uploadTrail(dirty, tw, th);
     this.trailPaintGen += 1;
     const ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
+    this.trailPaintSum += ms;
     if (window.__turfDebug) {
       window.__turfDebug.trailPaintGen = this.trailPaintGen;
       window.__turfDebug.trailPaintMs = Math.round(ms * 10) / 10;
+      window.__turfDebug.trailPaintAvg = Math.round((this.trailPaintSum / this.trailPaintGen) * 10) / 10;
       window.__turfDebug.trailDpr = dpr;
     }
+  }
+
+  private uploadTrail(dirty: { x: number; y: number; w: number; h: number } | null, tw: number, th: number) {
+    if (!this.trailSheet || !this.trailSheetTexture) return;
+    if (!dirty || dirty.w >= tw * 0.5 || dirty.h >= th * 0.5) {
+      this.trailSheetTexture.refresh();
+      return;
+    }
+    const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer;
+    const gl = renderer.gl;
+    const wrapper = this.trailSheetTexture.source[0]?.glTexture as { webGLTexture?: WebGLTexture } | null;
+    if (!gl || !wrapper?.webGLTexture) {
+      this.trailSheetTexture.refresh();
+      return;
+    }
+    const x = Math.max(0, Math.floor(dirty.x));
+    const y = Math.max(0, Math.floor(dirty.y));
+    const w = Math.max(1, Math.min(tw - x, Math.ceil(dirty.w)));
+    const h = Math.max(1, Math.min(th - y, Math.ceil(dirty.h)));
+    if (!this.trailScratch) this.trailScratch = document.createElement('canvas');
+    if (this.trailScratch.width !== w) this.trailScratch.width = w;
+    if (this.trailScratch.height !== h) this.trailScratch.height = h;
+    const sctx = this.trailScratch.getContext('2d');
+    if (!sctx) {
+      this.trailSheetTexture.refresh();
+      return;
+    }
+    sctx.clearRect(0, 0, w, h);
+    sctx.drawImage(this.trailSheet, x, y, w, h, 0, 0, w, h);
+    gl.bindTexture(gl.TEXTURE_2D, wrapper.webGLTexture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, th - y - h, gl.RGBA, gl.UNSIGNED_BYTE, this.trailScratch);
   }
 
   private strokeTrailCss(
     ctx: CanvasRenderingContext2D,
     trail: { x: number; y: number }[],
+    from: number,
     cell: number,
     dpr: number,
     color: string,
     dashed: boolean,
   ) {
     if (trail.length < 2) return;
+    const start = Math.max(0, Math.min(from, trail.length - 2));
     const snap = (v: number) => Math.round(v);
     const path = new Path2D();
-    path.moveTo(snap((trail[0].x + 0.5) * cell), snap((trail[0].y + 0.5) * cell));
-    for (let i = 1; i < trail.length; i++) {
+    path.moveTo(snap((trail[start].x + 0.5) * cell), snap((trail[start].y + 0.5) * cell));
+    for (let i = start + 1; i < trail.length; i++) {
       path.lineTo(snap((trail[i].x + 0.5) * cell), snap((trail[i].y + 0.5) * cell));
     }
     const n = parseInt(color.slice(1), 16);
@@ -1067,6 +1159,7 @@ class GameScene extends Phaser.Scene {
     const b = n & 255;
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
     const px = (css: number) => Math.max(1, Math.round(css * dpr));
+    ctx.lineDashOffset = dashed ? -(start * cell) : 0;
     ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
     for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
       ctx.strokeStyle = rgba(alpha);
@@ -1080,6 +1173,7 @@ class GameScene extends Phaser.Scene {
     ctx.lineWidth = px(TRAIL_WHITE_CSS);
     ctx.stroke(path);
     ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
   }
 
   private paintActors(
