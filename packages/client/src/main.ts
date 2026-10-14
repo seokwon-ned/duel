@@ -45,19 +45,18 @@ const ORB_TEX = 64;
 /** Soft bloom sprite in CSS px. Falloff stays visible out to ~40px. */
 const ORB_BLOOM_CSS = 56;
 const ORB_BLOOM_TEX = 64;
-/** Trail sheet is CSS size × DPR (capped at 2) so a 2px white core survives WebGL. */
+/** Glow sheet is CSS size (dpr 1). Orange+white core is Phaser Graphics, full redraw. */
 const TRAIL_DPR_CAP = 2;
-const TRAIL_ORANGE_CSS = 6;
-/** ~2 CSS px on the opaque core sheet so FIT still reads a real white spine. */
+/** Target ~4 CSS px after FIT (Graphics lineStyle in game units). */
+const TRAIL_ORANGE_CSS = 4;
+/** Target ~2 CSS px white spine. */
 const TRAIL_WHITE_CSS = 2.2;
-/** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
+/** 3 low-alpha halo layers (~27px). Outer alpha high enough that isPixGlow still sees 26px. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
-  [26, 0.18],
-  [12, 0.14],
-  [8, 0.20],
+  [26, 0.22],
+  [12, 0.16],
+  [8, 0.22],
 ];
-/** Glow lives on its own dpr-1 sheet; core pad only needs the opaque orange. */
-const TRAIL_CORE_PAD_CSS = TRAIL_ORANGE_CSS + 3;
 /** Full-redraw the glow sheet every N appends so translucent alpha cannot pile up. */
 const TRAIL_GLOW_BATCH = 8;
 const TRAIL_APPEND_SAMPLES = 40;
@@ -239,12 +238,10 @@ class GameScene extends Phaser.Scene {
   private kkTexture: Phaser.Textures.CanvasTexture | null = null;
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
+  private trailCoreGfx: Phaser.GameObjects.Graphics | null = null;
   private trailGlowSheet: HTMLCanvasElement | null = null;
   private trailGlowTexture: Phaser.Textures.CanvasTexture | null = null;
   private trailGlowSprite: Phaser.GameObjects.Image | null = null;
-  private trailCoreSheet: HTMLCanvasElement | null = null;
-  private trailCoreTexture: Phaser.Textures.CanvasTexture | null = null;
-  private trailCoreSprite: Phaser.GameObjects.Image | null = null;
   private lastTrailKey = '';
   private lastPts1: { x: number; y: number }[] = [];
   private lastPts2: { x: number; y: number }[] = [];
@@ -253,7 +250,6 @@ class GameScene extends Phaser.Scene {
   private trailPaintAppends = 0;
   private trailPaintFullMs = 0;
   private trailAppendMs: number[] = [];
-  private trailScratch: HTMLCanvasElement | null = null;
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
   private qaP2: QaPilot | null = null;
@@ -344,12 +340,8 @@ class GameScene extends Phaser.Scene {
     this.trailGlowTexture = this.textures.addCanvas('trail-glow', this.trailGlowSheet);
     this.trailGlowTexture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
     this.trailGlowSprite = this.add.image(0, 0, 'trail-glow').setOrigin(0).setDepth(3);
-    this.trailCoreSheet = document.createElement('canvas');
-    this.trailCoreSheet.width = BOARD_W;
-    this.trailCoreSheet.height = BOARD_H;
-    this.trailCoreTexture = this.textures.addCanvas('trail-core', this.trailCoreSheet);
-    this.trailCoreTexture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
-    this.trailCoreSprite = this.add.image(0, 0, 'trail-core').setOrigin(0).setDepth(3.5);
+    this.trailCoreGfx = this.add.graphics();
+    this.trailCoreGfx.setDepth(3.5);
     this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me), true);
     this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true), true);
     this.addPaintedTexture('orb-bloom-me', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.me), true);
@@ -1023,7 +1015,7 @@ class GameScene extends Phaser.Scene {
     this.paintTrailSheet(trail1, trail2 ?? []);
   }
 
-  /** Device-pixel core sheet, displayed at CSS size so a 2px white core stays crisp. */
+  /** Glow sheet DPR (core is Graphics and ignores this). Tests may force 2. */
   private trailDpr(): number {
     const forced = typeof window !== 'undefined' ? window.__turfForceTrailDpr : undefined;
     const raw = typeof forced === 'number' ? forced : typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -1038,10 +1030,6 @@ class GameScene extends Phaser.Scene {
     if (this.trailGlowSprite) {
       this.trailGlowSprite.setPosition(this.boardImage.x, this.boardImage.y);
       this.trailGlowSprite.setDisplaySize(w, h);
-    }
-    if (this.trailCoreSprite) {
-      this.trailCoreSprite.setPosition(this.boardImage.x, this.boardImage.y);
-      this.trailCoreSprite.setDisplaySize(w, h);
     }
   }
 
@@ -1073,15 +1061,7 @@ class GameScene extends Phaser.Scene {
     trail1: { x: number; y: number }[],
     trail2: { x: number; y: number }[],
   ) {
-    if (
-      !this.trailGlowSheet ||
-      !this.trailGlowTexture ||
-      !this.trailGlowSprite ||
-      !this.trailCoreSheet ||
-      !this.trailCoreTexture ||
-      !this.trailCoreSprite ||
-      !this.boardImage
-    ) {
+    if (!this.trailGlowSheet || !this.trailGlowTexture || !this.trailGlowSprite || !this.boardImage || !this.trailCoreGfx) {
       return;
     }
     const unit = this.cssPerUnit() || 1;
@@ -1089,35 +1069,31 @@ class GameScene extends Phaser.Scene {
     const glowDpr = 1;
     const cssW = Math.max(1, Math.round(BOARD_W * unit));
     const cssH = Math.max(1, Math.round(BOARD_H * unit));
-    const cw = Math.max(1, Math.round(cssW * dpr));
-    const ch = Math.max(1, Math.round(cssH * dpr));
     const gw = Math.max(1, Math.round(cssW * glowDpr));
     const gh = Math.max(1, Math.round(cssH * glowDpr));
+    const ox = this.boardImage.x;
+    const oy = this.boardImage.y;
+    const scale = this.boardImage.scaleX;
     const sig = (t: { x: number; y: number }[]) => {
       if (t.length < 2) return '0';
       const a = t[0];
       const b = t[t.length - 1];
       return `${t.length}:${a.x},${a.y}:${b.x},${b.y}`;
     };
-    const key = `${cw}x${ch}@${dpr}|${gw}x${gh}|${sig(trail1)}|${sig(trail2)}`;
+    const key = `${gw}x${gh}@${dpr}|${ox},${oy},${scale}|${sig(trail1)}|${sig(trail2)}`;
     this.placeTrailSprites();
     if (key === this.lastTrailKey) return;
     this.lastTrailKey = key;
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
-    const resizedCore = this.resizeTrailTexture(this.trailCoreTexture, cw, ch);
-    const resizedGlow = this.resizeTrailTexture(this.trailGlowTexture, gw, gh);
-    const resized = resizedCore || resizedGlow;
+    const resized = this.resizeTrailTexture(this.trailGlowTexture, gw, gh);
     if (resized) {
       this.lastPts1 = [];
       this.lastPts2 = [];
       this.trailAppendMs = [];
     }
-    const coreCtx = this.trailCoreSheet.getContext('2d');
     const glowCtx = this.trailGlowSheet.getContext('2d');
-    if (!coreCtx || !glowCtx) return;
-    this.prepTrailCtx(coreCtx);
+    if (!glowCtx) return;
     this.prepTrailCtx(glowCtx);
-    const coreCell = cw / BOARD_W;
     const glowCell = gw / BOARD_W;
     const sameHead = (a: { x: number; y: number }[], b: { x: number; y: number }[]) =>
       a.length === b.length &&
@@ -1130,71 +1106,33 @@ class GameScene extends Phaser.Scene {
     const inc2 = this.trailCanAppend(this.lastPts2, trail2);
     const hold1 = sameHead(this.lastPts1, trail1);
     const hold2 = sameHead(this.lastPts2, trail2);
-    let coreDirty: { x: number; y: number; w: number; h: number } | null = null;
     let kind: 'append' | 'full' = 'full';
     let uploadGlow = false;
     if ((inc1 || hold1) && (inc2 || hold2) && (inc1 || inc2)) {
       kind = 'append';
-      const pad = TRAIL_CORE_PAD_CSS * dpr;
-      const box = { x0: cw, y0: ch, x1: 0, y1: 0 };
-      const mark = (t: { x: number; y: number }[], from: number) => {
-        for (let i = Math.max(0, from); i < t.length; i++) {
-          const x = (t[i].x + 0.5) * coreCell;
-          const y = (t[i].y + 0.5) * coreCell;
-          if (x < box.x0) box.x0 = x;
-          if (y < box.y0) box.y0 = y;
-          if (x > box.x1) box.x1 = x;
-          if (y > box.y1) box.y1 = y;
-        }
-      };
-      const from1 = Math.max(0, this.lastPts1.length - 2);
-      const from2 = Math.max(0, this.lastPts2.length - 2);
-      if (inc1) {
-        this.strokeTrailCss(coreCtx, trail1, from1, coreCell, dpr, A.me, false, 'body');
-        this.strokeTrailCss(coreCtx, trail1, from1, coreCell, dpr, A.me, false, 'core');
-        mark(trail1, from1);
-      }
-      if (inc2) {
-        this.strokeTrailCss(coreCtx, trail2, from2, coreCell, dpr, A.foe, true, 'body');
-        this.strokeTrailCss(coreCtx, trail2, from2, coreCell, dpr, A.foe, true, 'core');
-        mark(trail2, from2);
-      }
-      coreDirty = {
-        x: Math.max(0, box.x0 - pad),
-        y: Math.max(0, box.y0 - pad),
-        w: Math.min(cw, box.x1 + pad) - Math.max(0, box.x0 - pad),
-        h: Math.min(ch, box.y1 + pad) - Math.max(0, box.y0 - pad),
-      };
       this.trailPaintAppends += 1;
       if (this.trailPaintAppends % TRAIL_GLOW_BATCH === 0) {
         uploadGlow = true;
         glowCtx.clearRect(0, 0, gw, gh);
-        this.strokeTrailCss(glowCtx, trail1, 0, glowCell, glowDpr, A.me, false, 'halo');
-        this.strokeTrailCss(glowCtx, trail2, 0, glowCell, glowDpr, A.foe, true, 'halo');
+        this.strokeTrailGlow(glowCtx, trail1, glowCell, glowDpr, A.me, false);
+        this.strokeTrailGlow(glowCtx, trail2, glowCell, glowDpr, A.foe, true);
       }
     } else {
-      coreCtx.clearRect(0, 0, cw, ch);
       glowCtx.clearRect(0, 0, gw, gh);
-      this.strokeTrailCss(glowCtx, trail1, 0, glowCell, glowDpr, A.me, false, 'halo');
-      this.strokeTrailCss(glowCtx, trail2, 0, glowCell, glowDpr, A.foe, true, 'halo');
-      this.strokeTrailCss(coreCtx, trail1, 0, coreCell, dpr, A.me, false, 'body');
-      this.strokeTrailCss(coreCtx, trail2, 0, coreCell, dpr, A.foe, true, 'body');
-      this.strokeTrailCss(coreCtx, trail1, 0, coreCell, dpr, A.me, false, 'core');
-      this.strokeTrailCss(coreCtx, trail2, 0, coreCell, dpr, A.foe, true, 'core');
+      this.strokeTrailGlow(glowCtx, trail1, glowCell, glowDpr, A.me, false);
+      this.strokeTrailGlow(glowCtx, trail2, glowCell, glowDpr, A.foe, true);
       uploadGlow = true;
     }
+    this.drawTrailCore(trail1, trail2);
     this.lastPts1 = trail1.map((p) => ({ x: p.x, y: p.y }));
     this.lastPts2 = trail2.map((p) => ({ x: p.x, y: p.y }));
-    this.uploadSheet(this.trailCoreSheet, this.trailCoreTexture, coreDirty, cw, ch);
-    if (uploadGlow) this.uploadSheet(this.trailGlowSheet, this.trailGlowTexture, null, gw, gh);
+    if (uploadGlow) this.trailGlowTexture.refresh();
     this.trailPaintGen += 1;
     const ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
     this.trailPaintSum += ms;
     if (kind === 'full') this.trailPaintFullMs = ms;
-    if (kind === 'append' && !uploadGlow) {
-      this.trailAppendMs.push(ms);
-      if (this.trailAppendMs.length > TRAIL_APPEND_SAMPLES) this.trailAppendMs.shift();
-    }
+    this.trailAppendMs.push(ms);
+    if (this.trailAppendMs.length > TRAIL_APPEND_SAMPLES) this.trailAppendMs.shift();
     const p95 = this.trailPaintP95();
     if (window.__turfDebug) {
       window.__turfDebug.trailPaintGen = this.trailPaintGen;
@@ -1236,62 +1174,82 @@ class GameScene extends Phaser.Scene {
     }));
   }
 
-  /** Upload only the new segment. Phaser stores canvas textures Y-flipped. */
-  private uploadSheet(
-    sheet: HTMLCanvasElement,
-    texture: Phaser.Textures.CanvasTexture,
-    dirty: { x: number; y: number; w: number; h: number } | null,
-    tw: number,
-    th: number,
-  ) {
-    if (!dirty || dirty.w <= 1 || dirty.h <= 1 || dirty.w >= tw * 0.5 || dirty.h >= th * 0.5) {
-      texture.refresh();
-      return;
-    }
-    const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer;
-    const gl = renderer.gl;
-    const wrapper = texture.source[0]?.glTexture as Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper | undefined;
-    if (!gl || !wrapper?.webGLTexture) {
-      texture.refresh();
-      return;
-    }
-    const x = Math.max(0, Math.floor(dirty.x));
-    const y = Math.max(0, Math.floor(dirty.y));
-    const w = Math.max(1, Math.min(tw - x, Math.ceil(dirty.w)));
-    const h = Math.max(1, Math.min(th - y, Math.ceil(dirty.h)));
-    if (!this.trailScratch) this.trailScratch = document.createElement('canvas');
-    if (this.trailScratch.width !== w) this.trailScratch.width = w;
-    if (this.trailScratch.height !== h) this.trailScratch.height = h;
-    const sctx = this.trailScratch.getContext('2d');
-    if (!sctx) {
-      texture.refresh();
-      return;
-    }
-    sctx.clearRect(0, 0, w, h);
-    sctx.drawImage(sheet, x, y, w, h, 0, 0, w, h);
-    renderer.glTextureUnits.bind(wrapper, 0, true);
-    renderer.glWrapper.updateTexturing({
-      texturing: { flipY: true, premultiplyAlpha: wrapper.pma !== false },
-    });
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, th - y - h, gl.RGBA, gl.UNSIGNED_BYTE, this.trailScratch);
+  /** Opaque orange + white, full polyline every update. Widths are CSS px / FIT unit. */
+  private drawTrailCore(trail1: { x: number; y: number }[], trail2: { x: number; y: number }[]) {
+    const gfx = this.trailCoreGfx;
+    if (!gfx || !this.boardImage) return;
+    gfx.clear();
+    const unit = this.cssPerUnit() || 1;
+    const orangeW = Math.max(2.8, TRAIL_ORANGE_CSS / unit);
+    const whiteW = Math.max(1.8, TRAIL_WHITE_CSS / unit);
+    this.strokeTrailGfx(gfx, trail1, orangeW, AH.me, false);
+    this.strokeTrailGfx(gfx, trail2, orangeW, AH.foe, true);
+    this.strokeTrailGfx(gfx, trail1, whiteW, 0xffffff, false);
+    this.strokeTrailGfx(gfx, trail2, whiteW, 0xffffff, true);
   }
 
-  private strokeTrailCss(
+  private strokeTrailGfx(
+    gfx: Phaser.GameObjects.Graphics,
+    trail: { x: number; y: number }[],
+    width: number,
+    color: number,
+    dashed: boolean,
+  ) {
+    if (trail.length < 2 || width <= 0) return;
+    const pts = trail.map((p) => this.worldOf(p));
+    gfx.lineStyle(width, color, 1);
+    if (!dashed) {
+      gfx.beginPath();
+      gfx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) gfx.lineTo(pts[i].x, pts[i].y);
+      gfx.strokePath();
+      return;
+    }
+    const dash = 4;
+    const gap = 2.5;
+    let on = true;
+    let remain = dash;
+    gfx.beginPath();
+    gfx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      let x0 = pts[i - 1].x;
+      let y0 = pts[i - 1].y;
+      const x1 = pts[i].x;
+      const y1 = pts[i].y;
+      let seg = Math.hypot(x1 - x0, y1 - y0);
+      while (seg > 0.001) {
+        const take = Math.min(remain, seg);
+        const t = take / seg;
+        const nx = x0 + (x1 - x0) * t;
+        const ny = y0 + (y1 - y0) * t;
+        if (on) gfx.lineTo(nx, ny);
+        else gfx.moveTo(nx, ny);
+        x0 = nx;
+        y0 = ny;
+        seg -= take;
+        remain -= take;
+        if (remain <= 0.001) {
+          on = !on;
+          remain = on ? dash : gap;
+        }
+      }
+    }
+    gfx.strokePath();
+  }
+
+  private strokeTrailGlow(
     ctx: CanvasRenderingContext2D,
     trail: { x: number; y: number }[],
-    from: number,
     cell: number,
     dpr: number,
     color: string,
     dashed: boolean,
-    pass: 'halo' | 'body' | 'core' | 'all' = 'all',
   ) {
     if (trail.length < 2) return;
-    const start = Math.max(0, Math.min(from, trail.length - 2));
     const snap = (v: number) => Math.round(v);
     const path = new Path2D();
-    path.moveTo(snap((trail[start].x + 0.5) * cell), snap((trail[start].y + 0.5) * cell));
-    for (let i = start + 1; i < trail.length; i++) {
+    path.moveTo(snap((trail[0].x + 0.5) * cell), snap((trail[0].y + 0.5) * cell));
+    for (let i = 1; i < trail.length; i++) {
       path.lineTo(snap((trail[i].x + 0.5) * cell), snap((trail[i].y + 0.5) * cell));
     }
     const n = parseInt(color.slice(1), 16);
@@ -1301,27 +1259,14 @@ class GameScene extends Phaser.Scene {
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
     const px = (css: number) => Math.max(1, Math.round(css * dpr));
     ctx.globalCompositeOperation = 'source-over';
-    ctx.lineDashOffset = dashed ? -(start * cell) : 0;
+    ctx.lineDashOffset = 0;
     ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
-    if (pass === 'halo' || pass === 'all') {
-      for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
-        ctx.strokeStyle = rgba(alpha);
-        ctx.lineWidth = px(width);
-        ctx.stroke(path);
-      }
-    }
-    if (pass === 'body' || pass === 'all') {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = px(TRAIL_ORANGE_CSS);
-      ctx.stroke(path);
-    }
-    if (pass === 'core' || pass === 'all') {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = px(TRAIL_WHITE_CSS);
+    for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
+      ctx.strokeStyle = rgba(alpha);
+      ctx.lineWidth = px(width);
       ctx.stroke(path);
     }
     ctx.setLineDash([]);
-    ctx.lineDashOffset = 0;
   }
 
   private paintActors(

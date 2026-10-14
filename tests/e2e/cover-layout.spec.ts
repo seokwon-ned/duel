@@ -68,12 +68,16 @@ function expect390Trail(measured: TrailMeasure) {
   expect(measured.ringPx).toBeLessThanOrEqual(24);
 }
 
-/** Cross-sections along the whole polyline. White core = min(r,g,b) > 225. */
+/** Strictly perpendicular cross-sections. White core = min(r,g,b) > 225. */
 async function measureWholeTrailWhite(page: Page): Promise<{
   sections: number;
   missing: number;
   missingPct: number;
+  whiteMedian: number;
+  whiteMin: number;
+  orangeMedian: number;
   sampleMins: number[];
+  backing: { w: number; h: number };
 }> {
   const png = await page.locator('#game-container canvas').screenshot();
   const pts = await page.evaluate(() => window.__turfDebug?.trailPts ?? []);
@@ -103,47 +107,17 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         if (!last || last.x !== p.x || last.y !== p.y) uniq.push(p);
       }
       const mapped = uniq.map(toPx);
-      const tip = mapped.length ? mapped[mapped.length - 1] : { x: 0, y: 0 };
       const sampleMins: number[] = [];
+      const whiteWidths: number[] = [];
+      const orangeWidths: number[] = [];
       let missing = 0;
       let sections = 0;
-      const scan = (cx: number, cy: number, ux: number, uy: number) => {
-        let best = 0;
-        let found = false;
-        for (let t = -28; t <= 28; t++) {
-          const p = pix(Math.round(cx + ux * t), Math.round(cy + uy * t));
-          const m = Math.min(p[0], p[1], p[2]);
-          if (m > best) best = m;
-          if (m > 225) found = true;
-        }
-        return { best, found };
-      };
-      const probe = (cx: number, cy: number, nx: number, ny: number) => {
-        const dirs = [
-          [nx, ny],
-          [1, 0],
-          [0, 1],
-        ] as const;
-        let best = 0;
-        let found = false;
-        for (const ox of [0, -2, 2, -1, 1]) {
-          for (const oy of [0, -2, 2, -1, 1]) {
-            for (const [ux, uy] of dirs) {
-              const s = scan(cx + ox, cy + oy, ux, uy);
-              if (s.best > best) best = s.best;
-              if (s.found) found = true;
-            }
-            if (found && ox === 0 && oy === 0) return { best, found };
-          }
-        }
-        return { best, found };
-      };
+      const isWhite = (p: [number, number, number]) => Math.min(p[0], p[1], p[2]) > 225;
+      const isOrange = (p: [number, number, number]) =>
+        p[0] >= 200 && p[1] >= 50 && p[1] <= 190 && p[2] <= 90 && p[0] > p[1] + 40 && !isWhite(p);
       let prev: { x: number; y: number } | null = null;
-      let skipped = 0;
       for (let i = 0; i < mapped.length; i++) {
         const b = mapped[i];
-        if (b.y > height - 10 || b.y < 10 || b.x < 10 || b.x > width - 10) continue;
-        if (Math.hypot(b.x - tip.x, b.y - tip.y) < 22) continue;
         if (!prev) {
           prev = b;
           continue;
@@ -155,26 +129,61 @@ async function measureWholeTrailWhite(page: Page): Promise<{
           prev = b;
           continue;
         }
-        if (skipped < 2) {
-          skipped++;
-          prev = b;
-          continue;
-        }
         const nx = -dy / len;
         const ny = dx / len;
         const cx = (prev.x + b.x) / 2;
         const cy = (prev.y + b.y) / 2;
-        const { best, found } = probe(cx, cy, nx, ny);
+        if (cx < 0 || cy < 0 || cx >= width || cy >= height) {
+          prev = b;
+          continue;
+        }
+        let best = 0;
+        let whiteRun = 0;
+        let maxWhite = 0;
+        let solidRun = 0;
+        let maxSolid = 0;
+        for (let t = -16; t <= 16; t++) {
+          const p = pix(Math.round(cx + nx * t), Math.round(cy + ny * t));
+          const m = Math.min(p[0], p[1], p[2]);
+          if (m > best) best = m;
+          if (isWhite(p)) {
+            whiteRun++;
+            if (whiteRun > maxWhite) maxWhite = whiteRun;
+            solidRun++;
+            if (solidRun > maxSolid) maxSolid = solidRun;
+          } else if (isOrange(p)) {
+            if (whiteRun > maxWhite) maxWhite = whiteRun;
+            whiteRun = 0;
+            solidRun++;
+            if (solidRun > maxSolid) maxSolid = solidRun;
+          } else {
+            if (whiteRun > maxWhite) maxWhite = whiteRun;
+            whiteRun = 0;
+            solidRun = 0;
+          }
+        }
+        if (whiteRun > maxWhite) maxWhite = whiteRun;
         sections++;
         sampleMins.push(best);
-        if (!found) missing++;
+        whiteWidths.push(maxWhite);
+        orangeWidths.push(maxSolid);
+        if (maxWhite < 1) missing++;
         prev = b;
       }
+      const median = (arr: number[]) => {
+        if (!arr.length) return 0;
+        const s = arr.slice().sort((a, b) => a - b);
+        return s[Math.floor(s.length / 2)];
+      };
       return {
         sections,
         missing,
         missingPct: sections ? Math.round((missing / sections) * 1000) / 10 : 100,
+        whiteMedian: median(whiteWidths),
+        whiteMin: whiteWidths.length ? Math.min(...whiteWidths) : 0,
+        orangeMedian: median(orangeWidths),
         sampleMins,
+        backing: { w: width, h: height },
       };
     },
     { b64: png.toString('base64'), pts },
@@ -295,7 +304,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         let gRun = 0;
         let wRun = 0;
         const push = () => {
-          if (sRun >= 3 && sRun <= 8) solids.push(sRun);
+          if (sRun >= 3) solids.push(sRun);
           if (gRun >= 8 && gRun <= 40) glows.push(gRun);
           if (wRun >= 1 && wRun <= 4) cores.push(wRun);
           sRun = 0;
@@ -313,7 +322,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
               wRun = 0;
             }
           } else if (isGlow(i)) {
-            if (sRun >= 3 && sRun <= 8) solids.push(sRun);
+            if (sRun >= 3) solids.push(sRun);
             if (wRun >= 1 && wRun <= 4) cores.push(wRun);
             sRun = 0;
             wRun = 0;
@@ -634,6 +643,7 @@ test.describe('Cover spike 390x844', () => {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw-append.png') });
     expect(along.sections, `sections ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(20);
     expect(along.missingPct, `missing white ${JSON.stringify(along)}`).toBe(0);
+    expect(along.whiteMedian, `white core px ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(1.5);
     expect(kind.p95 ?? 99).toBeLessThanOrEqual(15);
   });
 
@@ -647,7 +657,9 @@ test.describe('Cover spike 390x844', () => {
       await page.setViewportSize(shot.size);
       await waitMidDraw(page);
       const measured = await measureRenderedTrail(page);
+      const along = await measureWholeTrailWhite(page);
       console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
+      console.log(`whole-trail white ${shot.label}`, along);
       fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
       await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });
       expect(measured.hasWhiteCenter, `${shot.label} white center ${measured.centerRgb}`).toBe(true);
@@ -657,6 +669,8 @@ test.describe('Cover spike 390x844', () => {
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
       expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(14);
       expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(36);
+      expect(along.missingPct, `${shot.label} missing white ${JSON.stringify(along)}`).toBe(0);
+      expect(along.whiteMedian, `${shot.label} white core px ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(1.5);
       expect(measured.orangeRgb, `${shot.label} orange band`).toBeTruthy();
       expect(measured.orangeRgb![0], `${shot.label} orange r`).toBeGreaterThanOrEqual(210);
       // 360 CSS is smaller so AA can add ~8 blue vs 390; still rejects washed (240,138,83).
