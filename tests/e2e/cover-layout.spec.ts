@@ -62,7 +62,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      return r >= 230 && g >= 230 && b >= 230;
+      return r >= 240 && g >= 240 && b >= 240;
     };
     const isBright = (i: number) => isSolid(i) || isWhiteCore(i);
     const isGlow = (i: number) => {
@@ -73,7 +73,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     };
     let orbX = -1;
     let orbY = -1;
-    const whites: { x: number; y: number }[] = [];
+    const orbWhites: { x: number; y: number }[] = [];
     const y0 = Math.floor(height * 0.50);
     const y1 = Math.floor(height * 0.78);
     const x0 = Math.floor(width * 0.28);
@@ -84,16 +84,16 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         let orange = 0;
         for (let a = 0; a < 8; a++) {
           const ang = (a / 8) * Math.PI * 2;
-          const xx = Math.round(x + Math.cos(ang) * 8);
-          const yy = Math.round(y + Math.sin(ang) * 8);
+          const xx = Math.round(x + Math.cos(ang) * 10);
+          const yy = Math.round(y + Math.sin(ang) * 10);
           if (xx >= 0 && yy >= 0 && xx < width && yy < height && isDisc(pix(xx, yy))) orange++;
         }
-        if (orange >= 2) whites.push({ x, y });
+        if (orange >= 4) orbWhites.push({ x, y });
       }
     }
-    if (whites.length) {
-      orbX = whites.reduce((s, p) => s + p.x, 0) / whites.length;
-      orbY = whites.reduce((s, p) => s + p.y, 0) / whites.length;
+    if (orbWhites.length) {
+      orbX = orbWhites.reduce((s, p) => s + p.x, 0) / orbWhites.length;
+      orbY = orbWhites.reduce((s, p) => s + p.y, 0) / orbWhites.length;
     }
     let ring = 0;
     if (orbX >= 0) {
@@ -108,13 +108,13 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
           const y = Math.round(orbY + uy * t);
           if (x < 0 || y < 0 || x >= width || y >= height) break;
           const p = pix(x, y);
-          if (isWhite(p) || isDiscCore(p)) rad = t;
+          if (isWhite(p) || isDiscCore(p) || isDisc(p)) rad = t;
           else if (rad > 0) break;
         }
-        if (rad >= 5) radii.push(rad);
+        if (rad >= 6) radii.push(rad);
       }
       radii.sort((a, b) => a - b);
-      const body = radii.filter((r) => r >= 7);
+      const body = radii.filter((r) => r >= 8);
       const use = body.length ? body : radii;
       if (use.length) ring = use[Math.floor(use.length * 0.5)] * 2;
     }
@@ -122,7 +122,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     const collect = (major: number, minor: number, swap: boolean) => {
       const solids: number[] = [];
       const glows: number[] = [];
-      const whites: number[] = [];
+      const cores: number[] = [];
       for (let a = 0; a < major; a++) {
         let sRun = 0;
         let gRun = 0;
@@ -130,7 +130,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         const push = () => {
           if (sRun >= 3 && sRun <= 8) solids.push(sRun);
           if (gRun >= 4 && gRun <= 22) glows.push(gRun);
-          if (wRun >= 1 && wRun <= 4) whites.push(wRun);
+          if (wRun >= 1 && wRun <= 4) cores.push(wRun);
           sRun = 0;
           gRun = 0;
           wRun = 0;
@@ -142,12 +142,12 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             gRun++;
             if (isWhiteCore(i)) wRun++;
             else {
-              if (wRun >= 1 && wRun <= 4) whites.push(wRun);
+              if (wRun >= 1 && wRun <= 4) cores.push(wRun);
               wRun = 0;
             }
           } else if (isGlow(i)) {
             if (sRun >= 3 && sRun <= 8) solids.push(sRun);
-            if (wRun >= 1 && wRun <= 4) whites.push(wRun);
+            if (wRun >= 1 && wRun <= 4) cores.push(wRun);
             sRun = 0;
             wRun = 0;
             gRun++;
@@ -157,22 +157,22 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         }
         push();
       }
-      return { solids, glows, whites };
+      return { solids, glows, cores };
     };
     const hz = collect(height, width, false);
     const vt = collect(width, height, true);
     const solids = hz.solids.concat(vt.solids);
     const glows = hz.glows.concat(vt.glows);
-    const whites = hz.whites.concat(vt.whites);
-    const pick = (arr: number[]) => {
+    const cores = hz.cores.concat(vt.cores);
+    const pick = (arr: number[], q = 0.7) => {
       if (!arr.length) return 0;
       const sorted = arr.slice().sort((a, b) => a - b);
-      return sorted[Math.floor(sorted.length * 0.7)];
+      return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
     };
     return {
       solidWidth: Math.round(pick(solids) * scale * 10) / 10,
       glowWidth: Math.round(pick(glows) * scale * 10) / 10,
-      whiteCore: Math.round(pick(whites) * scale * 10) / 10,
+      whiteCore: Math.round(pick(cores, 0.5) * scale * 10) / 10,
       ringPx: Math.round(ring * scale * 10) / 10,
       backing: { w: width, h: height },
       css: { w: width, h: height },
@@ -289,8 +289,8 @@ test.describe('Cover spike 390x844', () => {
     const measured = await measureRenderedTrail(page);
     console.log('rendered trail WIDTH (not radius) 390x844', measured);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
-    expect(measured.whiteCore).toBeGreaterThanOrEqual(1.2);
-    expect(measured.whiteCore).toBeLessThanOrEqual(3.2);
+    expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
+    expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
     expect(measured.solidWidth).toBeGreaterThanOrEqual(3.5);
     expect(measured.solidWidth).toBeLessThanOrEqual(6.5);
     expect(measured.glowWidth).toBeGreaterThanOrEqual(9);

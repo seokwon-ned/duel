@@ -1037,8 +1037,8 @@ class GameScene extends Phaser.Scene {
     }
     stamp(glowGfx, rad(12), glow, 0.14);
     stamp(glowGfx, rad(7), glow, 0.18);
-    stamp(this.trailGfx, rad(4.6), glow, 1);
-    stamp(this.trailGfx, rad(2), core, 1);
+    stamp(this.trailGfx, rad(4.2), glow, 1);
+    stamp(this.trailGfx, rad(1.8), core, 1);
   }
 
   private paintActors(
