@@ -12,10 +12,22 @@ type TrailMeasure = {
   ringPx: number;
   hasWhiteCenter: boolean;
   centerRgb: [number, number, number] | null;
+  orangeRgb: [number, number, number] | null;
   backing: { w: number; h: number };
   css: { w: number; h: number };
   orb?: { x: number; y: number };
 };
+
+async function waitTrailRedraw(page: Page) {
+  const gen = await page.evaluate(() => window.__turfDebug?.trailPaintGen ?? 0);
+  await page.waitForFunction((g) => (window.__turfDebug?.trailPaintGen ?? 0) > g, gen, { timeout: 4000 });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
 
 async function waitMidDraw(page: Page) {
   await page.goto('/?qa=1');
@@ -29,6 +41,7 @@ async function waitMidDraw(page: Page) {
     },
     { timeout: 45000 },
   );
+  await waitTrailRedraw(page);
 }
 
 /** Rendered WIDTH in CSS px from a composited screenshot — not stamp radius constants. */
@@ -173,19 +186,29 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     };
     let hasWhiteCenter = false;
     let centerRgb: [number, number, number] | null = null;
+    let orangeRgb: [number, number, number] | null = null;
     let crossWhite = 0;
     let crossSolid = 0;
     let crossGlow = 0;
     if (orbX >= 0) {
       const isPixWhite = (p: [number, number, number]) =>
         p[0] >= 210 && p[1] >= 175 && p[2] >= 130 && p[1] >= p[0] * 0.58 && p[2] >= p[0] * 0.38;
+      // #FF7A1A = (255,122,26). Reject washed salmon like (240,138,83).
       const isPixOrange = (p: [number, number, number]) =>
-        p[0] >= 200 && p[1] >= 40 && p[1] <= 170 && p[2] <= 100 && p[0] > p[1] + 45;
+        p[0] >= 220 && p[1] >= 70 && p[1] <= 155 && p[2] <= 55 && p[0] > p[1] + 70;
       const isPixGlow = (p: [number, number, number]) =>
-        p[0] >= 118 && p[0] > p[1] + 12 && (isPixOrange(p) || isPixWhite(p) || p[0] + 45 > p[2]);
+        p[0] >= 110 && p[0] > p[1] + 10 && (isPixOrange(p) || isPixWhite(p) || p[0] + 45 > p[2]);
       const xLo = Math.max(0, Math.round(orbX) - 52);
       const xHi = Math.min(width - 1, Math.round(orbX) + 52);
-      for (const dy of [14, 20, 28, 36, 44, 54, 70, -18]) {
+      type Cand = {
+        solid: number;
+        glow: number;
+        white: number;
+        rgb: [number, number, number];
+        orange: [number, number, number] | null;
+      };
+      const cands: Cand[] = [];
+      for (const dy of [14, 20, 28, 36, 44, 54, 70, -18, 10, 24]) {
         const yScan = Math.round(orbY + dy);
         if (yScan < 0 || yScan >= height) continue;
         const row: [number, number, number][] = [];
@@ -202,14 +225,16 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             g0 = -1;
           }
         }
-        const near = runs.filter((r) => r.glow >= 6 && r.glow <= 48);
-        const best = near.sort((a, b) => b.whites - a.whites || b.glow - a.glow)[0];
+        const near = runs.filter((r) => r.glow >= 6 && r.glow <= 48 && r.whites >= 1);
+        const best = near.sort((a, b) => a.glow - b.glow || b.whites - a.whites)[0];
         if (!best) continue;
-        crossGlow = Math.max(best.glow, ...near.map((r) => r.glow));
         let wRun = 0;
         let sRun = 0;
+        let white = 0;
+        let solid = 0;
         let peak = Math.round((best.x0 + best.x1) / 2);
         let peakScore = -1;
+        let orange: [number, number, number] | null = null;
         for (let x = best.x0; x <= best.x1; x++) {
           const p = row[x];
           if (isPixWhite(p)) {
@@ -221,21 +246,36 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
               peak = x;
             }
           } else if (isPixOrange(p)) {
-            if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
+            if (wRun && wRun <= 5) white = Math.max(white, wRun);
             wRun = 0;
             sRun++;
+            if (!orange) orange = p;
           } else {
-            if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
-            if (sRun >= 2 && sRun <= 10) crossSolid = Math.max(crossSolid, sRun);
+            if (wRun && wRun <= 5) white = Math.max(white, wRun);
+            if (sRun >= 2 && sRun <= 10) solid = Math.max(solid, sRun);
             wRun = 0;
             sRun = 0;
           }
         }
-        if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
-        if (sRun >= 2 && sRun <= 10) crossSolid = Math.max(crossSolid, sRun);
-        centerRgb = row[peak];
-        hasWhiteCenter = isPixWhite(centerRgb);
-        if (hasWhiteCenter) break;
+        if (wRun && wRun <= 5) white = Math.max(white, wRun);
+        if (sRun >= 2 && sRun <= 10) solid = Math.max(solid, sRun);
+        const rgb = row[peak];
+        if (!isPixWhite(rgb)) continue;
+        cands.push({ solid, glow: best.glow, white, rgb, orange });
+      }
+      cands.sort((a, b) => {
+        const aVert = a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
+        const bVert = b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
+        return aVert - bVert || a.solid - b.solid;
+      });
+      const chosen = cands[0];
+      if (chosen) {
+        hasWhiteCenter = true;
+        centerRgb = chosen.rgb;
+        orangeRgb = chosen.orange;
+        crossWhite = chosen.white;
+        crossSolid = chosen.solid;
+        crossGlow = Math.max(chosen.glow, ...cands.map((c) => c.glow));
       }
     }
     return {
@@ -245,6 +285,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
       ringPx: Math.round(ring * scale * 10) / 10,
       hasWhiteCenter,
       centerRgb,
+      orangeRgb,
       backing: { w: width, h: height },
       css: { w: width, h: height },
       orb: orbX >= 0 ? { x: Math.round(orbX), y: Math.round(orbY) } : undefined,
@@ -364,9 +405,13 @@ test.describe('Cover spike 390x844', () => {
     expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
     expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
     expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
-    expect(measured.solidWidth).toBeLessThanOrEqual(10);
+    expect(measured.solidWidth).toBeLessThanOrEqual(8.5);
     expect(measured.glowWidth).toBeGreaterThanOrEqual(14);
     expect(measured.glowWidth).toBeLessThanOrEqual(36);
+    expect(measured.orangeRgb, 'orange band').toBeTruthy();
+    expect(measured.orangeRgb![0]).toBeGreaterThanOrEqual(220);
+    expect(measured.orangeRgb![1]).toBeLessThanOrEqual(155);
+    expect(measured.orangeRgb![2]).toBeLessThanOrEqual(55);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
     expect(measured.ringPx).toBeLessThanOrEqual(24);
   });
@@ -374,8 +419,8 @@ test.describe('Cover spike 390x844', () => {
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
     test.setTimeout(120000);
     const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
-      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 10 },
-      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 10 },
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 8.5 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 8.5 },
     ];
     for (const shot of shots) {
       await page.setViewportSize(shot.size);
@@ -391,6 +436,8 @@ test.describe('Cover spike 390x844', () => {
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
       expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(14);
       expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(36);
+      expect(measured.orangeRgb, `${shot.label} orange band`).toBeTruthy();
+      expect(measured.orangeRgb![2], `${shot.label} orange b`).toBeLessThanOrEqual(55);
       expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 16 : 16);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
     }

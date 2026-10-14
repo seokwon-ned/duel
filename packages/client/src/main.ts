@@ -45,6 +45,19 @@ const ORB_TEX = 64;
 /** Soft bloom sprite in CSS px. Falloff stays visible out to ~40px. */
 const ORB_BLOOM_CSS = 56;
 const ORB_BLOOM_TEX = 64;
+/** Trail sheet is CSS size × DPR (capped) so a 2px white core survives WebGL. */
+const TRAIL_DPR_CAP = 3;
+const TRAIL_ORANGE_CSS = 4;
+const TRAIL_WHITE_CSS = 2;
+/** Soft orange halo in CSS px, low-alpha steps — no hard 16px pink band. */
+const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
+  [26, 0.10],
+  [22, 0.06],
+  [18, 0.05],
+  [14, 0.05],
+  [10, 0.07],
+  [7, 0.12],
+];
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
 /** Give up on a reserved rematch seat and fall back to joinOrCreate. */
@@ -80,6 +93,9 @@ interface TurfDebug {
   drawing: { p1: boolean; p2: boolean };
   trails: { p1: number; p2: number };
   youHearts: number;
+  trailPaintGen: number;
+  trailPaintMs: number;
+  trailDpr: number;
 }
 
 declare global {
@@ -101,6 +117,9 @@ if (typeof window !== 'undefined') {
     drawing: { p1: false, p2: false },
     trails: { p1: 0, p2: 0 },
     youHearts: 3,
+    trailPaintGen: 0,
+    trailPaintMs: 0,
+    trailDpr: 1,
   };
 }
 
@@ -202,11 +221,11 @@ class GameScene extends Phaser.Scene {
   private kkTexture: Phaser.Textures.CanvasTexture | null = null;
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
-  private trailGlow: Phaser.GameObjects.Graphics | null = null;
-  private trailBloom: Phaser.GameObjects.Graphics | null = null;
   private trailSheet: HTMLCanvasElement | null = null;
   private trailSheetTexture: Phaser.Textures.CanvasTexture | null = null;
   private trailSprite: Phaser.GameObjects.Image | null = null;
+  private lastTrailKey = '';
+  private trailPaintGen = 0;
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
   private qaP2: QaPilot | null = null;
@@ -289,17 +308,13 @@ class GameScene extends Phaser.Scene {
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
     addGlow(this.boardImage, AH.purple, 1.6);
 
-    this.trailBloom = this.add.graphics();
-    this.trailBloom.setDepth(1);
-    this.trailGlow = this.add.graphics();
-    this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
-    this.trailGlow.setDepth(1);
     this.trailGfx = this.add.graphics();
     this.trailGfx.setDepth(2);
     this.trailSheet = document.createElement('canvas');
     this.trailSheet.width = BOARD_W;
     this.trailSheet.height = BOARD_H;
     this.trailSheetTexture = this.textures.addCanvas('trail-sheet', this.trailSheet);
+    this.trailSheetTexture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
     this.trailSprite = this.add.image(0, 0, 'trail-sheet').setOrigin(0).setDepth(3);
     this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me), true);
     this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true), true);
@@ -971,70 +986,98 @@ class GameScene extends Phaser.Scene {
     const oy = this.boardImage.y;
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
-    this.trailGlow?.clear();
-    this.trailBloom?.clear();
     const frameW = Math.max(1, scale * 1.0);
     this.trailGfx.lineStyle(frameW, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
     this.paintTrailSheet(trail1, trail2 ?? []);
   }
 
-  /** CSS-px canvas so a 2px white core is real texels, not a sub-unit WebGL fillCircle. */
+  /** Device-pixel trail sheet, displayed at CSS size so 2px white / 4px orange stay crisp. */
+  private trailDpr(): number {
+    const raw = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const floor = this.qaMode ? 2 : 1;
+    return Math.min(TRAIL_DPR_CAP, Math.max(floor, raw));
+  }
+
   private paintTrailSheet(
     trail1: { x: number; y: number }[],
     trail2: { x: number; y: number }[],
   ) {
     if (!this.trailSheet || !this.trailSheetTexture || !this.trailSprite || !this.boardImage) return;
     const unit = this.cssPerUnit() || 1;
-    const tw = Math.max(1, Math.round(BOARD_W * unit));
-    const th = Math.max(1, Math.round(BOARD_H * unit));
+    const dpr = this.trailDpr();
+    const cssW = Math.max(1, Math.round(BOARD_W * unit));
+    const cssH = Math.max(1, Math.round(BOARD_H * unit));
+    const tw = Math.max(1, Math.round(cssW * dpr));
+    const th = Math.max(1, Math.round(cssH * dpr));
+    const sig = (t: { x: number; y: number }[]) => {
+      if (t.length < 2) return '0';
+      const a = t[0];
+      const b = t[t.length - 1];
+      return `${t.length}:${a.x},${a.y}:${b.x},${b.y}`;
+    };
+    const key = `${tw}x${th}@${dpr}|${sig(trail1)}|${sig(trail2)}`;
+    this.trailSprite.setPosition(this.boardImage.x, this.boardImage.y);
+    this.trailSprite.setDisplaySize(BOARD_W * this.boardImage.scaleX, BOARD_H * this.boardImage.scaleY);
+    if (key === this.lastTrailKey) return;
+    this.lastTrailKey = key;
+    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
     if (this.trailSheetTexture.width !== tw || this.trailSheetTexture.height !== th) {
       this.trailSheetTexture.setSize(tw, th);
+      this.trailSheetTexture.setFilter(Phaser.Textures.FilterMode.LINEAR);
     }
     const ctx = this.trailSheet.getContext('2d');
     if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, tw, th);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    ctx.imageSmoothingEnabled = true;
     const cell = tw / BOARD_W;
-    this.strokeTrailCss(ctx, trail1, cell, AH.me, false);
-    this.strokeTrailCss(ctx, trail2, cell, AH.foe, true);
+    this.strokeTrailCss(ctx, trail1, cell, dpr, A.me, false);
+    this.strokeTrailCss(ctx, trail2, cell, dpr, A.foe, true);
     this.trailSheetTexture.refresh();
-    this.trailSprite.setPosition(this.boardImage.x, this.boardImage.y);
-    this.trailSprite.setDisplaySize(BOARD_W * this.boardImage.scaleX, BOARD_H * this.boardImage.scaleY);
+    this.trailPaintGen += 1;
+    const ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
+    if (window.__turfDebug) {
+      window.__turfDebug.trailPaintGen = this.trailPaintGen;
+      window.__turfDebug.trailPaintMs = Math.round(ms * 10) / 10;
+      window.__turfDebug.trailDpr = dpr;
+    }
   }
 
   private strokeTrailCss(
     ctx: CanvasRenderingContext2D,
     trail: { x: number; y: number }[],
     cell: number,
-    color: number,
+    dpr: number,
+    color: string,
     dashed: boolean,
   ) {
     if (trail.length < 2) return;
-    const pts = trail.map((p) => ({ x: (p.x + 0.5) * cell, y: (p.y + 0.5) * cell }));
-    const r = (color >> 16) & 255;
-    const g = (color >> 8) & 255;
-    const b = color & 255;
+    const path = new Path2D();
+    path.moveTo((trail[0].x + 0.5) * cell, (trail[0].y + 0.5) * cell);
+    for (let i = 1; i < trail.length; i++) {
+      path.lineTo((trail[i].x + 0.5) * cell, (trail[i].y + 0.5) * cell);
+    }
+    const n = parseInt(color.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
-    ctx.setLineDash(dashed ? [Math.max(10, cell * 8), Math.max(6, cell * 5)] : []);
-    const stroke = (width: number, fill: string) => {
-      ctx.strokeStyle = fill;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.stroke();
-    };
-    stroke(28, rgba(0.36));
-    stroke(16, rgba(0.3));
-    stroke(4, rgba(1));
+    const px = (css: number) => css * dpr;
+    ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
+    for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
+      ctx.strokeStyle = rgba(alpha);
+      ctx.lineWidth = px(width);
+      ctx.stroke(path);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = px(TRAIL_ORANGE_CSS);
+    ctx.stroke(path);
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-    ctx.stroke();
+    ctx.lineWidth = px(TRAIL_WHITE_CSS);
+    ctx.stroke(path);
     ctx.setLineDash([]);
   }
 
