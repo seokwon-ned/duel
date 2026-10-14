@@ -208,6 +208,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         orange: [number, number, number] | null;
       };
       const cands: Cand[] = [];
+      let maxGlow = 0;
       for (const dy of [14, 20, 28, 36, 44, 54, 70, -18, 10, 24]) {
         const yScan = Math.round(orbY + dy);
         if (yScan < 0 || yScan >= height) continue;
@@ -225,8 +226,10 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             g0 = -1;
           }
         }
-        const near = runs.filter((r) => r.glow >= 6 && r.glow <= 48 && r.whites >= 1);
-        const best = near.sort((a, b) => a.glow - b.glow || b.whites - a.whites)[0];
+        const glowing = runs.filter((r) => r.glow >= 6 && r.glow <= 48);
+        for (const r of glowing) maxGlow = Math.max(maxGlow, r.glow);
+        const near = glowing.filter((r) => r.whites >= 1);
+        const best = near.sort((a, b) => Math.abs(a.glow - 26) - Math.abs(b.glow - 26) || b.whites - a.whites)[0];
         if (!best) continue;
         let wRun = 0;
         let sRun = 0;
@@ -282,7 +285,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         orangeRgb = chosen.orange;
         crossWhite = chosen.white;
         crossSolid = chosen.solid;
-        crossGlow = Math.max(chosen.glow, ...cands.map((c) => c.glow));
+        crossGlow = Math.max(maxGlow, chosen.glow, ...cands.map((c) => c.glow));
       }
     }
     return {
