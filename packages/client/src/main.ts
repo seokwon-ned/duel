@@ -52,9 +52,9 @@ const TRAIL_ORANGE_CSS = 6;
 const TRAIL_WHITE_CSS = 2.2;
 /** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
-  [26, 0.18],
-  [12, 0.14],
-  [8, 0.20],
+  [26, 0.16],
+  [12, 0.12],
+  [7, 0.18],
 ];
 /** Glow lives on its own dpr-1 sheet; core pad only needs the opaque orange. */
 const TRAIL_CORE_PAD_CSS = TRAIL_ORANGE_CSS + 3;
