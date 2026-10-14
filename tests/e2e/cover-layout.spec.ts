@@ -1,8 +1,160 @@
 import { test, expect, Page } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const VIEWPORT = { width: 390, height: 844 };
 const SCREENSHOT_DIR = path.join(process.cwd(), 'docs/qa/cover-390x844');
+
+type TrailMeasure = {
+  solidWidth: number;
+  glowWidth: number;
+  ringPx: number;
+  backing: { w: number; h: number };
+  css: { w: number; h: number };
+};
+
+async function waitMidDraw(page: Page) {
+  await page.goto('/?qa=1');
+  await page.waitForSelector('#game-container canvas');
+  await page.click('#botBtn');
+  await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
+  await page.waitForFunction(
+    () => {
+      const d = window.__turfDebug;
+      return Boolean(d && d.ownedCells.p1 >= 15000 && d.drawing.p1 && d.trails.p1 >= 55);
+    },
+    { timeout: 45000 },
+  );
+}
+
+/** Rendered WIDTH in CSS px from a composited screenshot — not stamp radius constants. */
+async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
+  const png = await page.locator('#game-container canvas').screenshot();
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const tmp = document.createElement('canvas');
+    tmp.width = img.width;
+    tmp.height = img.height;
+    const ctx = tmp.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
+    const scale = 1;
+    const isSolid = (i: number) => {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      return r >= 220 && g >= 80 && g <= 150 && b <= 70 && r > g + 70 && r > b + 130;
+    };
+    const isGlow = (i: number) => {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      return r >= 120 && g >= 30 && b <= 160 && r > g && r > b + 15;
+    };
+    const index = (x: number, y: number) => (y * width + x) * 4;
+    const collect = (major: number, minor: number, swap: boolean) => {
+      const solids: number[] = [];
+      const glows: number[] = [];
+      for (let a = 0; a < major; a++) {
+        let sRun = 0;
+        let gRun = 0;
+        const push = () => {
+          if (sRun >= 2 && sRun <= 7) solids.push(sRun);
+          if (gRun >= 2 && gRun <= 16) glows.push(gRun);
+          sRun = 0;
+          gRun = 0;
+        };
+        for (let b = 0; b < minor; b++) {
+          const i = swap ? index(a, b) : index(b, a);
+          if (isSolid(i)) {
+            sRun++;
+            gRun++;
+          } else if (isGlow(i)) {
+            if (sRun >= 2 && sRun <= 7) solids.push(sRun);
+            sRun = 0;
+            gRun++;
+          } else {
+            push();
+          }
+        }
+        push();
+      }
+      return { solids, glows };
+    };
+    const hz = collect(height, width, false);
+    const vt = collect(width, height, true);
+    const solids = hz.solids.concat(vt.solids);
+    const glows = hz.glows.concat(vt.glows);
+    const pick = (arr: number[]) => {
+      if (!arr.length) return 0;
+      const sorted = arr.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length * 0.7)];
+    };
+    let ring = 0;
+    const onCover = (x: number, y: number) => {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const b = data[i + 2];
+      return r < 150 && b > 140 && b > r + 20;
+    };
+    const whites: { x: number; y: number }[] = [];
+    for (let y = Math.floor(height * 0.38); y < Math.floor(height * 0.7); y++) {
+      for (let x = Math.floor(width * 0.42); x < Math.floor(width * 0.82); x++) {
+        const i = (y * width + x) * 4;
+        if (data[i] < 240 || data[i + 1] < 240 || data[i + 2] < 230) continue;
+        let coverHits = 0;
+        for (const [dx, dy] of [[14, 0], [-14, 0], [0, 14], [0, -14]]) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < width && yy < height && onCover(xx, yy)) coverHits++;
+        }
+        if (coverHits >= 2) whites.push({ x, y });
+      }
+    }
+    if (whites.length) {
+      const cx = whites.reduce((s, p) => s + p.x, 0) / whites.length;
+      const cy = whites.reduce((s, p) => s + p.y, 0) / whites.length;
+      const radii: number[] = [];
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2;
+        const ux = Math.cos(ang);
+        const uy = Math.sin(ang);
+        let rad = 0;
+        let miss = 0;
+        for (let t = 1; t < 40; t++) {
+          const x = Math.round(cx + ux * t);
+          const y = Math.round(cy + uy * t);
+          if (x < 0 || y < 0 || x >= width || y >= height) break;
+          const i = (y * width + x) * 4;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const white = r >= 220 && g >= 220 && b >= 210;
+          const orange = r >= 150 && g >= 30 && g <= 220 && b <= 180 && r > g && r > b;
+          if (white || orange) {
+            rad = t;
+            miss = 0;
+          } else if (rad > 0) {
+            miss++;
+            if (miss >= 3) break;
+          }
+        }
+        if (rad > 0) radii.push(rad);
+      }
+      radii.sort((a, b) => a - b);
+      if (radii.length) ring = radii[Math.floor(radii.length * 0.5)] * 2;
+    }
+    return {
+      solidWidth: Math.round(pick(solids) * scale * 10) / 10,
+      glowWidth: Math.round(pick(glows) * scale * 10) / 10,
+      ringPx: Math.round(ring * scale * 10) / 10,
+      backing: { w: width, h: height },
+      css: { w: width, h: height },
+    };
+  }, png.toString('base64'));
+}
 
 test.use({
   viewport: VIEWPORT,
@@ -108,23 +260,38 @@ test.describe('Cover spike 390x844', () => {
 
   test('player orb is small enough to show the line tip mid-draw', async ({ page }) => {
     test.setTimeout(60000);
-    await page.goto('/?qa=1');
-    await page.waitForSelector('#game-container canvas');
-    await page.click('#botBtn');
-    await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
-    await page.waitForFunction(
-      () => {
-        const d = window.__turfDebug;
-        return Boolean(
-          d &&
-            d.ownedCells.p1 >= 15000 &&
-            d.drawing.p1 &&
-            d.trails.p1 >= 55,
-        );
-      },
-      { timeout: 45000 },
-    );
+    await waitMidDraw(page);
+    const measured = await measureRenderedTrail(page);
+    console.log('rendered trail WIDTH (not radius) 390x844', measured);
+    expect(measured.solidWidth).toBeGreaterThanOrEqual(3.5);
+    expect(measured.solidWidth).toBeLessThanOrEqual(5.5);
+    expect(measured.glowWidth).toBeGreaterThanOrEqual(4);
+    expect(measured.glowWidth).toBeLessThanOrEqual(11);
+    expect(measured.ringPx).toBeGreaterThanOrEqual(16);
+    expect(measured.ringPx).toBeLessThanOrEqual(24);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
+  });
+
+  test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
+    test.setTimeout(120000);
+    const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2.5, maxSolid: 6.5 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 3.5, maxSolid: 6.5 },
+    ];
+    for (const shot of shots) {
+      await page.setViewportSize(shot.size);
+      await waitMidDraw(page);
+      const measured = await measureRenderedTrail(page);
+      console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
+      expect(measured.solidWidth, shot.label).toBeGreaterThanOrEqual(shot.minSolid);
+      expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
+      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(3);
+      expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(11);
+      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(12);
+      expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
+      fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
+      await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });
+    }
   });
 
   test('loss result is from my perspective and keeps board width', async ({ page }) => {

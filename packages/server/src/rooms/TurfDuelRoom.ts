@@ -41,6 +41,8 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected rematchVotes = new Set<1 | 2>();
   protected rematchRoomId: string | null = null;
   protected rematchCreating = false;
+  protected rematchLobby = false;
+  protected rematchNoShowTimer: NodeJS.Timeout | null = null;
   protected readonly maxDisconnects = 2;
   protected readonly maxDisconnectMs = Number(process.env.TURF_DUEL_MAX_DISCONNECT_MS) || 30000;
 
@@ -93,6 +95,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.onMessage('rematch', (client) => {
       void this.handleRematch(client);
     });
+
   }
 
   onJoin(client: Client, options: any) {
@@ -183,7 +186,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
     // Every close code is a leave (immediate loss) or a disconnect (pause + reconnect).
     if (this.isImmediateLeave(resolved)) {
-      this.handleImmediateLeave(playerNum, resolved);
+      this.handleImmediateLeave(playerNum, resolved, client.sessionId);
       return;
     }
 
@@ -204,9 +207,21 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   }
 
   /** Voluntary/normal leave: opponent wins now. Do not hold allowReconnection. */
-  private handleImmediateLeave(playerNum: 1 | 2, code: number): void {
+  private handleImmediateLeave(playerNum: 1 | 2, code: number, sessionId: string): void {
     if (this.matchState.result) {
       console.log(`Player ${playerNum} leave ${code} after match end`);
+      return;
+    }
+    // Late rematch consume that immediately leave()s must not walkover the other seat.
+    if (this.rematchLobby && this.matchState.tick <= 1) {
+      console.log(`Player ${playerNum} leave ${code} at rematch start — no forfeit`);
+      this.freeWaitingSeat(sessionId);
+      if (this.gameLoop) {
+        clearInterval(this.gameLoop);
+        this.gameLoop = null;
+      }
+      this.matchStarted = false;
+      void this.openRematchToMatchmaking();
       return;
     }
     const winner = playerNum === 1 ? 2 : 1;
@@ -301,6 +316,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     }
     if (this.forfeitCleanupTimer) {
       clearTimeout(this.forfeitCleanupTimer);
+    }
+    if (this.rematchNoShowTimer) {
+      clearTimeout(this.rematchNoShowTimer);
+      this.rematchNoShowTimer = null;
     }
 
     // Log bandwidth when room is disposed (match ended or players left)
@@ -418,6 +437,65 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     return false;
   }
 
+  /**
+   * Server-internal only (remoteRoomCall from handleRematch).
+   * Client create/join options must not trigger this — ignore options.rematch.
+   */
+  async configureRematchLobby(): Promise<void> {
+    this.rematchLobby = true;
+    const seatS = Number(process.env.TURF_DUEL_REMATCH_SEAT_S);
+    if (Number.isFinite(seatS) && seatS > 0) {
+      this.seatReservationTimeout = seatS;
+    }
+    await this.setPrivate(true);
+    this.armRematchNoShow();
+  }
+
+  private armRematchNoShow(): void {
+    if (this.rematchNoShowTimer) {
+      clearTimeout(this.rematchNoShowTimer);
+    }
+    this.rematchNoShowTimer = setTimeout(() => {
+      this.rematchNoShowTimer = null;
+      if (this.matchStarted) return;
+      void this.openRematchToMatchmaking();
+    }, this.seatReservationTimeout * 1000 + 80);
+  }
+
+  private async openRematchToMatchmaking(): Promise<void> {
+    if (this.matchStarted) return;
+    try {
+      this.cancelUnusedSeatReservations();
+      await this.setPrivate(false);
+      if (this.locked) {
+        await this.unlock();
+      }
+      console.log(`Rematch lobby ${this.roomId} opened to matchmaking after seat expiry`);
+    } catch (err) {
+      console.error('Failed to open rematch lobby:', err);
+    }
+  }
+
+  /** Fire Colyseus unused-seat timers now so a late consumeSeatReservation fails instead of joining. */
+  private cancelUnusedSeatReservations(): void {
+    const room = this as unknown as {
+      _reservedSeats?: Record<string, [unknown, unknown, boolean?, boolean?]>;
+      _reservedSeatTimeouts?: Record<string, NodeJS.Timeout>;
+    };
+    const seats = room._reservedSeats;
+    const timeouts = room._reservedSeatTimeouts;
+    if (!seats || !timeouts) return;
+    for (const [sessionId, timer] of Object.entries(timeouts)) {
+      const reserved = seats[sessionId];
+      if (!reserved || reserved[2]) continue;
+      clearTimeout(timer);
+      const fire = (timer as NodeJS.Timeout & { _onTimeout?: () => void })._onTimeout;
+      if (typeof fire === 'function') {
+        fire.call(timer);
+      }
+    }
+  }
+
   private async handleRematch(client: Client): Promise<void> {
     const from = this.playerMapping.get(client.sessionId);
     if (!from || !this.matchState.result) return;
@@ -429,10 +507,7 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
     this.rematchCreating = true;
     try {
       const created = await matchMaker.createRoom('turf_duel', {});
-      const fresh = matchMaker.getLocalRoomById(created.roomId);
-      if (fresh) {
-        await fresh.setPrivate(true);
-      }
+      await matchMaker.remoteRoomCall(created.roomId, 'configureRematchLobby');
       this.rematchRoomId = created.roomId;
       const seats = new Map<1 | 2, ReturnType<typeof matchMaker.buildSeatReservation>>();
       for (const num of this.rematchVotes) {
@@ -478,6 +553,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected startGame() {
     console.log('Starting game loop at 20Hz');
     this.matchStarted = true;
+    if (this.rematchNoShowTimer) {
+      clearTimeout(this.rematchNoShowTimer);
+      this.rematchNoShowTimer = null;
+    }
 
     const tickInterval = 1000 / TICKS_PER_SECOND;
 

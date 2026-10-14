@@ -73,7 +73,10 @@ jobs:
         run: npm run test:rematch --workspace=packages/server
 
       - name: Run rematch vote/reserve tests
-        run: npm run test:my-rematch --workspace=packages/server
+        run: npm run test:rematch-reserve --workspace=packages/server
+
+      - name: Run rematch seat-expiry tests
+        run: npm run test:rematch-expiry --workspace=packages/server
       
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

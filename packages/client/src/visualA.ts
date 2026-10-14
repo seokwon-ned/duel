@@ -312,6 +312,7 @@ export function paintKkumuli(
   g.stroke();
 }
 
+/** Mockup A cutter: white center, #FF7A1A (or foe) ring, tight soft glow. */
 export function paintOrb(
   g: CanvasRenderingContext2D,
   s: number,
@@ -321,11 +322,10 @@ export function paintOrb(
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  const glow = g.createRadialGradient(cx, cy, s * 0.08, cx, cy, s * 0.5);
-  glow.addColorStop(0, '#ffffff');
-  glow.addColorStop(0.18, color);
-  glow.addColorStop(0.45, hexAlpha(color, 0.7));
-  glow.addColorStop(0.72, hexAlpha(color, 0.22));
+  const glow = g.createRadialGradient(cx, cy, s * 0.10, cx, cy, s * 0.5);
+  glow.addColorStop(0, hexAlpha(color, 0.88));
+  glow.addColorStop(0.36, hexAlpha(color, 0.45));
+  glow.addColorStop(0.72, hexAlpha(color, 0.16));
   glow.addColorStop(1, hexAlpha(color, 0));
   g.fillStyle = glow;
   g.beginPath();
@@ -333,29 +333,19 @@ export function paintOrb(
   g.fill();
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
   g.fill();
-  g.strokeStyle = '#0F172A';
-  g.lineWidth = Math.max(2, s * 0.07);
+  g.fillStyle = '#ffffff';
   g.beginPath();
-  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
-  g.stroke();
-  g.strokeStyle = '#ffffff';
-  g.lineWidth = Math.max(1.5, s * 0.045);
-  g.beginPath();
-  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
-  g.stroke();
+  g.arc(cx, cy, s * 0.20, 0, Math.PI * 2);
+  g.fill();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';
-    g.lineWidth = Math.max(2, s * 0.08);
+    g.lineWidth = Math.max(2, s * 0.04);
     g.beginPath();
     g.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
     g.stroke();
   }
-  g.fillStyle = '#ffffff';
-  g.beginPath();
-  g.arc(cx - s * 0.06, cy - s * 0.06, s * 0.13, 0, Math.PI * 2);
-  g.fill();
 }
 
 /** 8-point spiky star, spark pink, white center. */

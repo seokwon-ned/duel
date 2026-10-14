@@ -35,10 +35,14 @@ const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
-const ORB_CELLS = 15;
+/** Mockup A visible ring ~20px at 390×844 (6% of board). Floor keeps 360×640 ~18px. */
+const ORB_CELLS = 16;
+const ORB_MIN_PX = 18;
 const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
+/** Give up on a reserved rematch seat and fall back to joinOrCreate. */
+const SEAT_CONSUME_MS = 8000;
 
 interface RematchOffer {
   roomId: string;
@@ -271,7 +275,7 @@ class GameScene extends Phaser.Scene {
     this.canvas.height = BOARD_H;
     this.texture = this.textures.addCanvas('cover-board', this.canvas);
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
-    addGlow(this.boardImage, AH.purple, 3);
+    addGlow(this.boardImage, AH.purple, 1.6);
 
     this.trailGlow = this.add.graphics();
     this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
@@ -924,7 +928,8 @@ class GameScene extends Phaser.Scene {
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
     this.trailGlow?.clear();
-    this.trailGfx.lineStyle(4, AH.purple, 0.85);
+    const frameW = Math.max(1, scale * 1.0);
+    this.trailGfx.lineStyle(frameW, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
     const mine = trail1;
     const foe = trail2 ?? [];
@@ -981,10 +986,15 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    stamp(glowGfx, Math.max(16, scale * 10), glow, 0.22);
-    stamp(glowGfx, Math.max(12, scale * 7.2), glow, 0.42);
-    stamp(this.trailGfx, Math.max(8, scale * 5.2), glow, 1);
-    stamp(this.trailGfx, Math.max(3.6, scale * 2.4), core, 1);
+    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390; outer glow is wider/softer like mockup A.
+    const glowR = scale * 2.4;
+    const midR = scale * 1.05;
+    const coreR = scale * 0.85;
+    const hiR = scale * 0.32;
+    stamp(glowGfx, glowR, glow, 0.16);
+    stamp(glowGfx, midR, glow, 0.28);
+    stamp(this.trailGfx, coreR, glow, 1);
+    stamp(this.trailGfx, hiR, core, 1);
   }
 
   private paintActors(
@@ -1033,13 +1043,14 @@ class GameScene extends Phaser.Scene {
   private placeShownActors() {
     if (!this.boardImage || !this.lerpReady) return;
     const scale = this.boardImage.scaleX;
-    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number) => {
+    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number, minPx = 10) => {
       if (!sprite) return;
       sprite.setPosition(this.actorWorld(p).x, this.actorWorld(p).y);
-      sprite.setDisplaySize(Math.max(10, size * scale), Math.max(10, size * scale));
+      const px = Math.max(minPx, size * scale);
+      sprite.setDisplaySize(px, px);
     };
-    place(this.p1Sprite, this.shown.p1, ORB_CELLS);
-    place(this.p2Sprite, this.shown.p2, ORB_CELLS);
+    place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_PX);
+    place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_PX);
     place(this.kkumuli, this.shown.boss, KK_CELLS);
     place(this.sparkSprites[0], this.shown.s1, 18);
     place(this.sparkSprites[1], this.shown.s2, 18);
@@ -1106,7 +1117,8 @@ class GameScene extends Phaser.Scene {
       }
       const w = this.worldOf(src);
       img.setPosition(w.x, w.y);
-      const sz = Math.max(10, size * (1 - i * 0.07) * scale);
+      // Visible afterimage size tracks the trail (~4–5px), not the orb ring.
+      const sz = Math.max(3, size * 0.20 * (1 - i * 0.12) * scale);
       img.setDisplaySize(sz, sz);
       img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
     });
@@ -1150,10 +1162,17 @@ class GameScene extends Phaser.Scene {
             let r = cov[i];
             let g = cov[i + 1];
             let b = cov[i + 2];
-            if (left > 0 || right > 0 || up > 0 || down > 0) {
-              r = r + (((255 - r) * 0.72) + 0.5) | 0;
-              g = g + (((214 - g) * 0.72) + 0.5) | 0;
-              b = b + (((80 - b) * 0.72) + 0.5) | 0;
+            const near = (left > 0 ? 1 : 0) + (right > 0 ? 1 : 0) + (up > 0 ? 1 : 0) + (down > 0 ? 1 : 0);
+            const farL = x > 1 ? row[x - 2] : -1;
+            const farR = x + 2 < w ? row[x + 2] : -1;
+            const farU = y > 1 ? grid[y - 2][x] : -1;
+            const farD = y + 2 < h ? grid[y + 2][x] : -1;
+            const far = (farL > 0 ? 1 : 0) + (farR > 0 ? 1 : 0) + (farU > 0 ? 1 : 0) + (farD > 0 ? 1 : 0);
+            const edgeA = near ? 0.72 : far ? 0.22 : 0;
+            if (edgeA > 0) {
+              r = r + (((255 - r) * edgeA) + 0.5) | 0;
+              g = g + (((230 - g) * edgeA) + 0.5) | 0;
+              b = b + (((120 - b) * edgeA) + 0.5) | 0;
             }
             out[i] = r;
             out[i + 1] = g;
@@ -1252,6 +1271,41 @@ document.getElementById('connectBtn')?.addEventListener('click', async () => {
   }
 });
 
+async function joinOnlineRematch(client: Client, offer: RematchOffer | null) {
+  if (offer?.seat) {
+    try {
+      return await new Promise<Room>((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('rematch seat timeout'));
+        }, SEAT_CONSUME_MS);
+        client.consumeSeatReservation(offer.seat!).then(
+          (room) => {
+            clearTimeout(timer);
+            if (settled) {
+              void room.leave();
+              return;
+            }
+            settled = true;
+            resolve(room);
+          },
+          (err) => {
+            clearTimeout(timer);
+            if (settled) return;
+            settled = true;
+            reject(err);
+          },
+        );
+      });
+    } catch {
+      /* reservation expired or hung — room is public after seat timeout */
+    }
+  }
+  return client.joinOrCreate('turf_duel');
+}
+
 function startBotMatch() {
   const statusEl = document.getElementById('status');
   if (statusEl) statusEl.textContent = 'Playing vs Bot (offline)';
@@ -1270,11 +1324,7 @@ document.getElementById('rematchBtn')?.addEventListener('click', async () => {
       const serverUrl = (document.getElementById('serverUrl') as HTMLInputElement).value;
       const offer = await scene.requestOnlineRematch();
       const client = new Client(serverUrl);
-      const room = offer?.seat
-        ? await client.consumeSeatReservation(offer.seat)
-        : offer?.roomId
-          ? await client.joinById(offer.roomId)
-          : await client.joinOrCreate('turf_duel');
+      const room = await joinOnlineRematch(client, offer);
       if (statusEl) statusEl.textContent = `Connected! Room: ${room.roomId}`;
       scene.startOnlineMode(room);
     } catch (error) {
