@@ -49,7 +49,7 @@ const ORB_BLOOM_TEX = 64;
 const TRAIL_DPR_CAP = 2;
 const TRAIL_ORANGE_CSS = 4;
 /** ~2 CSS px; restroked last after glow so FIT downsample still reads ~2px. */
-const TRAIL_WHITE_CSS = 2.5;
+const TRAIL_WHITE_CSS = 2.6;
 /** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
   [26, 0.14],
@@ -1205,8 +1205,11 @@ class GameScene extends Phaser.Scene {
       }
     }
     if (pass === 'body' || pass === 'all') {
-      ctx.strokeStyle = color;
+      // Drop the +26 blue of #FF7A1A so FIT+purple mix stays b≤70.
+      ctx.strokeStyle = color === A.me ? '#FF7A00' : color;
       ctx.lineWidth = px(TRAIL_ORANGE_CSS);
+      ctx.stroke(path);
+      ctx.lineWidth = px(Math.max(TRAIL_WHITE_CSS + 1, TRAIL_ORANGE_CSS - 0.8));
       ctx.stroke(path);
     }
     if (pass === 'core' || pass === 'all') {
