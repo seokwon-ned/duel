@@ -124,7 +124,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         const dx = b.x - prev.x;
         const dy = b.y - prev.y;
         const len = Math.hypot(dx, dy);
-        if (len < 2) continue;
+        if (len < 0.4) continue;
         const nx = -dy / len;
         const ny = dx / len;
         const cx = (prev.x + b.x) / 2;
