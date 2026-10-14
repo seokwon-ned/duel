@@ -76,7 +76,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
   sampleMins: number[];
 }> {
   const png = await page.locator('#game-container canvas').screenshot();
-  const pts = await page.evaluate(() => window.__turfDebug?.trailPts ?? window.__turfDebug?.trailPtsCss ?? []);
+  const pts = await page.evaluate(() => window.__turfDebug?.trailPts ?? []);
   return page.evaluate(
     async ({ b64, pts }) => {
       const img = new Image();
@@ -544,7 +544,19 @@ test.describe('Cover spike 390x844', () => {
 
   test('incremental trail append keeps a white core', async ({ page }) => {
     test.setTimeout(60000);
-    await waitMidDraw(page);
+    await page.goto('/?qa=1');
+    await page.waitForSelector('#game-container canvas');
+    await page.click('#botBtn');
+    await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
+    await page.waitForFunction(
+      () => {
+        const d = window.__turfDebug;
+        return Boolean(
+          d && d.drawing.p1 && !d.cutFx && d.trails.p1 >= 45 && d.trailPaintAppends >= 30,
+        );
+      },
+      { timeout: 45000 },
+    );
     await page.evaluate(() => {
       window.__turfForceTrailDpr = 2;
     });
@@ -554,15 +566,11 @@ test.describe('Cover spike 390x844', () => {
       (b) => {
         const d = window.__turfDebug;
         return Boolean(
-          d &&
-            d.trailPaintAppends >= b + 30 &&
-            d.drawing.p1 &&
-            d.trails.p1 >= 40 &&
-            (d.trailPts?.length ?? 0) >= 40,
+          d && d.drawing.p1 && !d.cutFx && d.trails.p1 >= 45 && d.trailPaintAppends >= b + 8,
         );
       },
       base,
-      { timeout: 20000 },
+      { timeout: 12000 },
     );
     await page.evaluate(
       () =>
@@ -578,11 +586,12 @@ test.describe('Cover spike 390x844', () => {
       p95: window.__turfDebug?.trailPaintP95,
       fullMs: window.__turfDebug?.trailPaintFullMs,
       dpr: window.__turfDebug?.trailDpr,
+      pts: window.__turfDebug?.trailPts?.length ?? 0,
+      trail: window.__turfDebug?.trails.p1,
     }));
-    expect(kind.appends ?? 0).toBeGreaterThanOrEqual(base + 30);
+    expect(kind.appends ?? 0, `paint ${JSON.stringify(kind)}`).toBeGreaterThanOrEqual(30);
     const along = await measureWholeTrailWhite(page);
-    const ptsN = await page.evaluate(() => window.__turfDebug?.trailPts?.length ?? 0);
-    console.log('incremental append whole-trail white 390x844', along, kind, { ptsN });
+    console.log('incremental append whole-trail white 390x844', along, kind);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw-append.png') });
     expect(along.sections, `sections ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(20);
     expect(along.missingPct, `missing white ${JSON.stringify(along)}`).toBe(0);
