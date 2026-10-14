@@ -122,6 +122,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         const ux = Math.cos(ang);
         const uy = Math.sin(ang);
         let rad = 0;
+        let miss = 0;
         for (let t = 1; t < 40; t++) {
           const x = Math.round(cx + ux * t);
           const y = Math.round(cy + uy * t);
@@ -131,9 +132,14 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
           const g = data[i + 1];
           const b = data[i + 2];
           const white = r >= 220 && g >= 220 && b >= 210;
-          const orange = r >= 170 && g >= 40 && g <= 200 && b <= 140 && r > g && r > b + 10;
-          if (white || orange) rad = t;
-          else if (rad > 0) break;
+          const orange = r >= 150 && g >= 30 && g <= 220 && b <= 180 && r > g && r > b;
+          if (white || orange) {
+            rad = t;
+            miss = 0;
+          } else if (rad > 0) {
+            miss++;
+            if (miss >= 3) break;
+          }
         }
         if (rad > 0) radii.push(rad);
       }
