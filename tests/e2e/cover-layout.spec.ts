@@ -207,10 +207,10 @@ test.describe('Cover spike 390x844', () => {
     await waitMidDraw(page);
     const measured = await measureRenderedTrail(page);
     console.log('rendered trail WIDTH (not radius) 390x844', measured);
-    expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
-    expect(measured.solidWidth).toBeLessThanOrEqual(8);
+    expect(measured.solidWidth).toBeGreaterThanOrEqual(3.5);
+    expect(measured.solidWidth).toBeLessThanOrEqual(5.5);
     expect(measured.glowWidth).toBeGreaterThanOrEqual(4);
-    expect(measured.glowWidth).toBeLessThanOrEqual(12);
+    expect(measured.glowWidth).toBeLessThanOrEqual(8);
     expect(measured.glowWidth).toBeGreaterThanOrEqual(measured.solidWidth);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
   });
@@ -218,8 +218,8 @@ test.describe('Cover spike 390x844', () => {
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
     test.setTimeout(120000);
     const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
-      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 8 },
-      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 3, maxSolid: 9 },
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2.5, maxSolid: 5.5 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 3.5, maxSolid: 6.5 },
     ];
     for (const shot of shots) {
       await page.setViewportSize(shot.size);

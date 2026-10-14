@@ -35,7 +35,9 @@ const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
-const ORB_CELLS = 15;
+/** Mockup A orb: ~32px at 390×844 (white disc + ring). Floor keeps 360×640 readable. */
+const ORB_CELLS = 20;
+const ORB_MIN_PX = 20;
 const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -926,7 +928,7 @@ class GameScene extends Phaser.Scene {
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
     this.trailGlow?.clear();
-    const frameW = Math.max(1.2, scale * 1.2);
+    const frameW = Math.max(1, scale * 1.0);
     this.trailGfx.lineStyle(frameW, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
     const mine = trail1;
@@ -984,13 +986,13 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // Stamp RADIUS in cells (width ≈ 2×radius×cssScale). 1.2 / 2.5 → ~4–8px width at 390×844.
-    const glowR = scale * 2.5;
-    const midR = scale * 1.8;
-    const coreR = scale * 1.2;
-    const hiR = scale * 0.55;
-    stamp(glowGfx, glowR, glow, 0.22);
-    stamp(glowGfx, midR, glow, 0.42);
+    // Stamp RADIUS in cells. WIDTH ≈ 2×radius×cssScale; 0.85/1.55 → ~4–5px at 390×844.
+    const glowR = scale * 1.55;
+    const midR = scale * 1.15;
+    const coreR = scale * 0.85;
+    const hiR = scale * 0.32;
+    stamp(glowGfx, glowR, glow, 0.16);
+    stamp(glowGfx, midR, glow, 0.32);
     stamp(this.trailGfx, coreR, glow, 1);
     stamp(this.trailGfx, hiR, core, 1);
   }
@@ -1041,13 +1043,14 @@ class GameScene extends Phaser.Scene {
   private placeShownActors() {
     if (!this.boardImage || !this.lerpReady) return;
     const scale = this.boardImage.scaleX;
-    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number) => {
+    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number, minPx = 10) => {
       if (!sprite) return;
       sprite.setPosition(this.actorWorld(p).x, this.actorWorld(p).y);
-      sprite.setDisplaySize(Math.max(10, size * scale), Math.max(10, size * scale));
+      const px = Math.max(minPx, size * scale);
+      sprite.setDisplaySize(px, px);
     };
-    place(this.p1Sprite, this.shown.p1, ORB_CELLS);
-    place(this.p2Sprite, this.shown.p2, ORB_CELLS);
+    place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_PX);
+    place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_PX);
     place(this.kkumuli, this.shown.boss, KK_CELLS);
     place(this.sparkSprites[0], this.shown.s1, 18);
     place(this.sparkSprites[1], this.shown.s2, 18);
@@ -1114,7 +1117,7 @@ class GameScene extends Phaser.Scene {
       }
       const w = this.worldOf(src);
       img.setPosition(w.x, w.y);
-      const sz = Math.max(10, size * (1 - i * 0.07) * scale);
+      const sz = Math.max(ORB_MIN_PX * 0.55, size * (1 - i * 0.07) * scale);
       img.setDisplaySize(sz, sz);
       img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
     });
@@ -1164,7 +1167,7 @@ class GameScene extends Phaser.Scene {
             const farU = y > 1 ? grid[y - 2][x] : -1;
             const farD = y + 2 < h ? grid[y + 2][x] : -1;
             const far = (farL > 0 ? 1 : 0) + (farR > 0 ? 1 : 0) + (farU > 0 ? 1 : 0) + (farD > 0 ? 1 : 0);
-            const edgeA = near ? 0.82 : far ? 0.4 : 0;
+            const edgeA = near ? 0.72 : far ? 0.22 : 0;
             if (edgeA > 0) {
               r = r + (((255 - r) * edgeA) + 0.5) | 0;
               g = g + (((230 - g) * edgeA) + 0.5) | 0;
