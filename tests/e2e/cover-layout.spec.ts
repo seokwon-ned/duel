@@ -406,13 +406,23 @@ test.describe('Cover spike 390x844', () => {
     test.setTimeout(60000);
     await waitMidDraw(page);
     const measured = await measureRenderedTrail(page);
-    const perf = await page.evaluate(() => ({
+    const perf1 = await page.evaluate(() => ({
       ms: window.__turfDebug?.trailPaintMs,
       avg: window.__turfDebug?.trailPaintAvg,
       dpr: window.__turfDebug?.trailDpr,
     }));
-    console.log('rendered trail WIDTH (not radius) 390x844', measured, perf);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
+    await page.evaluate(() => {
+      window.__turfForceTrailDpr = 2;
+    });
+    await waitTrailRedraw(page);
+    await waitTrailRedraw(page);
+    const perf2 = await page.evaluate(() => ({
+      ms: window.__turfDebug?.trailPaintMs,
+      avg: window.__turfDebug?.trailPaintAvg,
+      dpr: window.__turfDebug?.trailDpr,
+    }));
+    console.log('rendered trail WIDTH (not radius) 390x844', measured, { dpr1: perf1, dpr2: perf2 });
     expect(measured.hasWhiteCenter, `center ${measured.centerRgb}`).toBe(true);
     expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
     expect(measured.whiteCore).toBeLessThanOrEqual(3.5);

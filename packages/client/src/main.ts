@@ -48,15 +48,16 @@ const ORB_BLOOM_TEX = 64;
 /** Trail sheet is CSS size × DPR (capped at 2) so a 2px white core survives WebGL. */
 const TRAIL_DPR_CAP = 2;
 const TRAIL_ORANGE_CSS = 4;
-/** Slightly over 2 CSS px so LINEAR downsample still reads ~2px on screen. */
-const TRAIL_WHITE_CSS = 2.6;
+/** 3 CSS px so LINEAR→200px FB still reads a ~2px white core at DPR1. */
+const TRAIL_WHITE_CSS = 3;
 /** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
   [26, 0.14],
   [12, 0.10],
   [7, 0.16],
 ];
-const TRAIL_GLOW_PAD_CSS = 16;
+/** Dirty GPU pad must cover the widest glow or incremental uploads clip. */
+const TRAIL_GLOW_PAD_CSS = TRAIL_GLOW_LAYERS[0][0] + 4;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
 /** Give up on a reserved rematch seat and fall back to joinOrCreate. */
@@ -101,6 +102,7 @@ interface TurfDebug {
 declare global {
   interface Window {
     __turfDebug?: TurfDebug;
+    __turfForceTrailDpr?: number;
   }
 }
 
@@ -999,7 +1001,8 @@ class GameScene extends Phaser.Scene {
 
   /** Device-pixel trail sheet, displayed at CSS size so a 2px white core stays crisp. */
   private trailDpr(): number {
-    const raw = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    const forced = typeof window !== 'undefined' ? window.__turfForceTrailDpr : undefined;
+    const raw = typeof forced === 'number' ? forced : typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     return Math.min(TRAIL_DPR_CAP, Math.max(1, raw));
   }
 
@@ -1071,12 +1074,14 @@ class GameScene extends Phaser.Scene {
         }
       };
       if (inc1) {
-        this.strokeTrailCss(ctx, trail1, this.lastPts1.length - 1, cell, dpr, A.me, false);
-        mark(trail1, this.lastPts1.length - 1);
+        const from = this.lastPts1.length - 2;
+        this.strokeTrailCss(ctx, trail1, from, cell, dpr, A.me, false);
+        mark(trail1, from);
       }
       if (inc2) {
-        this.strokeTrailCss(ctx, trail2, this.lastPts2.length - 1, cell, dpr, A.foe, true);
-        mark(trail2, this.lastPts2.length - 1);
+        const from = this.lastPts2.length - 2;
+        this.strokeTrailCss(ctx, trail2, from, cell, dpr, A.foe, true);
+        mark(trail2, from);
       }
       dirty = {
         x: Math.max(0, box.x0 - pad),
@@ -1103,15 +1108,18 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Upload only the new segment. Phaser stores canvas textures Y-flipped. */
   private uploadTrail(dirty: { x: number; y: number; w: number; h: number } | null, tw: number, th: number) {
     if (!this.trailSheet || !this.trailSheetTexture) return;
-    if (!dirty || dirty.w >= tw * 0.5 || dirty.h >= th * 0.5) {
+    if (!dirty || dirty.w <= 1 || dirty.h <= 1 || dirty.w >= tw * 0.5 || dirty.h >= th * 0.5) {
       this.trailSheetTexture.refresh();
       return;
     }
     const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer;
     const gl = renderer.gl;
-    const wrapper = this.trailSheetTexture.source[0]?.glTexture as { webGLTexture?: WebGLTexture } | null;
+    const wrapper = this.trailSheetTexture.source[0]?.glTexture as
+      | Phaser.Renderer.WebGL.Wrappers.WebGLTextureWrapper
+      | undefined;
     if (!gl || !wrapper?.webGLTexture) {
       this.trailSheetTexture.refresh();
       return;
@@ -1130,9 +1138,10 @@ class GameScene extends Phaser.Scene {
     }
     sctx.clearRect(0, 0, w, h);
     sctx.drawImage(this.trailSheet, x, y, w, h, 0, 0, w, h);
-    gl.bindTexture(gl.TEXTURE_2D, wrapper.webGLTexture);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
+    renderer.glTextureUnits.bind(wrapper, 0, true);
+    renderer.glWrapper.updateTexturing({
+      texturing: { flipY: true, premultiplyAlpha: wrapper.pma !== false },
+    });
     gl.texSubImage2D(gl.TEXTURE_2D, 0, x, th - y - h, gl.RGBA, gl.UNSIGNED_BYTE, this.trailScratch);
   }
 
@@ -1158,7 +1167,7 @@ class GameScene extends Phaser.Scene {
     const g = (n >> 8) & 255;
     const b = n & 255;
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
-    const px = (css: number) => Math.max(1, Math.round(css * dpr));
+    const px = (css: number) => Math.max(1, css * dpr);
     ctx.lineDashOffset = dashed ? -(start * cell) : 0;
     ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
     for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
