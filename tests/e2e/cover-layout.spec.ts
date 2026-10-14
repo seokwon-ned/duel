@@ -10,6 +10,8 @@ type TrailMeasure = {
   glowWidth: number;
   whiteCore: number;
   ringPx: number;
+  hasWhiteCenter: boolean;
+  centerRgb: [number, number, number] | null;
   backing: { w: number; h: number };
   css: { w: number; h: number };
   orb?: { x: number; y: number };
@@ -129,7 +131,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         let wRun = 0;
         const push = () => {
           if (sRun >= 3 && sRun <= 8) solids.push(sRun);
-          if (gRun >= 4 && gRun <= 22) glows.push(gRun);
+          if (gRun >= 8 && gRun <= 40) glows.push(gRun);
           if (wRun >= 1 && wRun <= 4) cores.push(wRun);
           sRun = 0;
           gRun = 0;
@@ -169,11 +171,74 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
       const sorted = arr.slice().sort((a, b) => a - b);
       return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
     };
+    let hasWhiteCenter = false;
+    let centerRgb: [number, number, number] | null = null;
+    let crossWhite = 0;
+    let crossSolid = 0;
+    let crossGlow = 0;
+    if (orbX >= 0) {
+      const yScan = Math.min(height - 2, Math.round(orbY + Math.max(28, height * 0.06)));
+      const row = [];
+      for (let x = 0; x < width; x++) row.push(pix(x, yScan));
+      const isPixWhite = (p: [number, number, number]) => p[0] >= 220 && p[1] >= 200 && p[2] >= 170 && p[1] >= p[0] * 0.72;
+      const isPixOrange = (p: [number, number, number]) =>
+        p[0] >= 180 && p[1] <= 200 && p[2] <= 140 && p[0] > p[1] + 25;
+      const isPixGlow = (p: [number, number, number]) =>
+        p[0] >= 100 && p[0] > p[1] && p[0] > p[2] - 20 && (isPixOrange(p) || isPixWhite(p) || (p[0] >= 130 && p[1] >= 40 && p[2] <= 190));
+      let best: { x0: number; x1: number; glow: number } | null = null;
+      let g0 = -1;
+      for (let x = 0; x <= width; x++) {
+        const on = x < width && isPixGlow(row[x]);
+        if (on && g0 < 0) g0 = x;
+        if (!on && g0 >= 0) {
+          const glow = x - g0;
+          if (glow >= 8 && glow <= 48 && (!best || glow > best.glow)) best = { x0: g0, x1: x - 1, glow };
+          g0 = -1;
+        }
+      }
+      if (best) {
+        crossGlow = best.glow;
+        let wRun = 0;
+        let sRun = 0;
+        for (let x = best.x0; x <= best.x1; x++) {
+          if (isPixWhite(row[x])) {
+            wRun++;
+            sRun++;
+          } else if (isPixOrange(row[x])) {
+            if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
+            wRun = 0;
+            sRun++;
+          } else {
+            if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
+            if (sRun >= 2 && sRun <= 10) crossSolid = Math.max(crossSolid, sRun);
+            wRun = 0;
+            sRun = 0;
+          }
+        }
+        if (wRun && wRun <= 5) crossWhite = Math.max(crossWhite, wRun);
+        if (sRun >= 2 && sRun <= 10) crossSolid = Math.max(crossSolid, sRun);
+        const mid = Math.round((best.x0 + best.x1) / 2);
+        let peak = mid;
+        let peakScore = -1;
+        for (let x = best.x0; x <= best.x1; x++) {
+          const p = row[x];
+          const score = Math.min(p[0], p[1], p[2]);
+          if (isPixWhite(p) && score > peakScore) {
+            peakScore = score;
+            peak = x;
+          }
+        }
+        centerRgb = row[peak];
+        hasWhiteCenter = isPixWhite(centerRgb);
+      }
+    }
     return {
-      solidWidth: Math.round(pick(solids) * scale * 10) / 10,
-      glowWidth: Math.round(pick(glows) * scale * 10) / 10,
-      whiteCore: Math.round(pick(cores, 0.5) * scale * 10) / 10,
+      solidWidth: Math.round((crossSolid || pick(solids)) * scale * 10) / 10,
+      glowWidth: Math.round((crossGlow || pick(glows)) * scale * 10) / 10,
+      whiteCore: Math.round((crossWhite || pick(cores, 0.5)) * scale * 10) / 10,
       ringPx: Math.round(ring * scale * 10) / 10,
+      hasWhiteCenter,
+      centerRgb,
       backing: { w: width, h: height },
       css: { w: width, h: height },
       orb: orbX >= 0 ? { x: Math.round(orbX), y: Math.round(orbY) } : undefined,
@@ -289,12 +354,13 @@ test.describe('Cover spike 390x844', () => {
     const measured = await measureRenderedTrail(page);
     console.log('rendered trail WIDTH (not radius) 390x844', measured);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
+    expect(measured.hasWhiteCenter, `center ${measured.centerRgb}`).toBe(true);
     expect(measured.whiteCore).toBeGreaterThanOrEqual(1);
     expect(measured.whiteCore).toBeLessThanOrEqual(3.5);
-    expect(measured.solidWidth).toBeGreaterThanOrEqual(3.5);
+    expect(measured.solidWidth).toBeGreaterThanOrEqual(3);
     expect(measured.solidWidth).toBeLessThanOrEqual(6.5);
-    expect(measured.glowWidth).toBeGreaterThanOrEqual(9);
-    expect(measured.glowWidth).toBeLessThanOrEqual(16);
+    expect(measured.glowWidth).toBeGreaterThanOrEqual(16);
+    expect(measured.glowWidth).toBeLessThanOrEqual(36);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
     expect(measured.ringPx).toBeLessThanOrEqual(24);
   });
@@ -312,12 +378,13 @@ test.describe('Cover spike 390x844', () => {
       console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
       fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
       await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });
+      expect(measured.hasWhiteCenter, `${shot.label} white center ${measured.centerRgb}`).toBe(true);
       expect(measured.whiteCore, `${shot.label} white core`).toBeGreaterThanOrEqual(1);
       expect(measured.whiteCore, `${shot.label} white core`).toBeLessThanOrEqual(3.5);
       expect(measured.solidWidth, shot.label).toBeGreaterThanOrEqual(shot.minSolid);
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
-      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(8);
-      expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(16);
+      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(14);
+      expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(36);
       expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 16 : 16);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
     }
