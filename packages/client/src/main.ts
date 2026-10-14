@@ -52,8 +52,8 @@ const TRAIL_ORANGE_CSS = 6;
 const TRAIL_WHITE_CSS = 2.2;
 /** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
-  [26, 0.16],
-  [14, 0.18],
+  [26, 0.12],
+  [16, 0.26],
   [8, 0.20],
 ];
 /** Glow lives on its own dpr-1 sheet; core pad only needs the opaque orange. */
@@ -1086,7 +1086,7 @@ class GameScene extends Phaser.Scene {
     }
     const unit = this.cssPerUnit() || 1;
     const dpr = this.trailDpr();
-    const glowDpr = dpr;
+    const glowDpr = 1;
     const cssW = Math.max(1, Math.round(BOARD_W * unit));
     const cssH = Math.max(1, Math.round(BOARD_H * unit));
     const cw = Math.max(1, Math.round(cssW * dpr));
