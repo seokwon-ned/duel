@@ -269,11 +269,11 @@ test.describe('Cover spike 390x844', () => {
     console.log('rendered trail WIDTH (not radius) 390x844', measured);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
     expect(measured.solidWidth).toBeGreaterThanOrEqual(3.5);
-    expect(measured.solidWidth).toBeLessThanOrEqual(7.5);
+    expect(measured.solidWidth).toBeLessThanOrEqual(6.5);
     expect(measured.glowWidth).toBeGreaterThanOrEqual(4);
     expect(measured.glowWidth).toBeLessThanOrEqual(11);
-    expect(measured.ringPx).toBeGreaterThanOrEqual(14);
-    expect(measured.ringPx).toBeLessThanOrEqual(26);
+    expect(measured.ringPx).toBeGreaterThanOrEqual(16);
+    expect(measured.ringPx).toBeLessThanOrEqual(24);
   });
 
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
@@ -293,7 +293,7 @@ test.describe('Cover spike 390x844', () => {
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
       expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(3);
       expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(11);
-      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 15 : 12);
+      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 16 : 16);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
     }
   });

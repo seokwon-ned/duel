@@ -38,12 +38,12 @@ const KK_TEX = 256;
 const KK_CELLS = 62;
 /** Mockup A visible ring ~20px at 390×844 (6% of board). */
 const ORB_CELLS = 16;
-/** Floor 25px so visible ring (2 × 0.38 × display) is ~18px at 360×640. */
-const ORB_MIN_PX = 25;
+/** CSS-px floor (not game units). 25 CSS px → visible ring ~19px at 360. */
+const ORB_MIN_CSS = 25;
 /** ~2× display; LINEAR downscale stays smooth (128→26px aliased). */
 const ORB_TEX = 64;
-/** Soft bloom diameter ~40px at 390. Independent of the disc floor. */
-const ORB_BLOOM_CELLS = 25;
+/** Soft bloom diameter in CSS px. Converted to game units via displayScale. */
+const ORB_BLOOM_CSS = 40;
 const ORB_BLOOM_TEX = 64;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -647,12 +647,6 @@ class GameScene extends Phaser.Scene {
   private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
     if (!this.matchState) return { events: [], prevTrail: [] };
     const claimed = this.matchState.player1.territoryCells ?? 0;
-    if (this.qaMode && !this.matchState.result) {
-      // Hold 꾸물이 in remaining cover so mid-match / cut shots show the
-      // full ~1/4-width body instead of clipping the right edge.
-      this.matchState.boss.xFp = toFp(124);
-      this.matchState.boss.yFp = toFp(118);
-    }
     if (this.qaMode && claimed < 18000) {
       this.matchState.sparx1.xFp = toFp(0);
       this.matchState.sparx1.yFp = toFp(0);
@@ -1018,30 +1012,11 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390. Wide bloom is a single stroke so stamps do not stack.
-    const glowR = scale * 2.4;
+    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390 (PR #8); glow stays tight so it does not read as 7px solid.
+    const glowR = scale * 2.0;
     const midR = scale * 1.05;
     const coreR = scale * 0.85;
     const hiR = scale * 0.32;
-    const bloomW = scale * 24.8;
-    if (this.trailBloom && dots.length >= 2) {
-      if (dashed) {
-        this.trailBloom.fillStyle(glow, 0.14);
-        const bloomR = bloomW / 2;
-        for (let i = 0; i < dots.length; i += 3) {
-          this.trailBloom.fillCircle(dots[i].x, dots[i].y, bloomR);
-        }
-      } else {
-        this.trailBloom.lineStyle(bloomW, glow, 0.16);
-        this.trailBloom.beginPath();
-        this.trailBloom.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) this.trailBloom.lineTo(pts[i].x, pts[i].y);
-        this.trailBloom.strokePath();
-        this.trailBloom.fillStyle(glow, 0.16);
-        this.trailBloom.fillCircle(pts[0].x, pts[0].y, bloomW / 2);
-        this.trailBloom.fillCircle(pts[pts.length - 1].x, pts[pts.length - 1].y, bloomW / 2);
-      }
-    }
     stamp(glowGfx, glowR, glow, 0.16);
     stamp(glowGfx, midR, glow, 0.28);
     stamp(this.trailGfx, coreR, glow, 1);
@@ -1075,8 +1050,8 @@ class GameScene extends Phaser.Scene {
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
     const guide1 = this.matchState?.player1.trail ?? this.p1TrailCopy;
     const guide2 = this.matchState?.player2.trail ?? [];
-    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.40, { x: 0, y: -1 });
-    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.32, { x: -1, y: 0 });
+    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.22, { x: 0, y: -1 });
+    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.18, { x: -1, y: 0 });
     this.placeShownActors();
   }
 
@@ -1091,19 +1066,27 @@ class GameScene extends Phaser.Scene {
     this.placeShownActors();
   }
 
+  /** CSS pixels per game unit (Phaser FIT). ORB_MIN_CSS is CSS px, not world units. */
+  private cssPerUnit(): number {
+    const disp = this.scale.displaySize?.width ?? BOARD_W;
+    return disp / BOARD_W;
+  }
+
   private placeShownActors() {
     if (!this.boardImage || !this.lerpReady) return;
     const scale = this.boardImage.scaleX;
-    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number, minPx = 10) => {
+    const unit = this.cssPerUnit() || 1;
+    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number, minCss = 0) => {
       if (!sprite) return;
       sprite.setPosition(this.actorWorld(p).x, this.actorWorld(p).y);
-      const px = Math.max(minPx, size * scale);
+      const px = Math.max(minCss / unit, size * scale);
       sprite.setDisplaySize(px, px);
     };
-    place(this.p1Bloom, this.shown.p1, ORB_BLOOM_CELLS, 0);
-    place(this.p2Bloom, this.shown.p2, ORB_BLOOM_CELLS, 0);
-    place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_PX);
-    place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_PX);
+    const bloomGame = ORB_BLOOM_CSS / unit;
+    place(this.p1Bloom, this.shown.p1, bloomGame, 0);
+    place(this.p2Bloom, this.shown.p2, bloomGame, 0);
+    place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_CSS);
+    place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_CSS);
     place(this.kkumuli, this.shown.boss, KK_CELLS);
     place(this.sparkSprites[0], this.shown.s1, 18);
     place(this.sparkSprites[1], this.shown.s2, 18);
@@ -1161,7 +1144,6 @@ class GameScene extends Phaser.Scene {
         pts.push({ x: pos.x - dx * k * 6, y: pos.y - dy * k * 6 });
       }
     }
-    const scale = this.boardImage?.scaleX ?? 1;
     imgs.forEach((img, i) => {
       const src = pts[i];
       if (!src) {
@@ -1170,8 +1152,9 @@ class GameScene extends Phaser.Scene {
       }
       const w = this.worldOf(src);
       img.setPosition(w.x, w.y);
-      // Visible afterimage size tracks the trail (~4–5px), not the orb ring.
-      const sz = Math.max(3, size * 0.20 * (1 - i * 0.12) * scale);
+      // Visible afterimage size tracks the trail (~4–5 CSS px), not the orb ring.
+      const unit = this.cssPerUnit() || 1;
+      const sz = Math.max(2 / unit, (4 / unit) * (1 - i * 0.12));
       img.setDisplaySize(sz, sz);
       img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
     });
