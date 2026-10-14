@@ -97,12 +97,16 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         x: ((p.x + 0.5) / 200) * width,
         y: ((p.y + 0.5) / 300) * height,
       });
-      const mapped = pts.map(toPx);
+      const uniq: { x: number; y: number }[] = [];
+      for (const p of pts) {
+        const last = uniq[uniq.length - 1];
+        if (!last || last.x !== p.x || last.y !== p.y) uniq.push(p);
+      }
+      const mapped = uniq.map(toPx);
       const tip = mapped.length ? mapped[mapped.length - 1] : { x: 0, y: 0 };
       const sampleMins: number[] = [];
       let missing = 0;
       let sections = 0;
-      let prev: { x: number; y: number } | null = null;
       const scan = (cx: number, cy: number, ux: number, uy: number) => {
         let best = 0;
         let found = false;
@@ -114,8 +118,31 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         }
         return { best, found };
       };
+      const probe = (cx: number, cy: number, nx: number, ny: number) => {
+        const dirs = [
+          [nx, ny],
+          [1, 0],
+          [0, 1],
+        ] as const;
+        let best = 0;
+        let found = false;
+        for (const ox of [0, -2, 2, -1, 1]) {
+          for (const oy of [0, -2, 2, -1, 1]) {
+            for (const [ux, uy] of dirs) {
+              const s = scan(cx + ox, cy + oy, ux, uy);
+              if (s.best > best) best = s.best;
+              if (s.found) found = true;
+            }
+            if (found && ox === 0 && oy === 0) return { best, found };
+          }
+        }
+        return { best, found };
+      };
+      let prev: { x: number; y: number } | null = null;
+      let skipped = 0;
       for (let i = 0; i < mapped.length; i++) {
         const b = mapped[i];
+        if (b.y > height - 10 || b.y < 10 || b.x < 10 || b.x > width - 10) continue;
         if (Math.hypot(b.x - tip.x, b.y - tip.y) < 22) continue;
         if (!prev) {
           prev = b;
@@ -124,16 +151,20 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         const dx = b.x - prev.x;
         const dy = b.y - prev.y;
         const len = Math.hypot(dx, dy);
-        if (len < 0.4) continue;
+        if (len < 0.4) {
+          prev = b;
+          continue;
+        }
+        if (skipped < 2) {
+          skipped++;
+          prev = b;
+          continue;
+        }
         const nx = -dy / len;
         const ny = dx / len;
         const cx = (prev.x + b.x) / 2;
         const cy = (prev.y + b.y) / 2;
-        const a = scan(cx, cy, nx, ny);
-        const h = scan(cx, cy, 1, 0);
-        const v = scan(cx, cy, 0, 1);
-        const best = Math.max(a.best, h.best, v.best);
-        const found = a.found || h.found || v.found;
+        const { best, found } = probe(cx, cy, nx, ny);
         sections++;
         sampleMins.push(best);
         if (!found) missing++;
