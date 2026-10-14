@@ -35,9 +35,9 @@ const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
-/** Mockup A orb: ~32px at 390×844 (white disc + ring). Floor keeps 360×640 readable. */
-const ORB_CELLS = 20;
-const ORB_MIN_PX = 20;
+/** Mockup A orb: ~39px at 390×844 (white disc + ring). Floor keeps 360×640 readable. */
+const ORB_CELLS = 24;
+const ORB_MIN_PX = 26;
 const ORB_TEX = 128;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -987,12 +987,12 @@ class GameScene extends Phaser.Scene {
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
     // Stamp RADIUS in cells. WIDTH ≈ 2×radius×cssScale; 0.85/1.55 → ~4–5px at 390×844.
-    const glowR = scale * 1.55;
-    const midR = scale * 1.15;
+    const glowR = scale * 1.25;
+    const midR = scale * 1.05;
     const coreR = scale * 0.85;
     const hiR = scale * 0.32;
-    stamp(glowGfx, glowR, glow, 0.16);
-    stamp(glowGfx, midR, glow, 0.32);
+    stamp(glowGfx, glowR, glow, 0.14);
+    stamp(glowGfx, midR, glow, 0.28);
     stamp(this.trailGfx, coreR, glow, 1);
     stamp(this.trailGfx, hiR, core, 1);
   }

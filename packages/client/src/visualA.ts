@@ -322,9 +322,9 @@ export function paintOrb(
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  const glow = g.createRadialGradient(cx, cy, s * 0.20, cx, cy, s * 0.5);
-  glow.addColorStop(0, hexAlpha(color, 0.50));
-  glow.addColorStop(0.42, hexAlpha(color, 0.20));
+  const glow = g.createRadialGradient(cx, cy, s * 0.22, cx, cy, s * 0.5);
+  glow.addColorStop(0, hexAlpha(color, 0.42));
+  glow.addColorStop(0.40, hexAlpha(color, 0.16));
   glow.addColorStop(1, hexAlpha(color, 0));
   g.fillStyle = glow;
   g.beginPath();
@@ -332,17 +332,17 @@ export function paintOrb(
   g.fill();
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.30, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.36, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#ffffff';
   g.beginPath();
-  g.arc(cx, cy, s * 0.20, 0, Math.PI * 2);
+  g.arc(cx, cy, s * 0.26, 0, Math.PI * 2);
   g.fill();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';
-    g.lineWidth = Math.max(2, s * 0.045);
+    g.lineWidth = Math.max(2, s * 0.04);
     g.beginPath();
-    g.arc(cx, cy, s * 0.33, 0, Math.PI * 2);
+    g.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
     g.stroke();
   }
 }
