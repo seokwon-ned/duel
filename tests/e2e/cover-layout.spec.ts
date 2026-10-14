@@ -550,9 +550,20 @@ test.describe('Cover spike 390x844', () => {
     });
     await waitTrailRedraw(page);
     const base = await page.evaluate(() => window.__turfDebug?.trailPaintAppends ?? 0);
-    await page.waitForFunction((b) => (window.__turfDebug?.trailPaintAppends ?? 0) >= b + 30, base, {
-      timeout: 20000,
-    });
+    await page.waitForFunction(
+      (b) => {
+        const d = window.__turfDebug;
+        return Boolean(
+          d &&
+            d.trailPaintAppends >= b + 30 &&
+            d.drawing.p1 &&
+            d.trails.p1 >= 40 &&
+            (d.trailPts?.length ?? 0) >= 40,
+        );
+      },
+      base,
+      { timeout: 20000 },
+    );
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {

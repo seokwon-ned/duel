@@ -1205,8 +1205,9 @@ class GameScene extends Phaser.Scene {
       window.__turfDebug.trailPaintAppends = this.trailPaintAppends;
       window.__turfDebug.trailPaintP95 = p95;
       window.__turfDebug.trailPaintFullMs = Math.round(this.trailPaintFullMs * 10) / 10;
-      window.__turfDebug.trailPtsCss = this.trailPtsToCss(trail1);
-      window.__turfDebug.trailPts = trail1.map((p) => ({ x: p.x, y: p.y }));
+      window.__turfDebug.trailPtsCss = this.trailPtsToCss(trail1.length >= 2 ? trail1 : trail2);
+      const src = trail1.length >= trail2.length ? trail1 : trail2;
+      window.__turfDebug.trailPts = src.map((p) => ({ x: p.x, y: p.y }));
     }
   }
 
