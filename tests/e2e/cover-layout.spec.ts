@@ -16,6 +16,14 @@ type TrailMeasure = {
   backing: { w: number; h: number };
   css: { w: number; h: number };
   orb?: { x: number; y: number };
+  sections: number;
+  missing: number;
+  missingPct: number;
+  whiteMedian: number;
+  whiteMin: number;
+  orangeMedian: number;
+  sampleMins: number[];
+  missAt: { i: number; dTip: number; dStart: number; min: number }[];
 };
 
 async function waitTrailRedraw(page: Page) {
@@ -68,18 +76,11 @@ function expect390Trail(measured: TrailMeasure) {
   expect(measured.ringPx).toBeLessThanOrEqual(24);
 }
 
-/** Strictly perpendicular cross-sections. White core = min(r,g,b) > 225. */
-async function measureWholeTrailWhite(page: Page): Promise<{
-  sections: number;
-  missing: number;
-  missingPct: number;
-  whiteMedian: number;
-  whiteMin: number;
-  orangeMedian: number;
-  sampleMins: number[];
-  missAt: { i: number; dTip: number; dStart: number; min: number }[];
-  backing: { w: number; h: number };
-}> {
+/**
+ * Band widths = median of strictly perpendicular cross-sections along the
+ * whole trail (not a single near-orb slice). White core = min(r,g,b) > 225.
+ */
+async function measureWholeTrailWhite(page: Page): Promise<TrailMeasure> {
   const png = await page.locator('#game-container canvas').screenshot();
   const pts = await page.evaluate(() => window.__turfDebug?.trailPtsCss ?? window.__turfDebug?.trailPts ?? []);
   return page.evaluate(
@@ -108,12 +109,25 @@ async function measureWholeTrailWhite(page: Page): Promise<{
       const sampleMins: number[] = [];
       const whiteWidths: number[] = [];
       const orangeWidths: number[] = [];
+      const glowWidths: number[] = [];
       const missAt: { i: number; dTip: number; dStart: number; min: number }[] = [];
       let missing = 0;
       let sections = 0;
+      let centerRgb: [number, number, number] | null = null;
+      let orangeRgb: [number, number, number] | null = null;
+      let orangeDist = Infinity;
       const isWhite = (p: [number, number, number]) => Math.min(p[0], p[1], p[2]) > 225;
       const isOrange = (p: [number, number, number]) =>
-        p[0] >= 200 && p[1] >= 50 && p[1] <= 190 && p[2] <= 90 && p[0] > p[1] + 40 && !isWhite(p);
+        p[0] >= 220 &&
+        p[1] >= 70 &&
+        p[1] <= 160 &&
+        p[2] <= 70 &&
+        p[0] > p[1] + 60 &&
+        p[0] > p[2] + 130 &&
+        !isWhite(p);
+      const isOpaque = (p: [number, number, number]) => isWhite(p) || isOrange(p);
+      const isGlow = (p: [number, number, number]) =>
+        isOpaque(p) || (p[0] >= 100 && p[1] >= 20 && p[2] <= 175 && p[0] > p[1] && p[0] > p[2] + 8);
       const start = mapped[0];
       const tip = mapped[mapped.length - 1];
       let prev: { x: number; y: number } | null = null;
@@ -151,25 +165,45 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         let whiteRun = 0;
         let maxWhite = 0;
         let solidRun = 0;
+        let solidGap = 0;
         let maxSolid = 0;
-        for (let t = -16; t <= 16; t++) {
+        let glowRun = 0;
+        let maxGlow = 0;
+        for (let t = -32; t <= 32; t++) {
           const p = pix(Math.round(cx + nx * t), Math.round(cy + ny * t));
           const m = Math.min(p[0], p[1], p[2]);
           if (m > best) best = m;
+          if (isWhite(p) && !centerRgb) centerRgb = p;
+          if (isOrange(p)) {
+            const dist = (p[0] - 255) ** 2 + (p[1] - 122) ** 2 + (p[2] - 26) ** 2;
+            if (dist < orangeDist) {
+              orangeDist = dist;
+              orangeRgb = p;
+            }
+          }
           if (isWhite(p)) {
             whiteRun++;
             if (whiteRun > maxWhite) maxWhite = whiteRun;
-            solidRun++;
-            if (solidRun > maxSolid) maxSolid = solidRun;
-          } else if (isOrange(p)) {
-            if (whiteRun > maxWhite) maxWhite = whiteRun;
-            whiteRun = 0;
-            solidRun++;
-            if (solidRun > maxSolid) maxSolid = solidRun;
           } else {
             if (whiteRun > maxWhite) maxWhite = whiteRun;
             whiteRun = 0;
+          }
+          // 1px AA hole between white core and orange band; do not count the hole.
+          if (isOpaque(p)) {
+            solidRun++;
+            solidGap = 0;
+            if (solidRun > maxSolid) maxSolid = solidRun;
+          } else if (solidRun > 0 && solidGap < 1) {
+            solidGap++;
+          } else {
             solidRun = 0;
+            solidGap = 0;
+          }
+          if (isGlow(p)) {
+            glowRun++;
+            if (glowRun > maxGlow) maxGlow = glowRun;
+          } else {
+            glowRun = 0;
           }
         }
         if (whiteRun > maxWhite) maxWhite = whiteRun;
@@ -177,6 +211,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         sampleMins.push(best);
         whiteWidths.push(maxWhite);
         orangeWidths.push(maxSolid);
+        glowWidths.push(maxGlow);
         if (maxWhite < 1) {
           missing++;
           missAt.push({
@@ -193,16 +228,81 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         const s = arr.slice().sort((a, b) => a - b);
         return s[Math.floor(s.length / 2)];
       };
+      const whiteMedian = median(whiteWidths);
+      const orangeMedian = median(orangeWidths);
+      const glowMedian = median(glowWidths);
+
+      let orbX = -1;
+      let orbY = -1;
+      const isDisc = (p: [number, number, number]) =>
+        p[0] >= 180 && p[1] >= 40 && p[1] <= 190 && p[2] <= 110 && p[0] > p[1] && p[0] > p[2] + 40;
+      const isDiscCore = (p: [number, number, number]) =>
+        p[0] >= 185 && p[1] >= 45 && p[1] <= 180 && p[2] <= 110 && p[0] > p[1] + 20 && p[0] > p[2] + 50;
+      const orbWhites: { x: number; y: number }[] = [];
+      const y0 = Math.floor(height * 0.5);
+      const y1 = Math.floor(height * 0.78);
+      const x0 = Math.floor(width * 0.28);
+      const x1 = Math.floor(width * 0.74);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          if (!isWhite(pix(x, y))) continue;
+          let orange = 0;
+          for (let a = 0; a < 8; a++) {
+            const ang = (a / 8) * Math.PI * 2;
+            const xx = Math.round(x + Math.cos(ang) * 10);
+            const yy = Math.round(y + Math.sin(ang) * 10);
+            if (xx >= 0 && yy >= 0 && xx < width && yy < height && isDisc(pix(xx, yy))) orange++;
+          }
+          if (orange >= 4) orbWhites.push({ x, y });
+        }
+      }
+      if (orbWhites.length) {
+        orbX = orbWhites.reduce((s, p) => s + p.x, 0) / orbWhites.length;
+        orbY = orbWhites.reduce((s, p) => s + p.y, 0) / orbWhites.length;
+      }
+      let ring = 0;
+      if (orbX >= 0) {
+        const radii: number[] = [];
+        for (let a = 0; a < 16; a++) {
+          const ang = (a / 16) * Math.PI * 2;
+          const ux = Math.cos(ang);
+          const uy = Math.sin(ang);
+          let rad = 0;
+          for (let t = 1; t < 16; t++) {
+            const x = Math.round(orbX + ux * t);
+            const y = Math.round(orbY + uy * t);
+            if (x < 0 || y < 0 || x >= width || y >= height) break;
+            const p = pix(x, y);
+            if (isWhite(p) || isDiscCore(p)) rad = t;
+            else if (rad > 0) break;
+          }
+          if (rad >= 6 && rad <= 14) radii.push(rad);
+        }
+        radii.sort((a, b) => a - b);
+        const body = radii.filter((r) => r >= 8 && r <= 13);
+        const use = body.length ? body : radii;
+        if (use.length) ring = use[Math.floor(use.length * 0.5)] * 2;
+      }
+
       return {
+        solidWidth: orangeMedian,
+        glowWidth: glowMedian,
+        whiteCore: whiteMedian,
+        ringPx: Math.round(ring * 10) / 10,
+        hasWhiteCenter: whiteMedian >= 1,
+        centerRgb,
+        orangeRgb,
+        backing: { w: width, h: height },
+        css: { w: width, h: height },
+        orb: orbX >= 0 ? { x: Math.round(orbX), y: Math.round(orbY) } : undefined,
         sections,
         missing,
         missingPct: sections ? Math.round((missing / sections) * 1000) / 10 : 100,
-        whiteMedian: median(whiteWidths),
+        whiteMedian,
         whiteMin: whiteWidths.length ? Math.min(...whiteWidths) : 0,
-        orangeMedian: median(orangeWidths),
+        orangeMedian,
         sampleMins,
         missAt,
-        backing: { w: width, h: height },
       };
     },
     { b64: png.toString('base64'), pts },
@@ -224,266 +324,62 @@ async function waitMidDraw(page: Page) {
   await waitTrailRedraw(page);
 }
 
-/** Rendered WIDTH in CSS px from a composited screenshot — not stamp radius constants. */
+/** Band widths come from whole-trail perpendicular medians. */
 async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
-  const png = await page.locator('#game-container canvas').screenshot();
-  return page.evaluate(async (b64) => {
-    const img = new Image();
-    img.src = `data:image/png;base64,${b64}`;
-    await img.decode();
-    const tmp = document.createElement('canvas');
-    tmp.width = img.width;
-    tmp.height = img.height;
-    const ctx = tmp.getContext('2d')!;
-    ctx.drawImage(img, 0, 0);
-    const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
-    const scale = 1;
-    const pix = (x: number, y: number) => {
-      const i = (y * width + x) * 4;
-      return [data[i], data[i + 1], data[i + 2]] as [number, number, number];
-    };
-    const isWhite = (p: [number, number, number]) => p[0] >= 210 && p[1] >= 210 && p[2] >= 200;
-    const isDisc = (p: [number, number, number]) =>
-      p[0] >= 180 && p[1] >= 40 && p[1] <= 190 && p[2] <= 110 && p[0] > p[1] && p[0] > p[2] + 40;
-    const isDiscCore = (p: [number, number, number]) =>
-      p[0] >= 185 && p[1] >= 45 && p[1] <= 180 && p[2] <= 110 && p[0] > p[1] + 20 && p[0] > p[2] + 50;
-    const isSolid = (i: number) => {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      return r >= 220 && g >= 80 && g <= 150 && b <= 70 && r > g + 70 && r > b + 130;
-    };
-    const isWhiteCore = (i: number) => {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      return r >= 240 && g >= 240 && b >= 240;
-    };
-    const isBright = (i: number) => isSolid(i) || isWhiteCore(i);
-    const isGlow = (i: number) => {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      return r >= 110 && g >= 28 && b <= 170 && r > g && r > b + 12;
-    };
-    let orbX = -1;
-    let orbY = -1;
-    const orbWhites: { x: number; y: number }[] = [];
-    const y0 = Math.floor(height * 0.50);
-    const y1 = Math.floor(height * 0.78);
-    const x0 = Math.floor(width * 0.28);
-    const x1 = Math.floor(width * 0.74);
-    for (let y = y0; y < y1; y++) {
-      for (let x = x0; x < x1; x++) {
-        if (!isWhite(pix(x, y))) continue;
-        let orange = 0;
-        for (let a = 0; a < 8; a++) {
-          const ang = (a / 8) * Math.PI * 2;
-          const xx = Math.round(x + Math.cos(ang) * 10);
-          const yy = Math.round(y + Math.sin(ang) * 10);
-          if (xx >= 0 && yy >= 0 && xx < width && yy < height && isDisc(pix(xx, yy))) orange++;
-        }
-        if (orange >= 4) orbWhites.push({ x, y });
-      }
-    }
-    if (orbWhites.length) {
-      orbX = orbWhites.reduce((s, p) => s + p.x, 0) / orbWhites.length;
-      orbY = orbWhites.reduce((s, p) => s + p.y, 0) / orbWhites.length;
-    }
-    let ring = 0;
-    if (orbX >= 0) {
-      const radii: number[] = [];
-      for (let a = 0; a < 16; a++) {
-        const ang = (a / 16) * Math.PI * 2;
-        const ux = Math.cos(ang);
-        const uy = Math.sin(ang);
-        let rad = 0;
-        for (let t = 1; t < 16; t++) {
-          const x = Math.round(orbX + ux * t);
-          const y = Math.round(orbY + uy * t);
-          if (x < 0 || y < 0 || x >= width || y >= height) break;
-          const p = pix(x, y);
-          if (isWhite(p) || isDiscCore(p)) rad = t;
-          else if (rad > 0) break;
-        }
-        if (rad >= 6 && rad <= 14) radii.push(rad);
-      }
-      radii.sort((a, b) => a - b);
-      const body = radii.filter((r) => r >= 8 && r <= 13);
-      const use = body.length ? body : radii;
-      if (use.length) ring = use[Math.floor(use.length * 0.5)] * 2;
-    }
-    const index = (x: number, y: number) => (y * width + x) * 4;
-    const collect = (major: number, minor: number, swap: boolean) => {
-      const solids: number[] = [];
-      const glows: number[] = [];
-      const cores: number[] = [];
-      for (let a = 0; a < major; a++) {
-        let sRun = 0;
-        let gRun = 0;
-        let wRun = 0;
-        const push = () => {
-          if (sRun >= 3) solids.push(sRun);
-          if (gRun >= 8 && gRun <= 40) glows.push(gRun);
-          if (wRun >= 1 && wRun <= 4) cores.push(wRun);
-          sRun = 0;
-          gRun = 0;
-          wRun = 0;
-        };
-        for (let b = 0; b < minor; b++) {
-          const i = swap ? index(a, b) : index(b, a);
-          if (isBright(i)) {
-            sRun++;
-            gRun++;
-            if (isWhiteCore(i)) wRun++;
-            else {
-              if (wRun >= 1 && wRun <= 4) cores.push(wRun);
-              wRun = 0;
-            }
-          } else if (isGlow(i)) {
-            if (sRun >= 3) solids.push(sRun);
-            if (wRun >= 1 && wRun <= 4) cores.push(wRun);
-            sRun = 0;
-            wRun = 0;
-            gRun++;
-          } else {
-            push();
-          }
-        }
-        push();
-      }
-      return { solids, glows, cores };
-    };
-    const hz = collect(height, width, false);
-    const vt = collect(width, height, true);
-    const solids = hz.solids.concat(vt.solids);
-    const glows = hz.glows.concat(vt.glows);
-    const cores = hz.cores.concat(vt.cores);
-    const pick = (arr: number[], q = 0.7) => {
-      if (!arr.length) return 0;
-      const sorted = arr.slice().sort((a, b) => a - b);
-      return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
-    };
-    let hasWhiteCenter = false;
-    let centerRgb: [number, number, number] | null = null;
-    let orangeRgb: [number, number, number] | null = null;
-    let crossWhite = 0;
-    let crossSolid = 0;
-    let crossGlow = 0;
-    if (orbX >= 0) {
-      const isPixWhite = (p: [number, number, number]) =>
-        p[0] >= 210 && p[1] >= 175 && p[2] >= 130 && p[1] >= p[0] * 0.58 && p[2] >= p[0] * 0.38;
-      const isPixOrange = (p: [number, number, number]) =>
-        p[0] >= 210 && p[1] >= 55 && p[1] <= 180 && p[2] <= 80 && p[0] > p[1] + 40;
-      const isPixGlow = (p: [number, number, number]) =>
-        p[0] >= 100 && p[0] > p[1] + 8 && (isPixOrange(p) || isPixWhite(p) || p[0] + 40 > p[2]);
-      const xLo = Math.max(0, Math.round(orbX) - 52);
-      const xHi = Math.min(width - 1, Math.round(orbX) + 52);
-      type Cand = {
-        solid: number;
-        glow: number;
-        white: number;
-        rgb: [number, number, number];
-        orange: [number, number, number] | null;
-      };
-      const cands: Cand[] = [];
-      for (const dy of [8, 12, 14, 16, 20, 24, 28, 32, 36, 44, 54, 70, -12, -18]) {
-        const yScan = Math.round(orbY + dy);
-        if (yScan < 0 || yScan >= height) continue;
-        const row: [number, number, number][] = [];
-        for (let x = 0; x < width; x++) row.push(pix(x, yScan));
-        const runs: { x0: number; x1: number; glow: number; whites: number }[] = [];
-        let g0 = -1;
-        for (let x = xLo; x <= xHi + 1; x++) {
-          const on = x <= xHi && isPixGlow(row[x]);
-          if (on && g0 < 0) g0 = x;
-          if (!on && g0 >= 0) {
-            let whites = 0;
-            for (let i = g0; i < x; i++) if (isPixWhite(row[i])) whites++;
-            runs.push({ x0: g0, x1: x - 1, glow: x - g0, whites });
-            g0 = -1;
-          }
-        }
-        const near = runs.filter((r) => r.glow >= 6 && r.whites >= 1);
-        const trailish = near.filter((r) => r.glow >= 14 && r.glow <= 36);
-        const best = (trailish.length ? trailish : near).sort((a, b) => a.glow - b.glow || b.whites - a.whites)[0];
-        if (!best) continue;
-        let wRun = 0;
-        let sRun = 0;
-        let white = 0;
-        let solid = 0;
-        let peak = Math.round((best.x0 + best.x1) / 2);
-        let peakScore = -1;
-        let orange: [number, number, number] | null = null;
-        let orangeDist = Infinity;
-        for (let x = best.x0; x <= best.x1; x++) {
-          const p = row[x];
-          if (p[0] >= 190 && p[0] > p[1] + 20) {
-            const dist = (p[0] - 255) ** 2 + (p[1] - 122) ** 2 + (p[2] - 26) ** 2;
-            if (dist < orangeDist) {
-              orangeDist = dist;
-              orange = p;
-            }
-          }
-          if (isPixWhite(p)) {
-            wRun++;
-            sRun++;
-            const score = Math.min(p[0], p[1], p[2]);
-            if (score > peakScore) {
-              peakScore = score;
-              peak = x;
-            }
-          } else if (isPixOrange(p)) {
-            if (wRun && wRun <= 5) white = Math.max(white, wRun);
-            wRun = 0;
-            sRun++;
-          } else {
-            if (wRun && wRun <= 5) white = Math.max(white, wRun);
-            if (sRun >= 2 && sRun <= 10) solid = Math.max(solid, sRun);
-            wRun = 0;
-            sRun = 0;
-          }
-        }
-        if (wRun && wRun <= 5) white = Math.max(white, wRun);
-        if (sRun >= 2 && sRun <= 10) solid = Math.max(solid, sRun);
-        const rgb = row[peak];
-        if (!isPixWhite(rgb)) continue;
-        cands.push({ solid, glow: best.glow, white, rgb, orange });
-      }
-      cands.sort((a, b) => {
-        const aGood =
-          a.glow >= 14 && a.glow <= 36 && a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
-        const bGood =
-          b.glow >= 14 && b.glow <= 36 && b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
-        const aGlow = a.glow >= 14 && a.glow <= 36 ? 0 : 1;
-        const bGlow = b.glow >= 14 && b.glow <= 36 ? 0 : 1;
-        const aOk = a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
-        const bOk = b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
-        return aGood - bGood || aGlow - bGlow || aOk - bOk || Math.abs(a.solid - 4) - Math.abs(b.solid - 4);
-      });
-      const chosen = cands[0];
-      if (chosen) {
-        hasWhiteCenter = true;
-        centerRgb = chosen.rgb;
-        orangeRgb = chosen.orange;
-        crossWhite = chosen.white;
-        crossSolid = chosen.solid;
-        crossGlow = chosen.glow;
-      }
-    }
-    return {
-      solidWidth: Math.round((crossSolid || pick(solids)) * scale * 10) / 10,
-      glowWidth: Math.round((crossGlow || pick(glows)) * scale * 10) / 10,
-      whiteCore: Math.round((crossWhite || pick(cores, 0.5)) * scale * 10) / 10,
-      ringPx: Math.round(ring * scale * 10) / 10,
-      hasWhiteCenter,
-      centerRgb,
-      orangeRgb,
-      backing: { w: width, h: height },
-      css: { w: width, h: height },
-      orb: orbX >= 0 ? { x: Math.round(orbX), y: Math.round(orbY) } : undefined,
-    };
-  }, png.toString('base64'));
+  return measureWholeTrailWhite(page);
+}
+
+async function waitAppendDraw(page: Page) {
+  await page.goto('/?qa=1');
+  await page.waitForSelector('#game-container canvas');
+  await page.click('#botBtn');
+  await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
+  await page.waitForFunction(
+    () => {
+      const d = window.__turfDebug;
+      return Boolean(d && d.drawing.p1 && !d.cutFx && d.trails.p1 >= 45 && d.trailPaintAppends >= 30);
+    },
+    { timeout: 45000 },
+  );
+  await page.evaluate(() => {
+    window.__turfForceTrailDpr = 2;
+  });
+  await waitTrailRedraw(page);
+  const base = await page.evaluate(() => window.__turfDebug?.trailPaintAppends ?? 0);
+  await page.waitForFunction(
+    (b) => {
+      const d = window.__turfDebug;
+      return Boolean(d && d.drawing.p1 && !d.cutFx && d.trails.p1 >= 45 && d.trailPaintAppends >= b + 8);
+    },
+    base,
+    { timeout: 12000 },
+  );
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
+
+function expectAlongBand(
+  along: TrailMeasure,
+  label: string,
+  minSolid: number,
+  maxSolid: number,
+  orangeB: number,
+) {
+  expect(along.sections, `${label} sections ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(20);
+  expect(along.missingPct, `${label} missing white ${JSON.stringify(along)}`).toBe(0);
+  expect(along.whiteMedian, `${label} white core px ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(1.5);
+  expect(along.whiteCore, `${label} white core`).toBeLessThanOrEqual(3.5);
+  expect(along.solidWidth, `${label} solid`).toBeGreaterThanOrEqual(minSolid);
+  expect(along.solidWidth, `${label} solid`).toBeLessThanOrEqual(maxSolid);
+  expect(along.glowWidth, `${label} glow`).toBeGreaterThanOrEqual(14);
+  expect(along.glowWidth, `${label} glow`).toBeLessThanOrEqual(36);
+  expect(along.orangeRgb, `${label} orange band`).toBeTruthy();
+  expect(along.orangeRgb![0], `${label} orange r`).toBeGreaterThanOrEqual(210);
+  expect(along.orangeRgb![2], `${label} orange b`).toBeLessThanOrEqual(orangeB);
 }
 
 test.use({
@@ -597,6 +493,7 @@ test.describe('Cover spike 390x844', () => {
       avg: window.__turfDebug?.trailPaintAvg,
       p95: window.__turfDebug?.trailPaintP95,
       fullMs: window.__turfDebug?.trailPaintFullMs,
+      uploads: window.__turfDebug?.trailPaintUploads,
       dpr: window.__turfDebug?.trailDpr,
     }));
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
@@ -610,6 +507,7 @@ test.describe('Cover spike 390x844', () => {
       avg: window.__turfDebug?.trailPaintAvg,
       p95: window.__turfDebug?.trailPaintP95,
       fullMs: window.__turfDebug?.trailPaintFullMs,
+      uploads: window.__turfDebug?.trailPaintUploads,
       dpr: window.__turfDebug?.trailDpr,
     }));
     console.log('rendered trail WIDTH (not radius) 390x844', measured, { dpr1: perf1, dpr2: perf2 });
@@ -617,60 +515,43 @@ test.describe('Cover spike 390x844', () => {
   });
 
   test('incremental trail append keeps a white core', async ({ page }) => {
-    test.setTimeout(60000);
-    await page.goto('/?qa=1');
-    await page.waitForSelector('#game-container canvas');
-    await page.click('#botBtn');
-    await page.waitForFunction(() => document.getElementById('app')?.classList.contains('playing'));
-    await page.waitForFunction(
-      () => {
-        const d = window.__turfDebug;
-        return Boolean(
-          d && d.drawing.p1 && !d.cutFx && d.trails.p1 >= 45 && d.trailPaintAppends >= 30,
-        );
-      },
-      { timeout: 45000 },
-    );
-    await page.evaluate(() => {
-      window.__turfForceTrailDpr = 2;
-    });
-    await waitTrailRedraw(page);
-    const base = await page.evaluate(() => window.__turfDebug?.trailPaintAppends ?? 0);
-    await page.waitForFunction(
-      (b) => {
-        const d = window.__turfDebug;
-        return Boolean(
-          d && d.drawing.p1 && !d.cutFx && d.trails.p1 >= 45 && d.trailPaintAppends >= b + 8,
-        );
-      },
-      base,
-      { timeout: 12000 },
-    );
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) => {
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-        }),
-    );
-    const kind = await page.evaluate(() => ({
-      kind: window.__turfDebug?.trailPaintKind,
-      appends: window.__turfDebug?.trailPaintAppends,
-      ms: window.__turfDebug?.trailPaintMs,
-      avg: window.__turfDebug?.trailPaintAvg,
-      p95: window.__turfDebug?.trailPaintP95,
-      fullMs: window.__turfDebug?.trailPaintFullMs,
-      dpr: window.__turfDebug?.trailDpr,
-      pts: window.__turfDebug?.trailPts?.length ?? 0,
-      trail: window.__turfDebug?.trails.p1,
-    }));
-    expect(kind.appends ?? 0, `paint ${JSON.stringify(kind)}`).toBeGreaterThanOrEqual(30);
-    const along = await measureWholeTrailWhite(page);
-    console.log('incremental append whole-trail white 390x844', along, kind);
-    await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw-append.png') });
-    expect(along.sections, `sections ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(20);
-    expect(along.missingPct, `missing white ${JSON.stringify(along)}`).toBe(0);
-    expect(along.whiteMedian, `white core px ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(1.5);
-    expect(kind.p95 ?? 99).toBeLessThanOrEqual(15);
+    test.setTimeout(180000);
+    const shots: {
+      label: string;
+      size: { width: number; height: number };
+      dir: string;
+      minSolid: number;
+      maxSolid: number;
+      orangeB: number;
+    }[] = [
+      { label: '390x844', size: VIEWPORT, dir: SCREENSHOT_DIR, minSolid: 3, maxSolid: 8.5, orangeB: 70 },
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 8.5, orangeB: 80 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 8.5, orangeB: 80 },
+    ];
+    for (const shot of shots) {
+      await page.setViewportSize(shot.size);
+      await waitAppendDraw(page);
+      const kind = await page.evaluate(() => ({
+        kind: window.__turfDebug?.trailPaintKind,
+        appends: window.__turfDebug?.trailPaintAppends,
+        ms: window.__turfDebug?.trailPaintMs,
+        avg: window.__turfDebug?.trailPaintAvg,
+        p95: window.__turfDebug?.trailPaintP95,
+        fullMs: window.__turfDebug?.trailPaintFullMs,
+        uploads: window.__turfDebug?.trailPaintUploads,
+        dpr: window.__turfDebug?.trailDpr,
+        pts: window.__turfDebug?.trailPts?.length ?? 0,
+        trail: window.__turfDebug?.trails.p1,
+      }));
+      expect(kind.appends ?? 0, `${shot.label} paint ${JSON.stringify(kind)}`).toBeGreaterThanOrEqual(30);
+      expect(kind.uploads ?? 0, `${shot.label} glow uploads ${JSON.stringify(kind)}`).toBeGreaterThanOrEqual(1);
+      const along = await measureWholeTrailWhite(page);
+      console.log(`incremental append whole-trail ${shot.label}`, along, kind);
+      fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
+      await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw-append.png') });
+      expectAlongBand(along, shot.label, shot.minSolid, shot.maxSolid, shot.orangeB);
+      expect(kind.p95 ?? 99, `${shot.label} p95`).toBeLessThanOrEqual(15);
+    }
   });
 
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
@@ -683,9 +564,7 @@ test.describe('Cover spike 390x844', () => {
       await page.setViewportSize(shot.size);
       await waitMidDraw(page);
       const measured = await measureRenderedTrail(page);
-      const along = await measureWholeTrailWhite(page);
-      console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
-      console.log(`whole-trail white ${shot.label}`, along);
+      console.log(`rendered trail WIDTH (median along trail) ${shot.label}`, measured);
       fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
       await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });
       expect(measured.hasWhiteCenter, `${shot.label} white center ${measured.centerRgb}`).toBe(true);
@@ -699,7 +578,7 @@ test.describe('Cover spike 390x844', () => {
       expect(measured.orangeRgb![0], `${shot.label} orange r`).toBeGreaterThanOrEqual(210);
       // 360 CSS is smaller so AA can add ~8 blue vs 390; still rejects washed (240,138,83).
       expect(measured.orangeRgb![2], `${shot.label} orange b`).toBeLessThanOrEqual(80);
-      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 16 : 16);
+      expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(16);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
     }
   });

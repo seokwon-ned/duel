@@ -102,6 +102,7 @@ interface TurfDebug {
   trailPaintAppends: number;
   trailPaintP95: number;
   trailPaintFullMs: number;
+  trailPaintUploads: number;
   trailPtsCss: { x: number; y: number }[];
   trailPts: { x: number; y: number }[];
 }
@@ -134,6 +135,7 @@ if (typeof window !== 'undefined') {
     trailPaintAppends: 0,
     trailPaintP95: 0,
     trailPaintFullMs: 0,
+    trailPaintUploads: 0,
     trailPtsCss: [],
     trailPts: [],
   };
@@ -248,6 +250,7 @@ class GameScene extends Phaser.Scene {
   private trailPaintSum = 0;
   private trailPaintAppends = 0;
   private trailPaintFullMs = 0;
+  private trailPaintUploads = 0;
   private trailAppendMs: number[] = [];
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
@@ -1126,11 +1129,15 @@ class GameScene extends Phaser.Scene {
     this.drawTrailCore(trail1, trail2);
     this.lastPts1 = trail1.map((p) => ({ x: p.x, y: p.y }));
     this.lastPts2 = trail2.map((p) => ({ x: p.x, y: p.y }));
-    if (uploadGlow) this.trailGlowTexture.refresh();
+    if (uploadGlow) {
+      this.trailGlowTexture.refresh();
+      this.trailPaintUploads += 1;
+    }
     this.trailPaintGen += 1;
     const ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
     this.trailPaintSum += ms;
     if (kind === 'full') this.trailPaintFullMs = ms;
+    // Every paint, including glow-upload frames, feeds p95.
     this.trailAppendMs.push(ms);
     if (this.trailAppendMs.length > TRAIL_APPEND_SAMPLES) this.trailAppendMs.shift();
     const p95 = this.trailPaintP95();
@@ -1143,6 +1150,7 @@ class GameScene extends Phaser.Scene {
       window.__turfDebug.trailPaintAppends = this.trailPaintAppends;
       window.__turfDebug.trailPaintP95 = p95;
       window.__turfDebug.trailPaintFullMs = Math.round(this.trailPaintFullMs * 10) / 10;
+      window.__turfDebug.trailPaintUploads = this.trailPaintUploads;
       const src = trail1.length >= 2 ? trail1 : trail2;
       window.__turfDebug.trailPtsCss = this.trailPtsToCss(src);
       window.__turfDebug.trailPts = src.map((p) => ({ x: p.x, y: p.y }));
