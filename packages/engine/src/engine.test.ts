@@ -3,9 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
-import { CellType, Direction, HURT_IFRAME_TICKS, PlayerInput, ResultReason } from './types.js';
+import { CellType, Direction, HURT_IFRAME_TICKS, PlayerInput, ResultReason, TICKS_PER_SECOND } from './types.js';
 import { claimClosedTrail, countCells } from './cover.js';
 import { cellOf, toFp } from './lut.js';
+import { isCover } from './utils.js';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -703,6 +704,7 @@ describe('cover engine (Amy ★)', () => {
     state.player2.hearts = 99;
     state.boss.xFp = (1 << 8) + 128;
     state.boss.yFp = (1 << 8) + 128;
+    state.boss.heading = 0;
     state.sparx1.xFp = (0 << 8) + 128;
     state.sparx1.yFp = (0 << 8) + 128;
     state.sparx2.xFp = (15 << 8) + 128;
@@ -1091,7 +1093,75 @@ describe('cover engine (Amy ★)', () => {
     expect(state.grid[4][7]).toBe(CellType.PLAYER1_OPEN);
     expect(state.grid[4][8]).toBe(CellType.PLAYER1_OPEN);
     expect(state.player1.territoryCells).toBe(27);
-    expect(fingerprint(state)).toBe(1538652305);
+    // Boss Qix bounce (heading 32, specular wall reflect) moves the boss one
+    // step from (1,1). Previous lock: 1538652305 (4-heading +64 orbit, heading 20, speed 64).
+    expect(fingerprint(state)).toBe(-745570067);
+  });
+
+  test('boss roams all four cover quadrants and never leaves cover', () => {
+    let state = createInitialState();
+    const visited = new Set<number>();
+    const quads = [false, false, false, false];
+    const midX = state.gridWidth >> 1;
+    const midY = state.gridHeight >> 1;
+    let minX = midX;
+    let maxX = midX;
+    let minY = midY;
+    let maxY = midY;
+    const ticks = TICKS_PER_SECOND * 30;
+    for (let i = 0; i < ticks; i++) {
+      state = step(state, []).state;
+      const x = cellOf(state.boss.xFp);
+      const y = cellOf(state.boss.yFp);
+      expect(isCover(state.grid[y][x]), `boss left cover at ${x},${y} tick ${state.tick}`).toBe(true);
+      visited.add(x * 1024 + y);
+      quads[(x < midX ? 0 : 1) + (y < midY ? 0 : 2)] = true;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    expect(quads, 'all four quadrants').toEqual([true, true, true, true]);
+    expect(visited.size).toBeGreaterThan(80);
+    expect(maxX - minX).toBeGreaterThan(state.gridWidth * 0.5);
+    expect(maxY - minY).toBeGreaterThan(state.gridHeight * 0.5);
+    expect(minX).toBeLessThanOrEqual(4);
+    expect(maxX).toBeGreaterThanOrEqual(state.gridWidth - 5);
+    expect(minY).toBeLessThanOrEqual(4);
+    expect(maxY).toBeGreaterThanOrEqual(state.gridHeight - 5);
+  });
+
+  test('boss bounce stays inside shrinking cover', () => {
+    let state = createInitialState({ matchTicks: 800 });
+    const openUntil = 40;
+    for (let y = 1; y < state.gridHeight - 1; y++) {
+      for (let x = 1; x <= openUntil; x++) {
+        state.grid[y][x] = CellType.PLAYER1_OPEN;
+      }
+    }
+    state.boss.xFp = toFp(state.gridWidth >> 1);
+    state.boss.yFp = toFp(state.gridHeight >> 1);
+    state.boss.heading = 32;
+    let minX = state.gridWidth;
+    let maxX = 0;
+    let minY = state.gridHeight;
+    let maxY = 0;
+    const ticks = TICKS_PER_SECOND * 20;
+    for (let i = 0; i < ticks; i++) {
+      state = step(state, []).state;
+      const x = cellOf(state.boss.xFp);
+      const y = cellOf(state.boss.yFp);
+      expect(isCover(state.grid[y][x]), `boss left remaining cover at ${x},${y}`).toBe(true);
+      expect(x).toBeGreaterThan(openUntil);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    expect(maxX).toBeGreaterThanOrEqual(state.gridWidth - 5);
+    expect(minY).toBeLessThan(state.gridHeight >> 1);
+    expect(maxY).toBeGreaterThan(state.gridHeight >> 1);
+    expect(maxY - minY).toBeGreaterThan(state.gridHeight * 0.4);
   });
 
   test('cardinal direction inputs still apply on the same tick', () => {

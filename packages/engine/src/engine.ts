@@ -79,7 +79,8 @@ export function createInitialState(options?: {
     boss: {
       xFp: toFp(w >> 1),
       yFp: toFp(h >> 1),
-      heading: 20,
+      // 45° LUT octant (32). Shallow heading 20 stayed in a horizontal band.
+      heading: 32,
       edgeDir: 0,
     },
     sparx1: {
@@ -583,27 +584,56 @@ function tickFuse(state: MatchState, events: GameEvent[]): void {
 function bossSpeed(state: MatchState): number {
   const total = state.gridWidth * state.gridHeight;
   const opened = total - countCells(state.grid, CellType.COVER) - countCells(state.grid, CellType.SAFE_EDGE);
-  const base = 64;
+  // 288 on the 200-wide board (~1.5× player): 45° bounce reaches every cover
+  // edge within 30s. Smaller test boards scale so a corner-parked boss cannot
+  // cross the miniature arena in a handful of ticks.
+  const base = Math.max(64, Math.floor((288 * state.gridWidth) / GRID_WIDTH));
   return base + Math.floor((opened * 192) / total);
+}
+
+function bossCanStand(state: MatchState, x: number, y: number): boolean {
+  if (!inBounds(x, y, state.gridWidth, state.gridHeight)) return false;
+  const cell = state.grid[y][x];
+  return isCover(cell) || isTrail(cell);
+}
+
+/** Qix bounce: reflect over the blocked axis. LUT headings only. */
+function bounceHeading(heading: number, blockX: boolean, blockY: boolean): number {
+  let h = heading;
+  if (blockX) h = wrapAngle(128 - h);
+  if (blockY) h = wrapAngle(-h);
+  return h;
 }
 
 function moveBoss(state: MatchState, events: GameEvent[]): void {
   const speed = bossSpeed(state);
+  const bx = cellOf(state.boss.xFp);
+  const by = cellOf(state.boss.yFp);
   let heading = state.boss.heading;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const next = stepFixed(state.boss.xFp, state.boss.yFp, heading, speed);
+  const tryMove = (h: number): boolean => {
+    const next = stepFixed(state.boss.xFp, state.boss.yFp, h, speed);
     const cx = cellOf(next.xFp);
     const cy = cellOf(next.yFp);
-    if (!inBounds(cx, cy, state.gridWidth, state.gridHeight)) continue;
-    const cell = state.grid[cy][cx];
-    if (isTrail(cell) || isCover(cell)) {
-      state.boss.xFp = next.xFp;
-      state.boss.yFp = next.yFp;
-      state.boss.heading = heading;
-      hitTrailAndDrawer(state, cx, cy, events);
-      return;
-    }
-    heading = wrapAngle(heading + 64);
+    if (!bossCanStand(state, cx, cy)) return false;
+    state.boss.xFp = next.xFp;
+    state.boss.yFp = next.yFp;
+    state.boss.heading = h;
+    hitTrailAndDrawer(state, cx, cy, events);
+    return true;
+  };
+  if (tryMove(heading)) return;
+  const probe = stepFixed(state.boss.xFp, state.boss.yFp, heading, speed);
+  const nx = cellOf(probe.xFp);
+  const ny = cellOf(probe.yFp);
+  const blockX = nx !== bx && !bossCanStand(state, nx, by);
+  const blockY = ny !== by && !bossCanStand(state, bx, ny);
+  // Diagonal-only block (corner): reflect both axes.
+  const corner = !blockX && !blockY;
+  heading = bounceHeading(heading, blockX || corner, blockY || corner);
+  if (tryMove(heading)) return;
+  // Prefer remaining 45° octants so a wall slide cannot collapse to a 1-axis orbit.
+  for (const delta of [32, 224, 96, 160, 64, 192, 128]) {
+    if (tryMove(wrapAngle(state.boss.heading + delta))) return;
   }
 }
 
