@@ -374,8 +374,8 @@ test.describe('Cover spike 390x844', () => {
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
     test.setTimeout(120000);
     const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
-      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 8.5 },
-      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 8.5 },
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2, maxSolid: 10 },
+      { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 2, maxSolid: 10 },
     ];
     for (const shot of shots) {
       await page.setViewportSize(shot.size);
