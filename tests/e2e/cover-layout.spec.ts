@@ -8,6 +8,7 @@ const SCREENSHOT_DIR = path.join(process.cwd(), 'docs/qa/cover-390x844');
 type TrailMeasure = {
   solidWidth: number;
   glowWidth: number;
+  whiteCore: number;
   ringPx: number;
   backing: { w: number; h: number };
   css: { w: number; h: number };
@@ -57,11 +58,18 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
       const b = data[i + 2];
       return r >= 220 && g >= 80 && g <= 150 && b <= 70 && r > g + 70 && r > b + 130;
     };
+    const isWhiteCore = (i: number) => {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      return r >= 230 && g >= 230 && b >= 230;
+    };
+    const isBright = (i: number) => isSolid(i) || isWhiteCore(i);
     const isGlow = (i: number) => {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      return r >= 120 && g >= 30 && b <= 160 && r > g && r > b + 15;
+      return r >= 110 && g >= 28 && b <= 170 && r > g && r > b + 12;
     };
     let orbX = -1;
     let orbY = -1;
@@ -114,23 +122,34 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     const collect = (major: number, minor: number, swap: boolean) => {
       const solids: number[] = [];
       const glows: number[] = [];
+      const whites: number[] = [];
       for (let a = 0; a < major; a++) {
         let sRun = 0;
         let gRun = 0;
+        let wRun = 0;
         const push = () => {
-          if (sRun >= 2 && sRun <= 7) solids.push(sRun);
-          if (gRun >= 2 && gRun <= 16) glows.push(gRun);
+          if (sRun >= 3 && sRun <= 8) solids.push(sRun);
+          if (gRun >= 4 && gRun <= 22) glows.push(gRun);
+          if (wRun >= 1 && wRun <= 4) whites.push(wRun);
           sRun = 0;
           gRun = 0;
+          wRun = 0;
         };
         for (let b = 0; b < minor; b++) {
           const i = swap ? index(a, b) : index(b, a);
-          if (isSolid(i)) {
+          if (isBright(i)) {
             sRun++;
             gRun++;
+            if (isWhiteCore(i)) wRun++;
+            else {
+              if (wRun >= 1 && wRun <= 4) whites.push(wRun);
+              wRun = 0;
+            }
           } else if (isGlow(i)) {
-            if (sRun >= 2 && sRun <= 7) solids.push(sRun);
+            if (sRun >= 3 && sRun <= 8) solids.push(sRun);
+            if (wRun >= 1 && wRun <= 4) whites.push(wRun);
             sRun = 0;
+            wRun = 0;
             gRun++;
           } else {
             push();
@@ -138,12 +157,13 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         }
         push();
       }
-      return { solids, glows };
+      return { solids, glows, whites };
     };
     const hz = collect(height, width, false);
     const vt = collect(width, height, true);
     const solids = hz.solids.concat(vt.solids);
     const glows = hz.glows.concat(vt.glows);
+    const whites = hz.whites.concat(vt.whites);
     const pick = (arr: number[]) => {
       if (!arr.length) return 0;
       const sorted = arr.slice().sort((a, b) => a - b);
@@ -152,6 +172,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     return {
       solidWidth: Math.round(pick(solids) * scale * 10) / 10,
       glowWidth: Math.round(pick(glows) * scale * 10) / 10,
+      whiteCore: Math.round(pick(whites) * scale * 10) / 10,
       ringPx: Math.round(ring * scale * 10) / 10,
       backing: { w: width, h: height },
       css: { w: width, h: height },
@@ -268,10 +289,12 @@ test.describe('Cover spike 390x844', () => {
     const measured = await measureRenderedTrail(page);
     console.log('rendered trail WIDTH (not radius) 390x844', measured);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
+    expect(measured.whiteCore).toBeGreaterThanOrEqual(1.2);
+    expect(measured.whiteCore).toBeLessThanOrEqual(3.2);
     expect(measured.solidWidth).toBeGreaterThanOrEqual(3.5);
     expect(measured.solidWidth).toBeLessThanOrEqual(6.5);
-    expect(measured.glowWidth).toBeGreaterThanOrEqual(4);
-    expect(measured.glowWidth).toBeLessThanOrEqual(11);
+    expect(measured.glowWidth).toBeGreaterThanOrEqual(9);
+    expect(measured.glowWidth).toBeLessThanOrEqual(16);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
     expect(measured.ringPx).toBeLessThanOrEqual(24);
   });
@@ -289,10 +312,12 @@ test.describe('Cover spike 390x844', () => {
       console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
       fs.mkdirSync(path.join(process.cwd(), shot.dir), { recursive: true });
       await page.screenshot({ path: path.join(process.cwd(), shot.dir, 'orb-mid-draw.png') });
+      expect(measured.whiteCore, `${shot.label} white core`).toBeGreaterThanOrEqual(1);
+      expect(measured.whiteCore, `${shot.label} white core`).toBeLessThanOrEqual(3.5);
       expect(measured.solidWidth, shot.label).toBeGreaterThanOrEqual(shot.minSolid);
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
-      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(3);
-      expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(11);
+      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(8);
+      expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(16);
       expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 16 : 16);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
     }

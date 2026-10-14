@@ -110,15 +110,23 @@ function snapCell(player: PlayerState): void {
   player.position.y = cellOf(player.yFp);
 }
 
-/** Match-seeded COVER spawn. Seed 0 stays center / heading 32 for tests. */
+/** 8 diagonal octants (not the 4 cardinals). LUT indices. */
+const BOSS_SPAWN_HEADING = [32, 96, 160, 224, 16, 48, 80, 112] as const;
+
+/** Match-seeded COVER spawn in the central 40% of the board. */
 function spawnBoss(w: number, h: number, seed: number): { x: number; y: number; heading: number } {
   const s = seed >>> 0;
-  const cx = w >> 1;
-  const cy = h >> 1;
-  const x = Math.min(w - 3, Math.max(2, cx + (s === 0 ? 0 : (s % 17) - 8)));
-  const y = Math.min(h - 3, Math.max(2, cy + (s === 0 ? 0 : ((s >>> 5) % 21) - 10)));
-  let heading = s === 0 ? 32 : 24 + ((s >>> 3) % 25);
-  if (heading === 40) heading = 36;
+  const x0 = Math.max(2, Math.floor((w * 3) / 10));
+  const x1 = Math.min(w - 3, Math.max(x0 + 1, Math.floor((w * 7) / 10)));
+  const y0 = Math.max(2, Math.floor((h * 3) / 10));
+  const y1 = Math.min(h - 3, Math.max(y0 + 1, Math.floor((h * 7) / 10)));
+  const xSpan = x1 - x0;
+  const ySpan = y1 - y0;
+  const hx = (Math.imul(s + 1, 1103515245) + 12345) >>> 0;
+  const hy = (Math.imul(s + 17, 1664525) + 1013904223) >>> 0;
+  const x = x0 + ((hx >>> 16) % xSpan);
+  const y = y0 + ((hy >>> 16) % ySpan);
+  const heading = BOSS_SPAWN_HEADING[s % 8];
   return { x, y, heading };
 }
 

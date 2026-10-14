@@ -1129,29 +1129,32 @@ describe('cover engine (Amy ★)', () => {
     expect(maxX).toBeGreaterThanOrEqual(state.gridWidth - 5);
     expect(minY).toBeLessThanOrEqual(4);
     expect(maxY).toBeGreaterThanOrEqual(state.gridHeight - 5);
-    // Sweep radius 16: half of the 62-cell sprite is 31; 16 is the body core.
-    const sweepR = 16;
-    const swept = new Set<number>();
     let coverCount = 0;
     for (let y = 1; y < state.gridHeight - 1; y++) {
       for (let x = 1; x < state.gridWidth - 1; x++) {
-        if (!isCover(state.grid[y][x])) continue;
-        coverCount++;
+        if (isCover(state.grid[y][x])) coverCount++;
       }
     }
-    for (const key of visited) {
-      const vx = (key / 1024) | 0;
-      const vy = key & 1023;
-      for (let dy = -sweepR; dy <= sweepR; dy++) {
-        for (let dx = -sweepR; dx <= sweepR; dx++) {
-          const x = vx + dx;
-          const y = vy + dy;
-          if (x < 1 || y < 1 || x >= state.gridWidth - 1 || y >= state.gridHeight - 1) continue;
-          if (isCover(state.grid[y][x])) swept.add(x * 1024 + y);
+    const sweepFrac = (radius: number) => {
+      const swept = new Set<number>();
+      for (const key of visited) {
+        const vx = (key / 1024) | 0;
+        const vy = key & 1023;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const x = vx + dx;
+            const y = vy + dy;
+            if (x < 1 || y < 1 || x >= state.gridWidth - 1 || y >= state.gridHeight - 1) continue;
+            if (isCover(state.grid[y][x])) swept.add(x * 1024 + y);
+          }
         }
       }
-    }
-    expect(swept.size / coverCount, '>=40% of cover swept in 30s').toBeGreaterThanOrEqual(0.4);
+      return swept.size / coverCount;
+    };
+    const sweep6 = sweepFrac(6);
+    const sweep16 = sweepFrac(16);
+    expect(sweep16, `16-cell sweep ${sweep16}`).toBeGreaterThanOrEqual(0.4);
+    expect(sweep6, `6-cell Lee metric ${sweep6}`).toBeGreaterThan(0.12);
   });
 
   test('boss start heading and path differ by match seed', () => {
@@ -1164,6 +1167,22 @@ describe('cover engine (Amy ★)', () => {
       return fingerprint(s);
     };
     expect(playSeed(1)).not.toBe(playSeed(2));
+    const headings = new Set<number>();
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let seed = 0; seed < 32; seed++) {
+      const s = createInitialState({ seed });
+      headings.add(s.boss.heading);
+      xs.push(cellOf(s.boss.xFp));
+      ys.push(cellOf(s.boss.yFp));
+    }
+    expect(headings.size, '8 diagonal octants').toBe(8);
+    const w = a.gridWidth;
+    const h = a.gridHeight;
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(Math.floor((w * 3) / 10) - 1);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(Math.floor((w * 7) / 10) + 1);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(w * 0.25);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(h * 0.25);
   });
 
   test('boss does not tunnel through a 1-cell wall at 75% opened', () => {

@@ -22,7 +22,7 @@ interface PlayerDisconnectInfo {
   currentDisconnectStartTime: number | null;
 }
 
-function seedFromRoom(id: string | number): number {
+export function seedFromRoom(id: string | number): number {
   if (typeof id === 'number' && Number.isFinite(id)) return id >>> 0;
   const s = String(id ?? 'duel');
   let h = 2166136261;
@@ -64,9 +64,14 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       && options.matchTicks > 0
       ? options.matchTicks
       : undefined;
+    const seed = this.allowClientSeed()
+      && typeof options?.seed === 'number'
+      && Number.isFinite(options.seed)
+      ? options.seed >>> 0
+      : seedFromRoom(this.roomId);
     this.matchState = createInitialState({
       ...(matchTicks !== undefined ? { matchTicks } : {}),
-      seed: seedFromRoom(typeof options?.seed === 'number' ? options.seed : this.roomId),
+      seed,
     });
     state.gridWidth = this.matchState.gridWidth;
     state.gridHeight = this.matchState.gridHeight;
@@ -445,6 +450,11 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
 
   /** Production ignores client matchTicks so a stranger cannot shorten a live match. */
   protected allowClientMatchTicks(): boolean {
+    return false;
+  }
+
+  /** Production derives the boss seed from roomId. Client options.seed is QA-only. */
+  protected allowClientSeed(): boolean {
     return false;
   }
 

@@ -324,10 +324,10 @@ class GameScene extends Phaser.Scene {
     // Canvas-baked circular glow only — Phaser addGlow halos the whole quad as a square.
 
     for (let i = 0; i < AFTERIMAGES; i++) {
-      const ghost = this.add.image(0, 0, 'orb-me').setAlpha(0).setDepth(4);
+      const ghost = this.add.image(0, 0, 'dot-me').setAlpha(0).setDepth(4);
       ghost.setBlendMode(Phaser.BlendModes.ADD);
       this.afterimages.push(ghost);
-      const ghost2 = this.add.image(0, 0, 'orb-foe').setAlpha(0).setDepth(4);
+      const ghost2 = this.add.image(0, 0, 'dot-accent').setAlpha(0).setDepth(4);
       ghost2.setBlendMode(Phaser.BlendModes.ADD);
       this.afterimages2.push(ghost2);
     }
@@ -966,7 +966,7 @@ class GameScene extends Phaser.Scene {
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
     const mine = trail1;
     const foe = trail2 ?? [];
-    this.strokeGlowLine(mine, AH.me, AH.core, ox, oy, scale, false);
+    this.strokeGlowLine(mine, AH.me, 0xffffff, ox, oy, scale, false);
     this.strokeGlowLine(foe, AH.foe, 0xffffff, ox, oy, scale, true);
   }
 
@@ -976,16 +976,16 @@ class GameScene extends Phaser.Scene {
     core: number,
     ox: number,
     oy: number,
-    scale: number,
+    cellScale: number,
     dashed: boolean,
   ) {
     if (!this.trailGfx || trail.length < 2) return;
-    const pts = trail.map((p) => ({ x: ox + (p.x + 0.5) * scale, y: oy + (p.y + 0.5) * scale }));
+    const pts = trail.map((p) => ({ x: ox + (p.x + 0.5) * cellScale, y: oy + (p.y + 0.5) * cellScale }));
     const glowGfx = this.trailGlow ?? this.trailGfx;
     const dots: { x: number; y: number }[] = [];
     if (dashed) {
-      const on = Math.max(16, scale * 8);
-      const off = Math.max(10, scale * 5);
+      const on = Math.max(16, cellScale * 8);
+      const off = Math.max(10, cellScale * 5);
       let acc = 0;
       let drawing = true;
       dots.push(pts[0]);
@@ -1019,22 +1019,26 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390. Outer glow is visible but below 7px solid.
-    const glowR = scale * 3.2;
-    const midR = scale * 1.35;
-    const coreR = scale * 0.85;
-    const hiR = scale * 0.32;
-    if (this.trailBloom && dots.length >= 2 && !dashed) {
-      this.trailBloom.lineStyle(scale * 5.5, glow, 0.14);
+    // CSS-px WIDTH → game-unit RADIUS. Mockup A: white core in an orange wrap, not the reverse.
+    const unit = this.cssPerUnit() || 1;
+    const rad = (cssWidth: number) => Math.max(0.2, (cssWidth * 0.5) / unit);
+    const strokeW = (cssWidth: number) => Math.max(0.4, cssWidth / unit);
+    if (this.trailBloom && pts.length >= 2 && !dashed) {
+      this.trailBloom.lineStyle(strokeW(13), glow, 0.2);
+      this.trailBloom.beginPath();
+      this.trailBloom.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) this.trailBloom.lineTo(pts[i].x, pts[i].y);
+      this.trailBloom.strokePath();
+      this.trailBloom.lineStyle(strokeW(9), glow, 0.12);
       this.trailBloom.beginPath();
       this.trailBloom.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) this.trailBloom.lineTo(pts[i].x, pts[i].y);
       this.trailBloom.strokePath();
     }
-    stamp(glowGfx, glowR, glow, 0.28);
-    stamp(glowGfx, midR, glow, 0.4);
-    stamp(this.trailGfx, coreR, glow, 1);
-    stamp(this.trailGfx, hiR, core, 1);
+    stamp(glowGfx, rad(12), glow, 0.14);
+    stamp(glowGfx, rad(7), glow, 0.18);
+    stamp(this.trailGfx, rad(4.6), glow, 1);
+    stamp(this.trailGfx, rad(2), core, 1);
   }
 
   private paintActors(
@@ -1166,9 +1170,8 @@ class GameScene extends Phaser.Scene {
       }
       const w = this.worldOf(src);
       img.setPosition(w.x, w.y);
-      // Visible afterimage size tracks the trail (~4–5 CSS px), not the orb ring.
       const unit = this.cssPerUnit() || 1;
-      const sz = Math.max(2 / unit, (4 / unit) * (1 - i * 0.12));
+      const sz = Math.max(1.2 / unit, (2 / unit) * (1 - i * 0.12));
       img.setDisplaySize(sz, sz);
       img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
     });
