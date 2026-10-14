@@ -3,7 +3,8 @@ import { Server } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client, Room } from '@colyseus/sdk';
 import { TurfDuelQaRoom } from '../src/rooms/TurfDuelQaRoom.js';
-import { TurfDuelRoom } from '../src/rooms/TurfDuelRoom.js';
+import { TurfDuelRoom, seedFromRoom } from '../src/rooms/TurfDuelRoom.js';
+import { createInitialState, step, cellOf } from '@turf-duel/engine';
 
 const SHORT_MATCH = { matchTicks: 40 };
 
@@ -181,6 +182,37 @@ async function testProductionIgnoresMatchTicks(): Promise<void> {
   }
 }
 
+/** Production rooms ignore client seed and hash roomId instead. */
+async function testProductionIgnoresClientSeed(): Promise<void> {
+  const forced = 424242;
+  const { server, room1, room2 } = await startPair(12636, TurfDuelRoom, { seed: forced });
+  try {
+    await sleep(500);
+    const tick = room1.state.tick as number;
+    const honored = createInitialState({ seed: forced });
+    let fromClient = honored;
+    for (let i = 0; i < tick; i++) fromClient = step(fromClient, []).state;
+    let fromRoom = createInitialState({ seed: seedFromRoom(room1.roomId) });
+    for (let i = 0; i < tick; i++) fromRoom = step(fromRoom, []).state;
+    const bx = room1.state.boss.x as number;
+    const by = room1.state.boss.y as number;
+    if (bx !== cellOf(fromRoom.boss.xFp) || by !== cellOf(fromRoom.boss.yFp)) {
+      throw new Error(`Production seed should follow roomId, got (${bx},${by}) expected (${cellOf(fromRoom.boss.xFp)},${cellOf(fromRoom.boss.yFp)})`);
+    }
+    if (seedFromRoom(room1.roomId) !== forced
+      && bx === cellOf(fromClient.boss.xFp)
+      && by === cellOf(fromClient.boss.yFp)
+      && (cellOf(fromClient.boss.xFp) !== cellOf(fromRoom.boss.xFp) || cellOf(fromClient.boss.yFp) !== cellOf(fromRoom.boss.yFp))) {
+      throw new Error('Production room honored client options.seed');
+    }
+    await Promise.race([room1.leave().catch(() => undefined), sleep(400)]);
+    await Promise.race([room2.leave().catch(() => undefined), sleep(400)]);
+    console.log('✓ production TurfDuelRoom ignores client seed');
+  } finally {
+    await shutdown(server);
+  }
+}
+
 /** A consume that joins then immediately leave()s must not walkover the other rematch seat. */
 async function testLateSeatLeaveDoesNotForfeit(): Promise<void> {
   const { server, client1, client2, room1, room2 } = await startPair(12635);
@@ -220,6 +252,7 @@ async function main(): Promise<void> {
   await testClientRematchFlagIsIgnored();
   await testLateSeatLeaveDoesNotForfeit();
   await testProductionIgnoresMatchTicks();
+  await testProductionIgnoresClientSeed();
   console.log('\n✅ rematch-reserve PASSED\n');
 }
 

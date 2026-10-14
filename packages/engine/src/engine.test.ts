@@ -3,9 +3,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { createInitialState, fingerprint, replayInputLog, step } from './engine.js';
-import { CellType, Direction, HURT_IFRAME_TICKS, PlayerInput, ResultReason } from './types.js';
+import { CellType, Direction, HURT_IFRAME_TICKS, PlayerInput, ResultReason, TICKS_PER_SECOND } from './types.js';
 import { claimClosedTrail, countCells } from './cover.js';
 import { cellOf, toFp } from './lut.js';
+import { isCover } from './utils.js';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -703,6 +704,7 @@ describe('cover engine (Amy ★)', () => {
     state.player2.hearts = 99;
     state.boss.xFp = (1 << 8) + 128;
     state.boss.yFp = (1 << 8) + 128;
+    state.boss.heading = 0;
     state.sparx1.xFp = (0 << 8) + 128;
     state.sparx1.yFp = (0 << 8) + 128;
     state.sparx2.xFp = (15 << 8) + 128;
@@ -1091,7 +1093,154 @@ describe('cover engine (Amy ★)', () => {
     expect(state.grid[4][7]).toBe(CellType.PLAYER1_OPEN);
     expect(state.grid[4][8]).toBe(CellType.PLAYER1_OPEN);
     expect(state.player1.territoryCells).toBe(27);
-    expect(fingerprint(state)).toBe(1538652305);
+    // Boss Qix bounce (heading 32, specular wall reflect) moves the boss one
+    // step from (1,1). Previous lock: 1538652305 (4-heading +64 orbit, heading 20, speed 64).
+    expect(fingerprint(state)).toBe(-745570067);
+  });
+
+  test('boss roams all four cover quadrants and never leaves cover', () => {
+    let state = createInitialState();
+    const visited = new Set<number>();
+    const quads = [false, false, false, false];
+    const midX = state.gridWidth >> 1;
+    const midY = state.gridHeight >> 1;
+    let minX = midX;
+    let maxX = midX;
+    let minY = midY;
+    let maxY = midY;
+    const ticks = TICKS_PER_SECOND * 30;
+    for (let i = 0; i < ticks; i++) {
+      state = step(state, []).state;
+      const x = cellOf(state.boss.xFp);
+      const y = cellOf(state.boss.yFp);
+      expect(isCover(state.grid[y][x]), `boss left cover at ${x},${y} tick ${state.tick}`).toBe(true);
+      visited.add(x * 1024 + y);
+      quads[(x < midX ? 0 : 1) + (y < midY ? 0 : 2)] = true;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    expect(quads, 'all four quadrants').toEqual([true, true, true, true]);
+    expect(visited.size).toBeGreaterThan(80);
+    expect(maxX - minX).toBeGreaterThan(state.gridWidth * 0.5);
+    expect(maxY - minY).toBeGreaterThan(state.gridHeight * 0.5);
+    expect(minX).toBeLessThanOrEqual(4);
+    expect(maxX).toBeGreaterThanOrEqual(state.gridWidth - 5);
+    expect(minY).toBeLessThanOrEqual(4);
+    expect(maxY).toBeGreaterThanOrEqual(state.gridHeight - 5);
+    let coverCount = 0;
+    for (let y = 1; y < state.gridHeight - 1; y++) {
+      for (let x = 1; x < state.gridWidth - 1; x++) {
+        if (isCover(state.grid[y][x])) coverCount++;
+      }
+    }
+    const sweepFrac = (radius: number) => {
+      const swept = new Set<number>();
+      for (const key of visited) {
+        const vx = (key / 1024) | 0;
+        const vy = key & 1023;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const x = vx + dx;
+            const y = vy + dy;
+            if (x < 1 || y < 1 || x >= state.gridWidth - 1 || y >= state.gridHeight - 1) continue;
+            if (isCover(state.grid[y][x])) swept.add(x * 1024 + y);
+          }
+        }
+      }
+      return swept.size / coverCount;
+    };
+    const sweep6 = sweepFrac(6);
+    const sweep16 = sweepFrac(16);
+    expect(sweep16, `16-cell sweep ${sweep16}`).toBeGreaterThanOrEqual(0.4);
+    expect(sweep6, `6-cell Lee metric ${sweep6}`).toBeGreaterThan(0.12);
+  });
+
+  test('boss start heading and path differ by match seed', () => {
+    const a = createInitialState({ seed: 1 });
+    const b = createInitialState({ seed: 2 });
+    expect(a.boss.heading !== b.boss.heading || a.boss.xFp !== b.boss.xFp || a.boss.yFp !== b.boss.yFp).toBe(true);
+    const playSeed = (seed: number) => {
+      let s = createInitialState({ seed, matchTicks: 200 });
+      s = run(s, [], 80);
+      return fingerprint(s);
+    };
+    expect(playSeed(1)).not.toBe(playSeed(2));
+    const headings = new Set<number>();
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let seed = 0; seed < 32; seed++) {
+      const s = createInitialState({ seed });
+      headings.add(s.boss.heading);
+      xs.push(cellOf(s.boss.xFp));
+      ys.push(cellOf(s.boss.yFp));
+    }
+    expect(headings.size, '8 diagonal octants').toBe(8);
+    const w = a.gridWidth;
+    const h = a.gridHeight;
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(Math.floor((w * 3) / 10) - 1);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(Math.floor((w * 7) / 10) + 1);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(w * 0.25);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(h * 0.25);
+  });
+
+  test('boss does not tunnel through a 1-cell wall at 75% opened', () => {
+    let state = createInitialState({ matchTicks: 4000, seed: 0 });
+    const w = state.gridWidth;
+    const h = state.gridHeight;
+    const wallX = 170;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        if (x <= 150 || x === wallX) state.grid[y][x] = CellType.PLAYER1_OPEN;
+      }
+    }
+    const total = w * h;
+    const opened = total - countCells(state.grid, CellType.COVER) - countCells(state.grid, CellType.SAFE_EDGE);
+    expect(opened * 100).toBeGreaterThanOrEqual(total * 70);
+    state.boss.xFp = toFp(160);
+    state.boss.yFp = toFp(150);
+    state.boss.heading = 32;
+    for (let i = 0; i < 3000; i++) {
+      state = step(state, []).state;
+      const x = cellOf(state.boss.xFp);
+      const y = cellOf(state.boss.yFp);
+      expect(isCover(state.grid[y][x]), `left cover at ${x},${y}`).toBe(true);
+      expect(x, `tunneled onto/past wall at tick ${state.tick}`).toBeLessThan(wallX);
+    }
+  });
+
+  test('boss bounce stays inside shrinking cover', () => {
+    let state = createInitialState({ matchTicks: 800 });
+    const openUntil = 40;
+    for (let y = 1; y < state.gridHeight - 1; y++) {
+      for (let x = 1; x <= openUntil; x++) {
+        state.grid[y][x] = CellType.PLAYER1_OPEN;
+      }
+    }
+    state.boss.xFp = toFp(state.gridWidth >> 1);
+    state.boss.yFp = toFp(state.gridHeight >> 1);
+    state.boss.heading = 32;
+    let minX = state.gridWidth;
+    let maxX = 0;
+    let minY = state.gridHeight;
+    let maxY = 0;
+    const ticks = TICKS_PER_SECOND * 20;
+    for (let i = 0; i < ticks; i++) {
+      state = step(state, []).state;
+      const x = cellOf(state.boss.xFp);
+      const y = cellOf(state.boss.yFp);
+      expect(isCover(state.grid[y][x]), `boss left remaining cover at ${x},${y}`).toBe(true);
+      expect(x).toBeGreaterThan(openUntil);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    expect(maxX).toBeGreaterThanOrEqual(state.gridWidth - 5);
+    expect(minY).toBeLessThan(state.gridHeight >> 1);
+    expect(maxY).toBeGreaterThan(state.gridHeight >> 1);
+    expect(maxY - minY).toBeGreaterThan(state.gridHeight * 0.4);
   });
 
   test('cardinal direction inputs still apply on the same tick', () => {

@@ -312,7 +312,28 @@ export function paintKkumuli(
   g.stroke();
 }
 
-/** Mockup A cutter: white center, #FF7A1A (or foe) ring, tight soft glow. */
+/** Wide soft bloom (~40px at 390). Separate from the disc so ORB_MIN_PX does not shrink the ring. */
+export function paintOrbBloom(
+  g: CanvasRenderingContext2D,
+  s: number,
+  color: string,
+): void {
+  g.clearRect(0, 0, s, s);
+  const cx = s / 2;
+  const cy = s / 2;
+  const glow = g.createRadialGradient(cx, cy, s * 0.04, cx, cy, s * 0.5);
+  glow.addColorStop(0, hexAlpha(color, 0.82));
+  glow.addColorStop(0.18, hexAlpha(color, 0.55));
+  glow.addColorStop(0.42, hexAlpha(color, 0.28));
+  glow.addColorStop(0.7, hexAlpha(color, 0.12));
+  glow.addColorStop(1, hexAlpha(color, 0));
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(cx, cy, s * 0.5, 0, Math.PI * 2);
+  g.fill();
+}
+
+/** Mockup A cutter: white center, #FF7A1A (or foe) ring. Soft rim avoids downsample jaggies. */
 export function paintOrb(
   g: CanvasRenderingContext2D,
   s: number,
@@ -322,28 +343,37 @@ export function paintOrb(
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  const glow = g.createRadialGradient(cx, cy, s * 0.10, cx, cy, s * 0.5);
-  glow.addColorStop(0, hexAlpha(color, 0.88));
-  glow.addColorStop(0.36, hexAlpha(color, 0.45));
-  glow.addColorStop(0.72, hexAlpha(color, 0.16));
-  glow.addColorStop(1, hexAlpha(color, 0));
-  g.fillStyle = glow;
+  const disc = s * 0.38;
+  const white = s * 0.20;
+  const rim = g.createRadialGradient(cx, cy, disc * 0.88, cx, cy, disc * 1.14);
+  rim.addColorStop(0, hexAlpha(color, 1));
+  rim.addColorStop(0.62, hexAlpha(color, 0.95));
+  rim.addColorStop(1, hexAlpha(color, 0));
+  g.fillStyle = rim;
   g.beginPath();
-  g.arc(cx, cy, s * 0.5, 0, Math.PI * 2);
+  g.arc(cx, cy, disc * 1.14, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = color;
   g.beginPath();
-  g.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
+  g.arc(cx, cy, disc, 0, Math.PI * 2);
+  g.fill();
+  const core = g.createRadialGradient(cx, cy, white * 0.7, cx, cy, white * 1.12);
+  core.addColorStop(0, '#ffffff');
+  core.addColorStop(0.75, '#ffffff');
+  core.addColorStop(1, hexAlpha('#ffffff', 0));
+  g.fillStyle = core;
+  g.beginPath();
+  g.arc(cx, cy, white * 1.12, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#ffffff';
   g.beginPath();
-  g.arc(cx, cy, s * 0.20, 0, Math.PI * 2);
+  g.arc(cx, cy, white, 0, Math.PI * 2);
   g.fill();
   if (whiteRing) {
     g.strokeStyle = '#ffffff';
-    g.lineWidth = Math.max(2, s * 0.04);
+    g.lineWidth = Math.max(1.5, s * 0.04);
     g.beginPath();
-    g.arc(cx, cy, s * 0.38, 0, Math.PI * 2);
+    g.arc(cx, cy, disc, 0, Math.PI * 2);
     g.stroke();
   }
 }

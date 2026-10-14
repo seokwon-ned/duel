@@ -24,6 +24,7 @@ import {
   paintHiddenIllustration,
   paintKkumuli,
   paintOrb,
+  paintOrbBloom,
   paintSpark,
   paintParticleDot,
 } from './visualA.js';
@@ -35,10 +36,29 @@ const AFTERIMAGES = 10;
 const KK_TEX = 256;
 /** Full sprite ~31% of board so the octopus body reads as ~1/4 width. */
 const KK_CELLS = 62;
-/** Mockup A visible ring ~20px at 390×844 (6% of board). Floor keeps 360×640 ~18px. */
+/** Mockup A visible ring ~20px at 390×844 (6% of board). */
 const ORB_CELLS = 16;
-const ORB_MIN_PX = 18;
-const ORB_TEX = 128;
+/** CSS-px floor (not game units). 25 CSS px → visible ring ~19px at 360. */
+const ORB_MIN_CSS = 25;
+/** ~2× display; LINEAR downscale stays smooth (128→26px aliased). */
+const ORB_TEX = 64;
+/** Soft bloom sprite in CSS px. Falloff stays visible out to ~40px. */
+const ORB_BLOOM_CSS = 56;
+const ORB_BLOOM_TEX = 64;
+/** Glow sheet is CSS size (dpr 1). Orange+white core is Phaser Graphics, full redraw. */
+const TRAIL_DPR_CAP = 2;
+/** ~4–6 CSS px opaque band (Graphics lineStyle in canvas pixels). */
+const TRAIL_ORANGE_CSS = 6;
+/** Target ~2 CSS px white spine. Slightly over 2 so AA still leaves >=1.5px. */
+const TRAIL_WHITE_CSS = 2.8;
+/** 3 low-alpha halo layers (~27px). Outer alpha high enough that isPixGlow still sees 26px. */
+const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
+  [26, 0.28],
+  [18, 0.50],
+];
+/** Full-redraw the glow sheet every N appends so translucent alpha cannot pile up. */
+const TRAIL_GLOW_BATCH = 8;
+const TRAIL_APPEND_SAMPLES = 40;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
 /** Give up on a reserved rematch seat and fall back to joinOrCreate. */
@@ -74,11 +94,23 @@ interface TurfDebug {
   drawing: { p1: boolean; p2: boolean };
   trails: { p1: number; p2: number };
   youHearts: number;
+  trailPaintGen: number;
+  trailPaintMs: number;
+  trailPaintAvg: number;
+  trailDpr: number;
+  trailPaintKind: 'append' | 'full';
+  trailPaintAppends: number;
+  trailPaintP95: number;
+  trailPaintFullMs: number;
+  trailPaintUploads: number;
+  trailPtsCss: { x: number; y: number }[];
+  trailPts: { x: number; y: number }[];
 }
 
 declare global {
   interface Window {
     __turfDebug?: TurfDebug;
+    __turfForceTrailDpr?: number;
   }
 }
 
@@ -95,6 +127,17 @@ if (typeof window !== 'undefined') {
     drawing: { p1: false, p2: false },
     trails: { p1: 0, p2: 0 },
     youHearts: 3,
+    trailPaintGen: 0,
+    trailPaintMs: 0,
+    trailPaintAvg: 0,
+    trailDpr: 1,
+    trailPaintKind: 'full',
+    trailPaintAppends: 0,
+    trailPaintP95: 0,
+    trailPaintFullMs: 0,
+    trailPaintUploads: 0,
+    trailPtsCss: [],
+    trailPts: [],
   };
 }
 
@@ -196,13 +239,27 @@ class GameScene extends Phaser.Scene {
   private kkTexture: Phaser.Textures.CanvasTexture | null = null;
   private boardImage: Phaser.GameObjects.Image | null = null;
   private trailGfx: Phaser.GameObjects.Graphics | null = null;
-  private trailGlow: Phaser.GameObjects.Graphics | null = null;
+  private trailCoreGfx: Phaser.GameObjects.Graphics | null = null;
+  private trailGlowSheet: HTMLCanvasElement | null = null;
+  private trailGlowTexture: Phaser.Textures.CanvasTexture | null = null;
+  private trailGlowSprite: Phaser.GameObjects.Image | null = null;
+  private lastTrailKey = '';
+  private lastPts1: { x: number; y: number }[] = [];
+  private lastPts2: { x: number; y: number }[] = [];
+  private trailPaintGen = 0;
+  private trailPaintSum = 0;
+  private trailPaintAppends = 0;
+  private trailPaintFullMs = 0;
+  private trailPaintUploads = 0;
+  private trailAppendMs: number[] = [];
   private afterimages2: Phaser.GameObjects.Image[] = [];
   private qaP1: QaPilot | null = null;
   private qaP2: QaPilot | null = null;
   private lastP2: { x: number; y: number }[] = [];
   private p1Sprite: Phaser.GameObjects.Image | null = null;
   private p2Sprite: Phaser.GameObjects.Image | null = null;
+  private p1Bloom: Phaser.GameObjects.Image | null = null;
+  private p2Bloom: Phaser.GameObjects.Image | null = null;
   private kkumuli: Phaser.GameObjects.Image | null = null;
   private sparkSprites: Phaser.GameObjects.Image[] = [];
   private afterimages: Phaser.GameObjects.Image[] = [];
@@ -277,13 +334,21 @@ class GameScene extends Phaser.Scene {
     this.boardImage = this.add.image(0, 0, 'cover-board').setOrigin(0);
     addGlow(this.boardImage, AH.purple, 1.6);
 
-    this.trailGlow = this.add.graphics();
-    this.trailGlow.setBlendMode(Phaser.BlendModes.ADD);
-    this.trailGlow.setDepth(1);
     this.trailGfx = this.add.graphics();
     this.trailGfx.setDepth(2);
-    this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me));
-    this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true));
+    this.trailGlowSheet = document.createElement('canvas');
+    this.trailGlowSheet.width = BOARD_W;
+    this.trailGlowSheet.height = BOARD_H;
+    this.trailGlowTexture = this.textures.addCanvas('trail-glow', this.trailGlowSheet);
+    this.trailGlowTexture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
+    this.trailGlowSprite = this.add.image(0, 0, 'trail-glow').setOrigin(0).setDepth(5.2);
+    this.trailCoreGfx = this.add.graphics();
+    // Above glow (5.2) and the cutter (6): the spine must stay visible through the disc.
+    this.trailCoreGfx.setDepth(6.5);
+    this.addPaintedTexture('orb-me', ORB_TEX, (g, s) => paintOrb(g, s, A.me), true);
+    this.addPaintedTexture('orb-foe', ORB_TEX, (g, s) => paintOrb(g, s, A.foe, true), true);
+    this.addPaintedTexture('orb-bloom-me', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.me), true);
+    this.addPaintedTexture('orb-bloom-foe', ORB_BLOOM_TEX, (g, s) => paintOrbBloom(g, s, A.foe), true);
     this.addPaintedTexture('sparx', 48, paintSpark);
     this.addPaintedTexture('dot-me', 8, (g, s) => paintParticleDot(g, s, A.me));
     this.addPaintedTexture('dot-accent', 8, (g, s) => paintParticleDot(g, s, A.accent));
@@ -297,6 +362,10 @@ class GameScene extends Phaser.Scene {
     paintKkumuli(this.kkCanvas.getContext('2d')!, KK_TEX, 0, false);
     this.kkTexture = this.textures.addCanvas('kkumuli', this.kkCanvas);
 
+    this.p1Bloom = this.add.image(0, 0, 'orb-bloom-me').setDepth(5);
+    this.p1Bloom.setBlendMode(Phaser.BlendModes.ADD);
+    this.p2Bloom = this.add.image(0, 0, 'orb-bloom-foe').setDepth(5);
+    this.p2Bloom.setBlendMode(Phaser.BlendModes.ADD);
     this.p1Sprite = this.add.image(0, 0, 'orb-me').setDepth(6);
     this.p2Sprite = this.add.image(0, 0, 'orb-foe').setDepth(6);
     this.kkumuli = this.add.image(0, 0, 'kkumuli').setDepth(5);
@@ -307,10 +376,10 @@ class GameScene extends Phaser.Scene {
     // Canvas-baked circular glow only — Phaser addGlow halos the whole quad as a square.
 
     for (let i = 0; i < AFTERIMAGES; i++) {
-      const ghost = this.add.image(0, 0, 'orb-me').setAlpha(0).setDepth(4);
+      const ghost = this.add.image(0, 0, 'dot-me').setAlpha(0).setDepth(4);
       ghost.setBlendMode(Phaser.BlendModes.ADD);
       this.afterimages.push(ghost);
-      const ghost2 = this.add.image(0, 0, 'orb-foe').setAlpha(0).setDepth(4);
+      const ghost2 = this.add.image(0, 0, 'dot-accent').setAlpha(0).setDepth(4);
       ghost2.setBlendMode(Phaser.BlendModes.ADD);
       this.afterimages2.push(ghost2);
     }
@@ -363,12 +432,24 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  private addPaintedTexture(key: string, size: number, paint: (g: CanvasRenderingContext2D, s: number) => void) {
+  private addPaintedTexture(
+    key: string,
+    size: number,
+    paint: (g: CanvasRenderingContext2D, s: number) => void,
+    linear = false,
+  ) {
     const c = document.createElement('canvas');
     c.width = size;
     c.height = size;
-    paint(c.getContext('2d')!, size);
-    this.textures.addCanvas(key, c);
+    const ctx = c.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    paint(ctx, size);
+    const tex = this.textures.addCanvas(key, c);
+    if (linear) {
+      tex?.setFilter(Phaser.Textures.FilterMode.LINEAR);
+      tex?.setSmoothPixelArt(true);
+    }
   }
 
   relayoutMatch() {
@@ -385,6 +466,7 @@ class GameScene extends Phaser.Scene {
     if (this.boardImage) {
       this.boardImage.setScale(scale).setPosition((w - BOARD_W * scale) / 2, (h - BOARD_H * scale) / 2);
     }
+    this.placeTrailSprites(scale);
     this.redrawOverlay(this.matchState?.player1.trail ?? this.p1TrailCopy, this.matchState?.player2.trail ?? []);
     this.placeShownActors();
   }
@@ -457,6 +539,8 @@ class GameScene extends Phaser.Scene {
   private setActorsVisible(visible: boolean) {
     this.p1Sprite?.setVisible(visible);
     this.p2Sprite?.setVisible(visible);
+    this.p1Bloom?.setVisible(visible);
+    this.p2Bloom?.setVisible(visible);
     this.kkumuli?.setVisible(visible);
     for (const spark of this.sparkSprites) spark.setVisible(visible);
     for (const g of this.afterimages) g.setVisible(visible);
@@ -616,11 +700,12 @@ class GameScene extends Phaser.Scene {
   private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
     if (!this.matchState) return { events: [], prevTrail: [] };
     const claimed = this.matchState.player1.territoryCells ?? 0;
-    if (this.qaMode && !this.matchState.result) {
-      // Hold 꾸물이 in remaining cover so mid-match / cut shots show the
-      // full ~1/4-width body instead of clipping the right edge.
-      this.matchState.boss.xFp = toFp(124);
-      this.matchState.boss.yFp = toFp(118);
+    if (this.qaMode && !this.matchState.result && claimed < 18000) {
+      // Scripted capture parks 꾸물이 in remaining COVER at a far corner — not
+      // the board center — so the live line is not cut. Real matches use engine
+      // Qix bounce (no clamp).
+      this.matchState.boss.xFp = toFp(180);
+      this.matchState.boss.yFp = toFp(28);
     }
     if (this.qaMode && claimed < 18000) {
       this.matchState.sparx1.xFp = toFp(0);
@@ -927,74 +1012,275 @@ class GameScene extends Phaser.Scene {
     const oy = this.boardImage.y;
     const bw = BOARD_W * scale;
     const bh = BOARD_H * scale;
-    this.trailGlow?.clear();
     const frameW = Math.max(1, scale * 1.0);
     this.trailGfx.lineStyle(frameW, AH.purple, 0.85);
     this.trailGfx.strokeRoundedRect(ox + 1, oy + 1, bw - 2, bh - 2, Math.min(18, scale * 8));
-    const mine = trail1;
-    const foe = trail2 ?? [];
-    this.strokeGlowLine(mine, AH.me, AH.core, ox, oy, scale, false);
-    this.strokeGlowLine(foe, AH.foe, 0xffffff, ox, oy, scale, true);
+    this.paintTrailSheet(trail1, trail2 ?? []);
   }
 
-  private strokeGlowLine(
-    trail: { x: number; y: number }[],
-    glow: number,
-    core: number,
-    ox: number,
-    oy: number,
-    scale: number,
-    dashed: boolean,
+  /** Glow sheet DPR (core is Graphics and ignores this). Tests may force 2. */
+  private trailDpr(): number {
+    const forced = typeof window !== 'undefined' ? window.__turfForceTrailDpr : undefined;
+    const raw = typeof forced === 'number' ? forced : typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    return Math.min(TRAIL_DPR_CAP, Math.max(1, raw));
+  }
+
+  private placeTrailSprites(scale?: number) {
+    if (!this.boardImage) return;
+    const s = scale ?? this.boardImage.scaleX;
+    const w = BOARD_W * s;
+    const h = BOARD_H * s;
+    if (this.trailGlowSprite) {
+      this.trailGlowSprite.setPosition(this.boardImage.x, this.boardImage.y);
+      this.trailGlowSprite.setDisplaySize(w, h);
+    }
+  }
+
+  private trailCanAppend(prev: { x: number; y: number }[], next: { x: number; y: number }[]): boolean {
+    if (prev.length < 2 || next.length <= prev.length) return false;
+    const a = prev[0];
+    const b = next[0];
+    if (a.x !== b.x || a.y !== b.y) return false;
+    const p = prev[prev.length - 1];
+    const q = next[prev.length - 1];
+    return p.x === q.x && p.y === q.y;
+  }
+
+  private prepTrailCtx(ctx: CanvasRenderingContext2D) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.imageSmoothingEnabled = true;
+  }
+
+  private resizeTrailTexture(texture: Phaser.Textures.CanvasTexture, w: number, h: number): boolean {
+    if (texture.width === w && texture.height === h) return false;
+    texture.setSize(w, h);
+    texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+    return true;
+  }
+
+  private paintTrailSheet(
+    trail1: { x: number; y: number }[],
+    trail2: { x: number; y: number }[],
   ) {
-    if (!this.trailGfx || trail.length < 2) return;
-    const pts = trail.map((p) => ({ x: ox + (p.x + 0.5) * scale, y: oy + (p.y + 0.5) * scale }));
-    const glowGfx = this.trailGlow ?? this.trailGfx;
-    const dots: { x: number; y: number }[] = [];
-    if (dashed) {
-      const on = Math.max(16, scale * 8);
-      const off = Math.max(10, scale * 5);
-      let acc = 0;
-      let drawing = true;
-      dots.push(pts[0]);
-      for (let i = 1; i < pts.length; i++) {
-        let x0 = pts[i - 1].x;
-        let y0 = pts[i - 1].y;
-        const x1 = pts[i].x;
-        const y1 = pts[i].y;
-        let dist = Math.hypot(x1 - x0, y1 - y0);
-        if (dist < 0.001) continue;
-        const ux = (x1 - x0) / dist;
-        const uy = (y1 - y0) / dist;
-        while (dist > 0) {
-          const slice = Math.min(dist, drawing ? on - acc : off - acc);
-          x0 += ux * slice;
-          y0 += uy * slice;
-          dist -= slice;
-          acc += slice;
-          if (drawing) dots.push({ x: x0, y: y0 });
-          const limit = drawing ? on : off;
-          if (acc >= limit - 0.01) {
-            acc = 0;
-            drawing = !drawing;
-          }
-        }
+    if (!this.trailGlowSheet || !this.trailGlowTexture || !this.trailGlowSprite || !this.boardImage || !this.trailCoreGfx) {
+      return;
+    }
+    const unit = this.cssPerUnit() || 1;
+    const dpr = this.trailDpr();
+    const glowDpr = 1;
+    const cssW = Math.max(1, Math.round(BOARD_W * unit));
+    const cssH = Math.max(1, Math.round(BOARD_H * unit));
+    const gw = Math.max(1, Math.round(cssW * glowDpr));
+    const gh = Math.max(1, Math.round(cssH * glowDpr));
+    const ox = this.boardImage.x;
+    const oy = this.boardImage.y;
+    const scale = this.boardImage.scaleX;
+    const sig = (t: { x: number; y: number }[]) => {
+      if (t.length < 2) return '0';
+      const a = t[0];
+      const b = t[t.length - 1];
+      return `${t.length}:${a.x},${a.y}:${b.x},${b.y}`;
+    };
+    const key = `${gw}x${gh}@${dpr}|${ox},${oy},${scale}|${sig(trail1)}|${sig(trail2)}`;
+    this.placeTrailSprites();
+    if (key === this.lastTrailKey) return;
+    this.lastTrailKey = key;
+    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+    const resized = this.resizeTrailTexture(this.trailGlowTexture, gw, gh);
+    if (resized) {
+      this.lastPts1 = [];
+      this.lastPts2 = [];
+      this.trailAppendMs = [];
+    }
+    const glowCtx = this.trailGlowSheet.getContext('2d');
+    if (!glowCtx) return;
+    this.prepTrailCtx(glowCtx);
+    const glowCell = gw / BOARD_W;
+    const sameHead = (a: { x: number; y: number }[], b: { x: number; y: number }[]) =>
+      a.length === b.length &&
+      (a.length < 2 ||
+        (a[0].x === b[0].x &&
+          a[0].y === b[0].y &&
+          a[a.length - 1].x === b[b.length - 1].x &&
+          a[a.length - 1].y === b[b.length - 1].y));
+    const inc1 = this.trailCanAppend(this.lastPts1, trail1);
+    const inc2 = this.trailCanAppend(this.lastPts2, trail2);
+    const hold1 = sameHead(this.lastPts1, trail1);
+    const hold2 = sameHead(this.lastPts2, trail2);
+    let kind: 'append' | 'full' = 'full';
+    let uploadGlow = false;
+    if ((inc1 || hold1) && (inc2 || hold2) && (inc1 || inc2)) {
+      kind = 'append';
+      this.trailPaintAppends += 1;
+      if (this.trailPaintAppends % TRAIL_GLOW_BATCH === 0) {
+        uploadGlow = true;
+        glowCtx.clearRect(0, 0, gw, gh);
+        this.strokeTrailGlow(glowCtx, trail1, glowCell, glowDpr, A.me, false);
+        this.strokeTrailGlow(glowCtx, trail2, glowCell, glowDpr, A.foe, true);
       }
     } else {
-      dots.push(...pts);
+      glowCtx.clearRect(0, 0, gw, gh);
+      this.strokeTrailGlow(glowCtx, trail1, glowCell, glowDpr, A.me, false);
+      this.strokeTrailGlow(glowCtx, trail2, glowCell, glowDpr, A.foe, true);
+      uploadGlow = true;
     }
-    const stamp = (gfx: Phaser.GameObjects.Graphics, radius: number, color: number, alpha: number) => {
-      gfx.fillStyle(color, alpha);
-      for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
-    };
-    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390; outer glow is wider/softer like mockup A.
-    const glowR = scale * 2.4;
-    const midR = scale * 1.05;
-    const coreR = scale * 0.85;
-    const hiR = scale * 0.32;
-    stamp(glowGfx, glowR, glow, 0.16);
-    stamp(glowGfx, midR, glow, 0.28);
-    stamp(this.trailGfx, coreR, glow, 1);
-    stamp(this.trailGfx, hiR, core, 1);
+    this.drawTrailCore(trail1, trail2);
+    this.lastPts1 = trail1.map((p) => ({ x: p.x, y: p.y }));
+    this.lastPts2 = trail2.map((p) => ({ x: p.x, y: p.y }));
+    if (uploadGlow) {
+      this.trailGlowTexture.refresh();
+      this.trailPaintUploads += 1;
+    }
+    this.trailPaintGen += 1;
+    const ms = typeof performance !== 'undefined' ? performance.now() - t0 : 0;
+    this.trailPaintSum += ms;
+    if (kind === 'full') this.trailPaintFullMs = ms;
+    // Every paint, including glow-upload frames, feeds p95.
+    this.trailAppendMs.push(ms);
+    if (this.trailAppendMs.length > TRAIL_APPEND_SAMPLES) this.trailAppendMs.shift();
+    const p95 = this.trailPaintP95();
+    if (window.__turfDebug) {
+      window.__turfDebug.trailPaintGen = this.trailPaintGen;
+      window.__turfDebug.trailPaintMs = Math.round(ms * 10) / 10;
+      window.__turfDebug.trailPaintAvg = Math.round((this.trailPaintSum / this.trailPaintGen) * 10) / 10;
+      window.__turfDebug.trailDpr = dpr;
+      window.__turfDebug.trailPaintKind = kind;
+      window.__turfDebug.trailPaintAppends = this.trailPaintAppends;
+      window.__turfDebug.trailPaintP95 = p95;
+      window.__turfDebug.trailPaintFullMs = Math.round(this.trailPaintFullMs * 10) / 10;
+      window.__turfDebug.trailPaintUploads = this.trailPaintUploads;
+      const src = trail1.length >= 2 ? trail1 : trail2;
+      window.__turfDebug.trailPtsCss = this.trailPtsToCss(src);
+      window.__turfDebug.trailPts = src.map((p) => ({ x: p.x, y: p.y }));
+    }
+  }
+
+  private trailPaintP95(): number {
+    if (!this.trailAppendMs.length) return 0;
+    const sorted = this.trailAppendMs.slice().sort((a, b) => a - b);
+    const i = Math.min(sorted.length - 1, Math.ceil(0.95 * sorted.length) - 1);
+    return Math.round(sorted[i] * 10) / 10;
+  }
+
+  private trailPtsToCss(trail: { x: number; y: number }[]): { x: number; y: number }[] {
+    if (!this.boardImage) return [];
+    const dw = this.scale.displaySize?.width ?? BOARD_W;
+    const dh = this.scale.displaySize?.height ?? BOARD_H;
+    const gw = this.scale.width || BOARD_W;
+    const gh = this.scale.height || BOARD_H;
+    const sx = dw / gw;
+    const sy = dh / gh;
+    const ox = this.boardImage.x * sx;
+    const oy = this.boardImage.y * sy;
+    const cx = this.boardImage.scaleX * sx;
+    const cy = this.boardImage.scaleY * sy;
+    return trail.map((p) => ({
+      x: ox + (p.x + 0.5) * cx,
+      y: oy + (p.y + 0.5) * cy,
+    }));
+  }
+
+  /** Opaque orange + white, full polyline every update. Widths are canvas/CSS pixels. */
+  private drawTrailCore(trail1: { x: number; y: number }[], trail2: { x: number; y: number }[]) {
+    const gfx = this.trailCoreGfx;
+    if (!gfx || !this.boardImage) return;
+    gfx.clear();
+    const orangeW = TRAIL_ORANGE_CSS;
+    const whiteW = TRAIL_WHITE_CSS;
+    this.strokeTrailGfx(gfx, trail1, orangeW, AH.me, false);
+    this.strokeTrailGfx(gfx, trail2, orangeW, AH.foe, true);
+    this.strokeTrailGfx(gfx, trail1, whiteW, 0xffffff, false);
+    this.strokeTrailGfx(gfx, trail2, whiteW, 0xffffff, true);
+  }
+
+  private strokeTrailGfx(
+    gfx: Phaser.GameObjects.Graphics,
+    trail: { x: number; y: number }[],
+    width: number,
+    color: number,
+    dashed: boolean,
+  ) {
+    if (trail.length < 2 || width <= 0) return;
+    const pts = trail.map((p) => this.worldOf(p));
+    gfx.lineStyle(width, color, 1);
+    if (!dashed) {
+      gfx.beginPath();
+      gfx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) gfx.lineTo(pts[i].x, pts[i].y);
+      gfx.strokePath();
+      return;
+    }
+    const dash = 4;
+    const gap = 2.5;
+    let on = true;
+    let remain = dash;
+    gfx.beginPath();
+    gfx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      let x0 = pts[i - 1].x;
+      let y0 = pts[i - 1].y;
+      const x1 = pts[i].x;
+      const y1 = pts[i].y;
+      let seg = Math.hypot(x1 - x0, y1 - y0);
+      while (seg > 0.001) {
+        const take = Math.min(remain, seg);
+        const t = take / seg;
+        const nx = x0 + (x1 - x0) * t;
+        const ny = y0 + (y1 - y0) * t;
+        if (on) gfx.lineTo(nx, ny);
+        else gfx.moveTo(nx, ny);
+        x0 = nx;
+        y0 = ny;
+        seg -= take;
+        remain -= take;
+        if (remain <= 0.001) {
+          on = !on;
+          remain = on ? dash : gap;
+        }
+      }
+    }
+    gfx.strokePath();
+  }
+
+  private strokeTrailGlow(
+    ctx: CanvasRenderingContext2D,
+    trail: { x: number; y: number }[],
+    cell: number,
+    dpr: number,
+    color: string,
+    dashed: boolean,
+  ) {
+    if (trail.length < 2) return;
+    const snap = (v: number) => Math.round(v);
+    const path = new Path2D();
+    path.moveTo(snap((trail[0].x + 0.5) * cell), snap((trail[0].y + 0.5) * cell));
+    for (let i = 1; i < trail.length; i++) {
+      path.lineTo(snap((trail[i].x + 0.5) * cell), snap((trail[i].y + 0.5) * cell));
+    }
+    const n = parseInt(color.slice(1), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
+    const px = (css: number) => Math.max(1, Math.round(css * dpr));
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineDashOffset = 0;
+    ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
+    for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
+      ctx.strokeStyle = rgba(alpha);
+      ctx.lineWidth = px(width);
+      ctx.stroke(path);
+    }
+    ctx.setLineDash([]);
+    const tip = trail[trail.length - 1];
+    const tx = snap((tip.x + 0.5) * cell);
+    const ty = snap((tip.y + 0.5) * cell);
+    ctx.fillStyle = rgba(0.40);
+    ctx.beginPath();
+    ctx.arc(tx, ty, px(18), 0, Math.PI * 2);
+    ctx.fill();
   }
 
   private paintActors(
@@ -1024,8 +1310,8 @@ class GameScene extends Phaser.Scene {
     if (this.lastP2.length > AFTERIMAGES) this.lastP2.shift();
     const guide1 = this.matchState?.player1.trail ?? this.p1TrailCopy;
     const guide2 = this.matchState?.player2.trail ?? [];
-    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.40, { x: 0, y: -1 });
-    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.32, { x: -1, y: 0 });
+    this.stampAfterimages(this.afterimages, p1, guide1, this.lastP1, ORB_CELLS, 0.22, { x: 0, y: -1 });
+    this.stampAfterimages(this.afterimages2, p2, guide2, this.lastP2, ORB_CELLS * 0.92, 0.18, { x: -1, y: 0 });
     this.placeShownActors();
   }
 
@@ -1040,17 +1326,28 @@ class GameScene extends Phaser.Scene {
     this.placeShownActors();
   }
 
+  /** CSS pixels per board cell. Prefer the laid-out board scale (RESIZE or FIT). */
+  private cssPerUnit(): number {
+    if (this.boardImage && this.boardImage.scaleX > 0) return this.boardImage.scaleX;
+    const disp = this.scale.displaySize?.width ?? BOARD_W;
+    return disp / BOARD_W;
+  }
+
   private placeShownActors() {
     if (!this.boardImage || !this.lerpReady) return;
     const scale = this.boardImage.scaleX;
-    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number, minPx = 10) => {
+    const unit = this.cssPerUnit() || 1;
+    const place = (sprite: Phaser.GameObjects.Image | null, p: { x: number; y: number }, size: number, minCss = 0) => {
       if (!sprite) return;
       sprite.setPosition(this.actorWorld(p).x, this.actorWorld(p).y);
-      const px = Math.max(minPx, size * scale);
+      const px = Math.max(minCss / unit, size * scale);
       sprite.setDisplaySize(px, px);
     };
-    place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_PX);
-    place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_PX);
+    const bloomGame = ORB_BLOOM_CSS / unit;
+    place(this.p1Bloom, this.shown.p1, bloomGame, 0);
+    place(this.p2Bloom, this.shown.p2, bloomGame, 0);
+    place(this.p1Sprite, this.shown.p1, ORB_CELLS, ORB_MIN_CSS);
+    place(this.p2Sprite, this.shown.p2, ORB_CELLS, ORB_MIN_CSS);
     place(this.kkumuli, this.shown.boss, KK_CELLS);
     place(this.sparkSprites[0], this.shown.s1, 18);
     place(this.sparkSprites[1], this.shown.s2, 18);
@@ -1108,7 +1405,6 @@ class GameScene extends Phaser.Scene {
         pts.push({ x: pos.x - dx * k * 6, y: pos.y - dy * k * 6 });
       }
     }
-    const scale = this.boardImage?.scaleX ?? 1;
     imgs.forEach((img, i) => {
       const src = pts[i];
       if (!src) {
@@ -1117,8 +1413,8 @@ class GameScene extends Phaser.Scene {
       }
       const w = this.worldOf(src);
       img.setPosition(w.x, w.y);
-      // Visible afterimage size tracks the trail (~4–5px), not the orb ring.
-      const sz = Math.max(3, size * 0.20 * (1 - i * 0.12) * scale);
+      const unit = this.cssPerUnit() || 1;
+      const sz = Math.max(1.2 / unit, (2 / unit) * (1 - i * 0.12));
       img.setDisplaySize(sz, sz);
       img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
     });
@@ -1241,13 +1537,13 @@ const game = new Phaser.Game({
   banner: false,
   scene: [GameScene],
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_HORIZONTALLY,
     expandParent: false,
     width: BOARD_W,
     height: BOARD_H,
   },
-  render: { antialias: true, transparent: false },
+  render: { antialias: true, antialiasGL: true, transparent: false, mipmapFilter: 'LINEAR_MIPMAP_LINEAR' },
 });
 
 window.addEventListener('resize', () => game.scale.refresh());

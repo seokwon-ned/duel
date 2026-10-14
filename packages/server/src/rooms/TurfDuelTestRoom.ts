@@ -13,6 +13,10 @@ export class TurfDuelTestRoom extends TurfDuelRoom {
     return true;
   }
 
+  protected override allowClientSeed(): boolean {
+    return true;
+  }
+
   onCreate(options: any) {
     super.onCreate(options);
     if (this.roomId) {

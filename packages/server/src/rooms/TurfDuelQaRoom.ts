@@ -8,4 +8,8 @@ export class TurfDuelQaRoom extends TurfDuelRoom {
   protected override allowClientMatchTicks(): boolean {
     return true;
   }
+
+  protected override allowClientSeed(): boolean {
+    return true;
+  }
 }
