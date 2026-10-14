@@ -647,6 +647,13 @@ class GameScene extends Phaser.Scene {
   private stepBotOnce(): { events: GameEvent[]; prevTrail: { x: number; y: number }[] } {
     if (!this.matchState) return { events: [], prevTrail: [] };
     const claimed = this.matchState.player1.territoryCells ?? 0;
+    if (this.qaMode && !this.matchState.result && claimed < 18000) {
+      // Scripted capture parks 꾸물이 in remaining COVER at a far corner — not
+      // the board center — so the live line is not cut. Real matches use engine
+      // Qix bounce (no clamp).
+      this.matchState.boss.xFp = toFp(180);
+      this.matchState.boss.yFp = toFp(28);
+    }
     if (this.qaMode && claimed < 18000) {
       this.matchState.sparx1.xFp = toFp(0);
       this.matchState.sparx1.yFp = toFp(0);
