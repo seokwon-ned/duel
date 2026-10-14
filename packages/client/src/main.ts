@@ -47,9 +47,9 @@ const ORB_BLOOM_CSS = 56;
 const ORB_BLOOM_TEX = 64;
 /** Trail sheet is CSS size × DPR (capped at 2) so a 2px white core survives WebGL. */
 const TRAIL_DPR_CAP = 2;
-const TRAIL_ORANGE_CSS = 4;
-/** ~2 CSS px; restroked last after glow so FIT downsample still reads ~2px. */
-const TRAIL_WHITE_CSS = 2.6;
+const TRAIL_ORANGE_CSS = 6;
+/** ~2 CSS px on the opaque core sheet so FIT still reads a real white spine. */
+const TRAIL_WHITE_CSS = 2.2;
 /** 3 low-alpha halo layers (~27px) — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
   [26, 0.14],
@@ -105,6 +105,7 @@ interface TurfDebug {
   trailPaintP95: number;
   trailPaintFullMs: number;
   trailPtsCss: { x: number; y: number }[];
+  trailPts: { x: number; y: number }[];
 }
 
 declare global {
@@ -136,6 +137,7 @@ if (typeof window !== 'undefined') {
     trailPaintP95: 0,
     trailPaintFullMs: 0,
     trailPtsCss: [],
+    trailPts: [],
   };
 }
 
@@ -1204,6 +1206,7 @@ class GameScene extends Phaser.Scene {
       window.__turfDebug.trailPaintP95 = p95;
       window.__turfDebug.trailPaintFullMs = Math.round(this.trailPaintFullMs * 10) / 10;
       window.__turfDebug.trailPtsCss = this.trailPtsToCss(trail1);
+      window.__turfDebug.trailPts = trail1.map((p) => ({ x: p.x, y: p.y }));
     }
   }
 
@@ -1295,7 +1298,7 @@ class GameScene extends Phaser.Scene {
     const g = (n >> 8) & 255;
     const b = n & 255;
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
-    const px = (css: number) => Math.max(1, css * dpr);
+    const px = (css: number) => Math.max(1, Math.round(css * dpr));
     ctx.globalCompositeOperation = 'source-over';
     ctx.lineDashOffset = dashed ? -(start * cell) : 0;
     ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);

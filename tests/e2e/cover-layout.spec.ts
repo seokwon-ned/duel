@@ -76,7 +76,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
   sampleMins: number[];
 }> {
   const png = await page.locator('#game-container canvas').screenshot();
-  const pts = await page.evaluate(() => window.__turfDebug?.trailPtsCss ?? []);
+  const pts = await page.evaluate(() => window.__turfDebug?.trailPts ?? window.__turfDebug?.trailPtsCss ?? []);
   return page.evaluate(
     async ({ b64, pts }) => {
       const img = new Image();
@@ -93,18 +93,27 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         const i = (y * width + x) * 4;
         return [data[i], data[i + 1], data[i + 2]] as [number, number, number];
       };
-      const tip = pts.length ? pts[pts.length - 1] : { x: 0, y: 0 };
+      const toPx = (p: { x: number; y: number }) => ({
+        x: ((p.x + 0.5) / 200) * width,
+        y: ((p.y + 0.5) / 300) * height,
+      });
+      const mapped = pts.map(toPx);
+      const tip = mapped.length ? mapped[mapped.length - 1] : { x: 0, y: 0 };
       const sampleMins: number[] = [];
       let missing = 0;
       let sections = 0;
-      for (let i = 2; i < pts.length; i++) {
-        const a = pts[i - 1];
-        const b = pts[i];
-        if (Math.hypot(b.x - tip.x, b.y - tip.y) < 18) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
+      let prev: { x: number; y: number } | null = null;
+      for (let i = 0; i < mapped.length; i++) {
+        const b = mapped[i];
+        if (Math.hypot(b.x - tip.x, b.y - tip.y) < 20) continue;
+        if (!prev) {
+          prev = b;
+          continue;
+        }
+        const dx = b.x - prev.x;
+        const dy = b.y - prev.y;
         const len = Math.hypot(dx, dy);
-        if (len < 1.2) continue;
+        if (len < 2) continue;
         const nx = -dy / len;
         const ny = dx / len;
         const cx = Math.round(b.x);
@@ -120,6 +129,7 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         sections++;
         sampleMins.push(best);
         if (!found) missing++;
+        prev = b;
       }
       return {
         sections,
@@ -560,7 +570,8 @@ test.describe('Cover spike 390x844', () => {
     }));
     expect(kind.appends ?? 0).toBeGreaterThanOrEqual(base + 30);
     const along = await measureWholeTrailWhite(page);
-    console.log('incremental append whole-trail white 390x844', along, kind);
+    const ptsN = await page.evaluate(() => window.__turfDebug?.trailPts?.length ?? 0);
+    console.log('incremental append whole-trail white 390x844', along, kind, { ptsN });
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw-append.png') });
     expect(along.sections, `sections ${JSON.stringify(along)}`).toBeGreaterThanOrEqual(20);
     expect(along.missingPct, `missing white ${JSON.stringify(along)}`).toBe(0);
