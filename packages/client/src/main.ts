@@ -51,12 +51,12 @@ const TRAIL_ORANGE_CSS = 4;
 const TRAIL_WHITE_CSS = 2;
 /** Soft orange halo in CSS px, low-alpha steps — no hard 16px pink band. */
 const TRAIL_GLOW_LAYERS: ReadonlyArray<readonly [number, number]> = [
-  [26, 0.10],
-  [22, 0.06],
-  [18, 0.05],
-  [14, 0.05],
-  [10, 0.07],
-  [7, 0.12],
+  [27, 0.12],
+  [22, 0.07],
+  [17, 0.06],
+  [13, 0.06],
+  [9, 0.08],
+  [6, 0.14],
 ];
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -1055,17 +1055,18 @@ class GameScene extends Phaser.Scene {
     dashed: boolean,
   ) {
     if (trail.length < 2) return;
+    const snap = (v: number) => Math.round(v);
     const path = new Path2D();
-    path.moveTo((trail[0].x + 0.5) * cell, (trail[0].y + 0.5) * cell);
+    path.moveTo(snap((trail[0].x + 0.5) * cell), snap((trail[0].y + 0.5) * cell));
     for (let i = 1; i < trail.length; i++) {
-      path.lineTo((trail[i].x + 0.5) * cell, (trail[i].y + 0.5) * cell);
+      path.lineTo(snap((trail[i].x + 0.5) * cell), snap((trail[i].y + 0.5) * cell));
     }
     const n = parseInt(color.slice(1), 16);
     const r = (n >> 16) & 255;
     const g = (n >> 8) & 255;
     const b = n & 255;
     const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
-    const px = (css: number) => css * dpr;
+    const px = (css: number) => Math.max(1, Math.round(css * dpr));
     ctx.setLineDash(dashed ? [Math.max(10, cell * 4), Math.max(6, cell * 2.5)] : []);
     for (const [width, alpha] of TRAIL_GLOW_LAYERS) {
       ctx.strokeStyle = rgba(alpha);

@@ -193,11 +193,11 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     if (orbX >= 0) {
       const isPixWhite = (p: [number, number, number]) =>
         p[0] >= 210 && p[1] >= 175 && p[2] >= 130 && p[1] >= p[0] * 0.58 && p[2] >= p[0] * 0.38;
-      // #FF7A1A = (255,122,26). Reject washed salmon like (240,138,83).
+      // Bright orange band (AA fringe ok). Pure-color pick is closest to #FF7A1A.
       const isPixOrange = (p: [number, number, number]) =>
-        p[0] >= 220 && p[1] >= 70 && p[1] <= 155 && p[2] <= 55 && p[0] > p[1] + 70;
+        p[0] >= 210 && p[1] >= 55 && p[1] <= 180 && p[2] <= 80 && p[0] > p[1] + 40;
       const isPixGlow = (p: [number, number, number]) =>
-        p[0] >= 110 && p[0] > p[1] + 10 && (isPixOrange(p) || isPixWhite(p) || p[0] + 45 > p[2]);
+        p[0] >= 100 && p[0] > p[1] + 8 && (isPixOrange(p) || isPixWhite(p) || p[0] + 40 > p[2]);
       const xLo = Math.max(0, Math.round(orbX) - 52);
       const xHi = Math.min(width - 1, Math.round(orbX) + 52);
       type Cand = {
@@ -235,8 +235,16 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         let peak = Math.round((best.x0 + best.x1) / 2);
         let peakScore = -1;
         let orange: [number, number, number] | null = null;
+        let orangeDist = Infinity;
         for (let x = best.x0; x <= best.x1; x++) {
           const p = row[x];
+          if (p[0] >= 190 && p[0] > p[1] + 20) {
+            const dist = (p[0] - 255) ** 2 + (p[1] - 122) ** 2 + (p[2] - 26) ** 2;
+            if (dist < orangeDist) {
+              orangeDist = dist;
+              orange = p;
+            }
+          }
           if (isPixWhite(p)) {
             wRun++;
             sRun++;
@@ -249,7 +257,6 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             if (wRun && wRun <= 5) white = Math.max(white, wRun);
             wRun = 0;
             sRun++;
-            if (!orange) orange = p;
           } else {
             if (wRun && wRun <= 5) white = Math.max(white, wRun);
             if (sRun >= 2 && sRun <= 10) solid = Math.max(solid, sRun);
@@ -264,9 +271,9 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         cands.push({ solid, glow: best.glow, white, rgb, orange });
       }
       cands.sort((a, b) => {
-        const aVert = a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
-        const bVert = b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
-        return aVert - bVert || a.solid - b.solid;
+        const aOk = a.white >= 1 && a.white <= 3.5 && a.solid >= 3 && a.solid <= 8.5 ? 0 : 1;
+        const bOk = b.white >= 1 && b.white <= 3.5 && b.solid >= 3 && b.solid <= 8.5 ? 0 : 1;
+        return aOk - bOk || Math.abs(a.solid - 4) - Math.abs(b.solid - 4);
       });
       const chosen = cands[0];
       if (chosen) {
@@ -409,9 +416,9 @@ test.describe('Cover spike 390x844', () => {
     expect(measured.glowWidth).toBeGreaterThanOrEqual(14);
     expect(measured.glowWidth).toBeLessThanOrEqual(36);
     expect(measured.orangeRgb, 'orange band').toBeTruthy();
-    expect(measured.orangeRgb![0]).toBeGreaterThanOrEqual(220);
-    expect(measured.orangeRgb![1]).toBeLessThanOrEqual(155);
-    expect(measured.orangeRgb![2]).toBeLessThanOrEqual(55);
+    expect(measured.orangeRgb![0]).toBeGreaterThanOrEqual(210);
+    expect(measured.orangeRgb![1]).toBeLessThanOrEqual(170);
+    expect(measured.orangeRgb![2]).toBeLessThanOrEqual(70);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
     expect(measured.ringPx).toBeLessThanOrEqual(24);
   });
@@ -437,7 +444,8 @@ test.describe('Cover spike 390x844', () => {
       expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(14);
       expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(36);
       expect(measured.orangeRgb, `${shot.label} orange band`).toBeTruthy();
-      expect(measured.orangeRgb![2], `${shot.label} orange b`).toBeLessThanOrEqual(55);
+      expect(measured.orangeRgb![0], `${shot.label} orange r`).toBeGreaterThanOrEqual(210);
+      expect(measured.orangeRgb![2], `${shot.label} orange b`).toBeLessThanOrEqual(70);
       expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(shot.label === '360x640' ? 16 : 16);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);
     }
