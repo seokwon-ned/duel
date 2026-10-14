@@ -42,8 +42,8 @@ const ORB_CELLS = 16;
 const ORB_MIN_CSS = 25;
 /** ~2× display; LINEAR downscale stays smooth (128→26px aliased). */
 const ORB_TEX = 64;
-/** Soft bloom diameter in CSS px. Converted to game units via displayScale. */
-const ORB_BLOOM_CSS = 40;
+/** Soft bloom sprite in CSS px. Falloff stays visible out to ~40px. */
+const ORB_BLOOM_CSS = 56;
 const ORB_BLOOM_TEX = 64;
 const QA_STEPS_PER_PULSE = 6;
 const QA_STEPS_AFTER_CUT = 16;
@@ -1019,13 +1019,20 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390 (PR #8); glow stays tight so it does not read as 7px solid.
-    const glowR = scale * 2.0;
-    const midR = scale * 1.05;
+    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390. Outer glow is visible but below 7px solid.
+    const glowR = scale * 3.2;
+    const midR = scale * 1.35;
     const coreR = scale * 0.85;
     const hiR = scale * 0.32;
-    stamp(glowGfx, glowR, glow, 0.16);
-    stamp(glowGfx, midR, glow, 0.28);
+    if (this.trailBloom && dots.length >= 2 && !dashed) {
+      this.trailBloom.lineStyle(scale * 5.5, glow, 0.14);
+      this.trailBloom.beginPath();
+      this.trailBloom.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) this.trailBloom.lineTo(pts[i].x, pts[i].y);
+      this.trailBloom.strokePath();
+    }
+    stamp(glowGfx, glowR, glow, 0.28);
+    stamp(glowGfx, midR, glow, 0.4);
     stamp(this.trailGfx, coreR, glow, 1);
     stamp(this.trailGfx, hiR, core, 1);
   }

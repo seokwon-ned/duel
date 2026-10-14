@@ -22,6 +22,14 @@ interface PlayerDisconnectInfo {
   currentDisconnectStartTime: number | null;
 }
 
+function seedFromRoom(id: string | number): number {
+  if (typeof id === 'number' && Number.isFinite(id)) return id >>> 0;
+  const s = String(id ?? 'duel');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
 export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
   protected inputQueue: PlayerInput[] = [];
   protected bytesPerSecondPerPlayer = new Map<string, number[]>();
@@ -56,7 +64,10 @@ export class TurfDuelRoom extends Room<{ state: TurfDuelState }> {
       && options.matchTicks > 0
       ? options.matchTicks
       : undefined;
-    this.matchState = createInitialState(matchTicks !== undefined ? { matchTicks } : undefined);
+    this.matchState = createInitialState({
+      ...(matchTicks !== undefined ? { matchTicks } : {}),
+      seed: seedFromRoom(typeof options?.seed === 'number' ? options.seed : this.roomId),
+    });
     state.gridWidth = this.matchState.gridWidth;
     state.gridHeight = this.matchState.gridHeight;
     

@@ -3,6 +3,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client } from '@colyseus/sdk';
 import { createInitialState, step } from '@turf-duel/engine';
 import { TurfDuelRoom } from './rooms/TurfDuelRoom.js';
+import { TurfDuelQaRoom } from './rooms/TurfDuelQaRoom.js';
 import { clockRooms, TurfDuelClockRoom } from './rooms/TurfDuelClockRoom.js';
 import { TurfDuelState } from './schema/TurfDuelState.js';
 
@@ -704,7 +705,20 @@ async function testWaitingRoomLeaveFreesSeat(): Promise<ReconnectionTestResult> 
 }
 
 async function testRoomDisposesAfterNormalEnd(): Promise<ReconnectionTestResult> {
-  const { server, room1 } = await startPair(12585);
+  const server = new Server({
+    transport: new WebSocketTransport({}),
+  });
+  server.define('turf_duel', TurfDuelQaRoom);
+  await server.listen(12585);
+  const client1 = new Client('ws://localhost:12585');
+  const client2 = new Client('ws://localhost:12585');
+  const short = { matchTicks: 40 };
+  const room1 = await client1.joinOrCreate<TurfDuelState>('turf_duel', short);
+  const room2 = await client2.joinOrCreate<TurfDuelState>('turf_duel', short);
+  disableAutoReconnect(room1);
+  disableAutoReconnect(room2);
+  void room2;
+  await sleep(START_WAIT_MS);
   try {
     let left = false;
     let leaveCode: number | undefined;
@@ -713,8 +727,7 @@ async function testRoomDisposesAfterNormalEnd(): Promise<ReconnectionTestResult>
       leaveCode = code;
     });
 
-    room1.send('input', { direction: 'UP' });
-    await waitUntil(() => Boolean(room1.state.result), 30000, 'normal engine end');
+    await waitUntil(() => Boolean(room1.state.result), 5000, 'normal engine end');
 
     const result = room1.state.result as { winner: number; reason: string } | undefined;
     if (!result || result.reason === '연결 끊김' || result.reason === '양쪽 연결 끊김 (무효)') {

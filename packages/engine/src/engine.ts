@@ -32,6 +32,8 @@ import {
   stepFixed,
   toFp,
   wrapAngle,
+  COS,
+  SIN,
 } from './lut.js';
 import { claimClosedTrail, countCells } from './cover.js';
 import {
@@ -49,6 +51,7 @@ export function createInitialState(options?: {
   width?: number;
   height?: number;
   matchTicks?: number;
+  seed?: number;
 }): MatchState {
   const w = options?.width ?? GRID_WIDTH;
   const h = options?.height ?? GRID_HEIGHT;
@@ -70,6 +73,7 @@ export function createInitialState(options?: {
   grid[p1y][p1x] = CellType.SAFE_EDGE;
   grid[p2y][p2x] = CellType.SAFE_EDGE;
 
+  const spawn = spawnBoss(w, h, options?.seed ?? 0);
   return {
     grid,
     gridWidth: w,
@@ -77,10 +81,9 @@ export function createInitialState(options?: {
     player1: makePlayer(p1x, p1y, 192),
     player2: makePlayer(p2x, p2y, 64),
     boss: {
-      xFp: toFp(w >> 1),
-      yFp: toFp(h >> 1),
-      // 45° LUT octant (32). Shallow heading 20 stayed in a horizontal band.
-      heading: 32,
+      xFp: toFp(spawn.x),
+      yFp: toFp(spawn.y),
+      heading: spawn.heading,
       edgeDir: 0,
     },
     sparx1: {
@@ -105,6 +108,18 @@ export function createInitialState(options?: {
 function snapCell(player: PlayerState): void {
   player.position.x = cellOf(player.xFp);
   player.position.y = cellOf(player.yFp);
+}
+
+/** Match-seeded COVER spawn. Seed 0 stays center / heading 32 for tests. */
+function spawnBoss(w: number, h: number, seed: number): { x: number; y: number; heading: number } {
+  const s = seed >>> 0;
+  const cx = w >> 1;
+  const cy = h >> 1;
+  const x = Math.min(w - 3, Math.max(2, cx + (s === 0 ? 0 : (s % 17) - 8)));
+  const y = Math.min(h - 3, Math.max(2, cy + (s === 0 ? 0 : ((s >>> 5) % 21) - 10)));
+  let heading = s === 0 ? 32 : 24 + ((s >>> 3) % 25);
+  if (heading === 40) heading = 36;
+  return { x, y, heading };
 }
 
 function makePlayer(x: number, y: number, heading: number): PlayerState {
@@ -584,11 +599,12 @@ function tickFuse(state: MatchState, events: GameEvent[]): void {
 function bossSpeed(state: MatchState): number {
   const total = state.gridWidth * state.gridHeight;
   const opened = total - countCells(state.grid, CellType.COVER) - countCells(state.grid, CellType.SAFE_EDGE);
-  // 288 on the 200-wide board (~1.5× player): 45° bounce reaches every cover
-  // edge within 30s. Smaller test boards scale so a corner-parked boss cannot
-  // cross the miniature arena in a handful of ticks.
+  // 288 on the 200-wide board (~1.5× player). Cap 1.8× player so late-game
+  // cannot skip 1-cell walls even before substeps.
   const base = Math.max(64, Math.floor((288 * state.gridWidth) / GRID_WIDTH));
-  return base + Math.floor((opened * 192) / total);
+  const raw = base + Math.floor((opened * 192) / total);
+  const cap = Math.floor((PLAYER_SPEED_FP * 9) / 5);
+  return raw > cap ? cap : raw;
 }
 
 function bossCanStand(state: MatchState, x: number, y: number): boolean {
@@ -597,16 +613,90 @@ function bossCanStand(state: MatchState, x: number, y: number): boolean {
   return isCover(cell) || isTrail(cell);
 }
 
-/** Qix bounce: reflect over the blocked axis. LUT headings only. */
-function bounceHeading(heading: number, blockX: boolean, blockY: boolean): number {
+/** Sample the segment every 0.25 cell so a 1-cell wall cannot be skipped. */
+function segmentClear(state: MatchState, x0Fp: number, y0Fp: number, x1Fp: number, y1Fp: number): boolean {
+  const dx = x1Fp - x0Fp;
+  const dy = y1Fp - y0Fp;
+  const adx = dx < 0 ? -dx : dx;
+  const ady = dy < 0 ? -dy : dy;
+  const span = adx > ady ? adx : ady;
+  const n = span > 64 ? span >> 6 : 1;
+  let px = cellOf(x0Fp);
+  let py = cellOf(y0Fp);
+  for (let i = 1; i <= n; i++) {
+    const x = x0Fp + ((dx * i) / n | 0);
+    const y = y0Fp + ((dy * i) / n | 0);
+    const cx = cellOf(x);
+    const cy = cellOf(y);
+    if (cx === px && cy === py) continue;
+    if (!bossCanStand(state, cx, cy)) return false;
+    px = cx;
+    py = cy;
+  }
+  return true;
+}
+
+const BOSS_DIAG = [
+  20, 28, 36, 44,
+  84, 92, 100, 108,
+  148, 156, 164, 172,
+  212, 220, 228, 236,
+] as const;
+
+/** Qix bounce: reflect, then pick another same-sign diagonal (breaks ping-pong). */
+function bounceHeading(heading: number, blockX: boolean, blockY: boolean, pick: number): number {
   let h = heading;
   if (blockX) h = wrapAngle(128 - h);
   if (blockY) h = wrapAngle(-h);
-  return h;
+  if (wrapAngle(h - heading) === 128) h = wrapAngle(h + 32);
+  const sx = COS[h] >= 0;
+  const sy = SIN[h] >= 0;
+  let chosen = keepDiagonal(h);
+  let k = pick >>> 0;
+  for (let i = 0; i < BOSS_DIAG.length; i++) {
+    const d = BOSS_DIAG[(k + i) % BOSS_DIAG.length];
+    if ((COS[d] >= 0) === sx && (SIN[d] >= 0) === sy) {
+      chosen = d;
+      break;
+    }
+  }
+  return chosen;
 }
 
+function keepDiagonal(heading: number): number {
+  const h = wrapAngle(heading);
+  const ac = COS[h] < 0 ? -COS[h] : COS[h];
+  const as = SIN[h] < 0 ? -SIN[h] : SIN[h];
+  if (ac >= 64 && as >= 64) return h;
+  const sx = COS[h] >= 0;
+  const sy = SIN[h] >= 0;
+  if (sx && sy) return 32;
+  if (!sx && sy) return 96;
+  if (!sx && !sy) return 160;
+  return 224;
+}
+
+function detJitter(state: MatchState): number {
+  const n = (Math.imul(state.tick + 3, 1103515245) + (state.boss.xFp ^ state.boss.yFp) + 12345) >>> 0;
+  return ((n >>> 16) % 17) - 8;
+}
+
+/** 0.5 cell. Cardinal step of this size cannot skip a wall cell. */
+const BOSS_SUBSTEP_FP = 128;
+
 function moveBoss(state: MatchState, events: GameEvent[]): void {
-  const speed = bossSpeed(state);
+  if (state.tick !== 0 && (state.tick & 31) === 0) {
+    state.boss.heading = keepDiagonal(wrapAngle(state.boss.heading + detJitter(state)));
+  }
+  let remaining = bossSpeed(state);
+  while (remaining > 0) {
+    const sub = remaining > BOSS_SUBSTEP_FP ? BOSS_SUBSTEP_FP : remaining;
+    remaining -= sub;
+    if (!moveBossSub(state, events, sub)) return;
+  }
+}
+
+function moveBossSub(state: MatchState, events: GameEvent[], speed: number): boolean {
   const bx = cellOf(state.boss.xFp);
   const by = cellOf(state.boss.yFp);
   let heading = state.boss.heading;
@@ -614,27 +704,26 @@ function moveBoss(state: MatchState, events: GameEvent[]): void {
     const next = stepFixed(state.boss.xFp, state.boss.yFp, h, speed);
     const cx = cellOf(next.xFp);
     const cy = cellOf(next.yFp);
-    if (!bossCanStand(state, cx, cy)) return false;
+    if (!segmentClear(state, state.boss.xFp, state.boss.yFp, next.xFp, next.yFp)) return false;
     state.boss.xFp = next.xFp;
     state.boss.yFp = next.yFp;
     state.boss.heading = h;
-    hitTrailAndDrawer(state, cx, cy, events);
+    if (cx !== bx || cy !== by) hitTrailAndDrawer(state, cx, cy, events);
     return true;
   };
-  if (tryMove(heading)) return;
+  if (tryMove(heading)) return true;
   const probe = stepFixed(state.boss.xFp, state.boss.yFp, heading, speed);
   const nx = cellOf(probe.xFp);
   const ny = cellOf(probe.yFp);
   const blockX = nx !== bx && !bossCanStand(state, nx, by);
   const blockY = ny !== by && !bossCanStand(state, bx, ny);
-  // Diagonal-only block (corner): reflect both axes.
   const corner = !blockX && !blockY;
-  heading = bounceHeading(heading, blockX || corner, blockY || corner);
-  if (tryMove(heading)) return;
-  // Prefer remaining 45° octants so a wall slide cannot collapse to a 1-axis orbit.
+  heading = bounceHeading(heading, blockX || corner, blockY || corner, detJitter(state) + 8);
+  if (tryMove(heading)) return true;
   for (const delta of [32, 224, 96, 160, 64, 192, 128]) {
-    if (tryMove(wrapAngle(state.boss.heading + delta))) return;
+    if (tryMove(wrapAngle(state.boss.heading + delta))) return true;
   }
+  return false;
 }
 
 function moveSparx(state: MatchState, events: GameEvent[]): void {

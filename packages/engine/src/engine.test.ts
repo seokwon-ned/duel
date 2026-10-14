@@ -1129,6 +1129,66 @@ describe('cover engine (Amy ★)', () => {
     expect(maxX).toBeGreaterThanOrEqual(state.gridWidth - 5);
     expect(minY).toBeLessThanOrEqual(4);
     expect(maxY).toBeGreaterThanOrEqual(state.gridHeight - 5);
+    // Sweep radius 16: half of the 62-cell sprite is 31; 16 is the body core.
+    const sweepR = 16;
+    const swept = new Set<number>();
+    let coverCount = 0;
+    for (let y = 1; y < state.gridHeight - 1; y++) {
+      for (let x = 1; x < state.gridWidth - 1; x++) {
+        if (!isCover(state.grid[y][x])) continue;
+        coverCount++;
+      }
+    }
+    for (const key of visited) {
+      const vx = (key / 1024) | 0;
+      const vy = key & 1023;
+      for (let dy = -sweepR; dy <= sweepR; dy++) {
+        for (let dx = -sweepR; dx <= sweepR; dx++) {
+          const x = vx + dx;
+          const y = vy + dy;
+          if (x < 1 || y < 1 || x >= state.gridWidth - 1 || y >= state.gridHeight - 1) continue;
+          if (isCover(state.grid[y][x])) swept.add(x * 1024 + y);
+        }
+      }
+    }
+    expect(swept.size / coverCount, '>=40% of cover swept in 30s').toBeGreaterThanOrEqual(0.4);
+  });
+
+  test('boss start heading and path differ by match seed', () => {
+    const a = createInitialState({ seed: 1 });
+    const b = createInitialState({ seed: 2 });
+    expect(a.boss.heading !== b.boss.heading || a.boss.xFp !== b.boss.xFp || a.boss.yFp !== b.boss.yFp).toBe(true);
+    const playSeed = (seed: number) => {
+      let s = createInitialState({ seed, matchTicks: 200 });
+      s = run(s, [], 80);
+      return fingerprint(s);
+    };
+    expect(playSeed(1)).not.toBe(playSeed(2));
+  });
+
+  test('boss does not tunnel through a 1-cell wall at 75% opened', () => {
+    let state = createInitialState({ matchTicks: 4000, seed: 0 });
+    const w = state.gridWidth;
+    const h = state.gridHeight;
+    const wallX = 170;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        if (x <= 150 || x === wallX) state.grid[y][x] = CellType.PLAYER1_OPEN;
+      }
+    }
+    const total = w * h;
+    const opened = total - countCells(state.grid, CellType.COVER) - countCells(state.grid, CellType.SAFE_EDGE);
+    expect(opened * 100).toBeGreaterThanOrEqual(total * 70);
+    state.boss.xFp = toFp(160);
+    state.boss.yFp = toFp(150);
+    state.boss.heading = 32;
+    for (let i = 0; i < 3000; i++) {
+      state = step(state, []).state;
+      const x = cellOf(state.boss.xFp);
+      const y = cellOf(state.boss.yFp);
+      expect(isCover(state.grid[y][x]), `left cover at ${x},${y}`).toBe(true);
+      expect(x, `tunneled onto/past wall at tick ${state.tick}`).toBeLessThan(wallX);
+    }
   });
 
   test('boss bounce stays inside shrinking cover', () => {

@@ -321,10 +321,11 @@ export function paintOrbBloom(
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  const glow = g.createRadialGradient(cx, cy, s * 0.06, cx, cy, s * 0.5);
-  glow.addColorStop(0, hexAlpha(color, 0.55));
-  glow.addColorStop(0.28, hexAlpha(color, 0.28));
-  glow.addColorStop(0.58, hexAlpha(color, 0.10));
+  const glow = g.createRadialGradient(cx, cy, s * 0.04, cx, cy, s * 0.5);
+  glow.addColorStop(0, hexAlpha(color, 0.82));
+  glow.addColorStop(0.18, hexAlpha(color, 0.55));
+  glow.addColorStop(0.42, hexAlpha(color, 0.28));
+  glow.addColorStop(0.7, hexAlpha(color, 0.12));
   glow.addColorStop(1, hexAlpha(color, 0));
   g.fillStyle = glow;
   g.beginPath();
