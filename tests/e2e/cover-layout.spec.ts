@@ -103,9 +103,20 @@ async function measureWholeTrailWhite(page: Page): Promise<{
       let missing = 0;
       let sections = 0;
       let prev: { x: number; y: number } | null = null;
+      const scan = (cx: number, cy: number, ux: number, uy: number) => {
+        let best = 0;
+        let found = false;
+        for (let t = -28; t <= 28; t++) {
+          const p = pix(Math.round(cx + ux * t), Math.round(cy + uy * t));
+          const m = Math.min(p[0], p[1], p[2]);
+          if (m > best) best = m;
+          if (m > 225) found = true;
+        }
+        return { best, found };
+      };
       for (let i = 0; i < mapped.length; i++) {
         const b = mapped[i];
-        if (Math.hypot(b.x - tip.x, b.y - tip.y) < 20) continue;
+        if (Math.hypot(b.x - tip.x, b.y - tip.y) < 22) continue;
         if (!prev) {
           prev = b;
           continue;
@@ -116,16 +127,13 @@ async function measureWholeTrailWhite(page: Page): Promise<{
         if (len < 2) continue;
         const nx = -dy / len;
         const ny = dx / len;
-        const cx = Math.round(b.x);
-        const cy = Math.round(b.y);
-        let found = false;
-        let best = 0;
-        for (let t = -18; t <= 18; t++) {
-          const p = pix(Math.round(cx + nx * t), Math.round(cy + ny * t));
-          const m = Math.min(p[0], p[1], p[2]);
-          if (m > best) best = m;
-          if (m > 225) found = true;
-        }
+        const cx = (prev.x + b.x) / 2;
+        const cy = (prev.y + b.y) / 2;
+        const a = scan(cx, cy, nx, ny);
+        const h = scan(cx, cy, 1, 0);
+        const v = scan(cx, cy, 0, 1);
+        const best = Math.max(a.best, h.best, v.best);
+        const found = a.found || h.found || v.found;
         sections++;
         sampleMins.push(best);
         if (!found) missing++;
