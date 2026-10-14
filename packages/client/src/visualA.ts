@@ -322,9 +322,10 @@ export function paintOrb(
   g.clearRect(0, 0, s, s);
   const cx = s / 2;
   const cy = s / 2;
-  const glow = g.createRadialGradient(cx, cy, s * 0.16, cx, cy, s * 0.5);
-  glow.addColorStop(0, hexAlpha(color, 0.62));
-  glow.addColorStop(0.38, hexAlpha(color, 0.28));
+  const glow = g.createRadialGradient(cx, cy, s * 0.10, cx, cy, s * 0.5);
+  glow.addColorStop(0, hexAlpha(color, 0.88));
+  glow.addColorStop(0.36, hexAlpha(color, 0.45));
+  glow.addColorStop(0.72, hexAlpha(color, 0.16));
   glow.addColorStop(1, hexAlpha(color, 0));
   g.fillStyle = glow;
   g.beginPath();

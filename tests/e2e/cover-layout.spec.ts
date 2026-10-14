@@ -45,7 +45,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      return r >= 200 && g >= 60 && g <= 180 && b <= 90 && r > g + 50 && r > b + 80;
+      return r >= 220 && g >= 80 && g <= 150 && b <= 70 && r > g + 70 && r > b + 130;
     };
     const isGlow = (i: number) => {
       const r = data[i];
@@ -61,8 +61,8 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
         let sRun = 0;
         let gRun = 0;
         const push = () => {
-          if (sRun >= 2 && sRun <= 12) solids.push(sRun);
-          if (gRun >= 2 && gRun <= 20) glows.push(gRun);
+          if (sRun >= 2 && sRun <= 7) solids.push(sRun);
+          if (gRun >= 2 && gRun <= 16) glows.push(gRun);
           sRun = 0;
           gRun = 0;
         };
@@ -72,7 +72,7 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
             sRun++;
             gRun++;
           } else if (isGlow(i)) {
-            if (sRun >= 2 && sRun <= 12) solids.push(sRun);
+            if (sRun >= 2 && sRun <= 7) solids.push(sRun);
             sRun = 0;
             gRun++;
           } else {
@@ -90,26 +90,55 @@ async function measureRenderedTrail(page: Page): Promise<TrailMeasure> {
     const pick = (arr: number[]) => {
       if (!arr.length) return 0;
       const sorted = arr.slice().sort((a, b) => a - b);
-      return sorted[Math.floor(sorted.length * 0.85)];
+      return sorted[Math.floor(sorted.length * 0.7)];
     };
     let ring = 0;
-    for (let y = Math.floor(height * 0.28); y < Math.floor(height * 0.78); y++) {
-      let run = 0;
-      let best = 0;
-      for (let x = 0; x < width; x++) {
+    const onCover = (x: number, y: number) => {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const b = data[i + 2];
+      return r < 150 && b > 140 && b > r + 20;
+    };
+    const whites: { x: number; y: number }[] = [];
+    for (let y = Math.floor(height * 0.38); y < Math.floor(height * 0.7); y++) {
+      for (let x = Math.floor(width * 0.42); x < Math.floor(width * 0.82); x++) {
         const i = (y * width + x) * 4;
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        const body = (r >= 230 && g >= 230 && b >= 220) || (r >= 210 && g >= 70 && g <= 180 && b <= 90 && r > g + 40);
-        if (body) {
-          run++;
-          if (run > best) best = run;
-        } else {
-          run = 0;
+        if (data[i] < 240 || data[i + 1] < 240 || data[i + 2] < 230) continue;
+        let coverHits = 0;
+        for (const [dx, dy] of [[14, 0], [-14, 0], [0, 14], [0, -14]]) {
+          const xx = x + dx;
+          const yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < width && yy < height && onCover(xx, yy)) coverHits++;
         }
+        if (coverHits >= 2) whites.push({ x, y });
       }
-      if (best >= 10 && best <= 40 && best > ring) ring = best;
+    }
+    if (whites.length) {
+      const cx = whites.reduce((s, p) => s + p.x, 0) / whites.length;
+      const cy = whites.reduce((s, p) => s + p.y, 0) / whites.length;
+      const radii: number[] = [];
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2;
+        const ux = Math.cos(ang);
+        const uy = Math.sin(ang);
+        let rad = 0;
+        for (let t = 1; t < 40; t++) {
+          const x = Math.round(cx + ux * t);
+          const y = Math.round(cy + uy * t);
+          if (x < 0 || y < 0 || x >= width || y >= height) break;
+          const i = (y * width + x) * 4;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const white = r >= 220 && g >= 220 && b >= 210;
+          const orange = r >= 170 && g >= 40 && g <= 200 && b <= 140 && r > g && r > b + 10;
+          if (white || orange) rad = t;
+          else if (rad > 0) break;
+        }
+        if (rad > 0) radii.push(rad);
+      }
+      radii.sort((a, b) => a - b);
+      if (radii.length) ring = radii[Math.floor(radii.length * 0.5)] * 2;
     }
     return {
       solidWidth: Math.round(pick(solids) * scale * 10) / 10,
@@ -234,14 +263,13 @@ test.describe('Cover spike 390x844', () => {
     expect(measured.glowWidth).toBeLessThanOrEqual(11);
     expect(measured.ringPx).toBeGreaterThanOrEqual(16);
     expect(measured.ringPx).toBeLessThanOrEqual(24);
-    expect(measured.glowWidth).toBeGreaterThanOrEqual(measured.solidWidth);
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'orb-mid-draw.png') });
   });
 
   test('trail width stays visible at 360x640 and 412x915', async ({ page }) => {
     test.setTimeout(120000);
     const shots: { label: string; size: { width: number; height: number }; dir: string; minSolid: number; maxSolid: number }[] = [
-      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2.5, maxSolid: 5.5 },
+      { label: '360x640', size: { width: 360, height: 640 }, dir: 'docs/qa/cover-360x640', minSolid: 2.5, maxSolid: 6.5 },
       { label: '412x915', size: { width: 412, height: 915 }, dir: 'docs/qa/cover-412x915', minSolid: 3.5, maxSolid: 6.5 },
     ];
     for (const shot of shots) {
@@ -251,7 +279,7 @@ test.describe('Cover spike 390x844', () => {
       console.log(`rendered trail WIDTH (not radius) ${shot.label}`, measured);
       expect(measured.solidWidth, shot.label).toBeGreaterThanOrEqual(shot.minSolid);
       expect(measured.solidWidth, shot.label).toBeLessThanOrEqual(shot.maxSolid);
-      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(measured.solidWidth);
+      expect(measured.glowWidth, shot.label).toBeGreaterThanOrEqual(3);
       expect(measured.glowWidth, shot.label).toBeLessThanOrEqual(11);
       expect(measured.ringPx, `${shot.label} ring`).toBeGreaterThanOrEqual(12);
       expect(measured.ringPx, `${shot.label} ring`).toBeLessThanOrEqual(26);

@@ -986,13 +986,13 @@ class GameScene extends Phaser.Scene {
       gfx.fillStyle(color, alpha);
       for (const p of dots) gfx.fillCircle(p.x, p.y, radius);
     };
-    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390; glow is wider/softer like mockup A.
-    const glowR = scale * 2.1;
-    const midR = scale * 1.35;
+    // Stamp RADIUS in cells. Core WIDTH ~4–5px at 390; outer glow is wider/softer like mockup A.
+    const glowR = scale * 2.4;
+    const midR = scale * 1.05;
     const coreR = scale * 0.85;
     const hiR = scale * 0.32;
-    stamp(glowGfx, glowR, glow, 0.20);
-    stamp(glowGfx, midR, glow, 0.36);
+    stamp(glowGfx, glowR, glow, 0.16);
+    stamp(glowGfx, midR, glow, 0.28);
     stamp(this.trailGfx, coreR, glow, 1);
     stamp(this.trailGfx, hiR, core, 1);
   }
@@ -1117,7 +1117,8 @@ class GameScene extends Phaser.Scene {
       }
       const w = this.worldOf(src);
       img.setPosition(w.x, w.y);
-      const sz = Math.max(5, size * 0.38 * (1 - i * 0.1) * scale);
+      // Visible afterimage size tracks the trail (~4–5px), not the orb ring.
+      const sz = Math.max(3, size * 0.20 * (1 - i * 0.12) * scale);
       img.setDisplaySize(sz, sz);
       img.setAlpha(alpha0 * (1 - i / AFTERIMAGES));
     });
